@@ -8,6 +8,7 @@
         <span>视觉智检</span>
       </div>
       <div class="nav-right">
+        <el-button text class="api-config-btn" @click="configVisible = true">API 配置</el-button>
         <div class="user-info">
           <el-avatar :size="32" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" />
           <span class="username">操作用户</span>
@@ -50,7 +51,7 @@
               </div>
             </div>
           </div>
-          
+
           <el-empty v-if="sopList.length === 0" description="暂无可用流程，请联系管理员创建" class="minimal-empty"></el-empty>
         </div>
 
@@ -89,22 +90,27 @@
             </div>
           </div>
 
-          <div class="progress-section">
-            <div class="progress-text">进度 {{ activeStep + 1 }} / {{ currentSop.stepCount }}</div>
-            <el-progress 
-              :percentage="((activeStep) / currentSop.stepCount) * 100" 
-              :show-text="false"
-              color="#000000"
-              class="minimal-progress"
-            />
+          <div class="sop-overview">
+            <div class="overview-title">操作流程说明 (共 {{ currentSop.stepCount }} 步)</div>
+            <div class="steps-list">
+              <div v-for="(step, index) in currentSop.steps" :key="index" class="step-item">
+                <div class="step-index">{{ index + 1 }}</div>
+                <div class="step-content">
+                  <div>{{ step.description }}</div>
+                  <div class="step-subline">
+                    {{ step.videoMeta?.name ? `示范视频：${step.videoMeta.name}` : '未配置示范视频' }}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div class="step-container" v-if="activeStep < currentSop.stepCount">
+          <div class="step-container" v-if="!evaluationResult || !evaluationResult.passed">
             <div class="step-instruction">
-              <div class="step-label">当前步骤 {{ activeStep + 1 }}</div>
-              <p class="step-desc">{{ currentSop.steps[activeStep].description }}</p>
+              <div class="step-label">上传完整操作视频</div>
+              <p class="step-desc">请按照上述流程，录制并上传完整的操作视频以供系统自动评估。</p>
             </div>
-            
+
             <div class="upload-section">
               <el-upload
                 class="minimal-upload"
@@ -123,7 +129,7 @@
                   <div class="upload-hint">支持 MP4 或 AVI 格式视频</div>
                 </div>
               </el-upload>
-              
+
               <div v-if="currentVideo" class="file-preview">
                 <div class="file-info">
                   <el-icon><VideoPlay /></el-icon>
@@ -132,12 +138,14 @@
                 <el-button 
                   type="primary" 
                   class="submit-action-btn" 
-                  @click="submitStepVideo" 
+                  @click="submitVideo" 
                   :loading="isEvaluating"
                 >
                   解析与验证
                 </el-button>
               </div>
+
+              <div v-if="stageText" class="stage-text">{{ stageText }}</div>
             </div>
           </div>
 
@@ -148,64 +156,198 @@
               <el-icon class="result-icon" v-else><WarningFilled /></el-icon>
               <h3>{{ evaluationResult.passed ? '验证通过' : '验证未通过' }}</h3>
             </div>
+
+            <div v-if="typeof evaluationResult.score === 'number'" class="result-score">
+              总分：{{ evaluationResult.score }} / 100
+            </div>
+
             <p class="result-feedback">{{ evaluationResult.feedback }}</p>
-            
+
+            <div v-if="evaluationResult.issues?.length" class="issues-list">
+              <span v-for="(issue, index) in evaluationResult.issues" :key="index" class="issue-chip">
+                {{ issue }}
+              </span>
+            </div>
+
+            <div v-if="evaluationResult.stepResults?.length" class="step-result-list">
+              <div v-for="item in evaluationResult.stepResults" :key="item.stepNo" class="step-result-item">
+                <div class="step-result-top">
+                  <div class="step-result-title">步骤 {{ item.stepNo }}：{{ item.description }}</div>
+                  <div class="step-result-status">{{ item.passed ? '通过' : '异常' }} · {{ item.score }} 分</div>
+                </div>
+                <div class="step-result-meta">置信度：{{ formatConfidence(item.confidence) }}</div>
+                <div class="evidence-text">{{ item.evidence }}</div>
+              </div>
+            </div>
+
+            <el-collapse v-if="evaluationResult.payloadPreview || evaluationResult.rawModelResult" class="result-collapse">
+              <el-collapse-item title="请求载荷预览（已隐藏 Base64）" name="1">
+                <pre class="code-wrap">{{ JSON.stringify(evaluationResult.payloadPreview, null, 2) }}</pre>
+              </el-collapse-item>
+              <el-collapse-item title="原始模型结果" name="2">
+                <pre class="code-wrap">{{ JSON.stringify(evaluationResult.rawModelResult, null, 2) }}</pre>
+              </el-collapse-item>
+            </el-collapse>
+
             <div class="result-actions">
               <el-button 
                 v-if="evaluationResult.passed" 
                 type="primary" 
                 class="action-btn-primary"
-                @click="nextStep"
+                @click="finishSop"
               >
-                {{ activeStep === currentSop.stepCount - 1 ? '完成整个流程' : '进入下一步' }}
+                完成整个流程
               </el-button>
               <el-button 
                 v-else 
                 class="action-btn-secondary"
-                @click="retryStep"
+                @click="retrySop"
               >
-                重新操作本步骤
+                重新上传视频
               </el-button>
             </div>
           </div>
         </div>
       </div>
     </el-main>
+
+    <el-dialog v-model="configVisible" title="百炼 API 配置" width="680px" class="minimal-dialog" destroy-on-close>
+      <el-alert
+        class="config-alert"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="当前是前端直连版，API Key 会保存在浏览器 localStorage 中，仅建议用于本地调试。"
+      />
+      <el-form label-position="top" class="minimal-form config-form">
+        <el-form-item label="API Key">
+          <el-input v-model="apiConfig.apiKey" type="password" show-password placeholder="请输入阿里百炼 API Key" />
+        </el-form-item>
+        <div class="config-row">
+          <el-form-item label="Base URL" class="flex-1">
+            <el-input v-model="apiConfig.baseURL" />
+          </el-form-item>
+          <el-form-item label="模型名称" class="flex-1">
+            <el-input v-model="apiConfig.model" />
+          </el-form-item>
+        </div>
+        <div class="config-row config-row-small">
+          <el-form-item label="fps" class="flex-1">
+            <el-input-number v-model="apiConfig.fps" :min="0.1" :max="10" :step="0.5" />
+          </el-form-item>
+          <el-form-item label="temperature" class="flex-1">
+            <el-input-number v-model="apiConfig.temperature" :min="0" :max="2" :step="0.1" />
+          </el-form-item>
+          <el-form-item label="超时(ms)" class="flex-1">
+            <el-input-number v-model="apiConfig.timeoutMs" :min="10000" :max="300000" :step="10000" />
+          </el-form-item>
+        </div>
+      </el-form>
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button text @click="resetApiConfig">恢复默认</el-button>
+          <el-button type="primary" class="submit-btn" @click="saveApiConfig">保存配置</el-button>
+        </div>
+      </template>
+    </el-dialog>
   </el-container>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { 
-  ArrowRight, Location, List, ArrowLeft, 
+import {
+  ArrowRight, Location, List, ArrowLeft,
   VideoCamera, VideoPlay, CircleCheckFilled, WarningFilled, Monitor
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
+
+const SOP_LIST_KEY = 'sopList'
+const SOP_HISTORY_KEY = 'sopHistoryList'
+const API_CONFIG_KEY = 'dashscopeEvalConfig'
+const SOP_DB_NAME = 'sop-demo-db'
+const SOP_STORE_NAME = 'videoFiles'
+
+const DEFAULT_API_CONFIG = {
+  apiKey: '',
+  baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  model: 'qwen3.5-plus',
+  fps: 1,
+  temperature: 0.1,
+  timeoutMs: 120000
+}
+
 const sopList = ref([])
 const historyList = ref([])
 const activeTab = ref('tasks')
 const currentSop = ref(null)
-const activeStep = ref(0)
 const hasErrorInCurrentSop = ref(false)
 
 const currentVideo = ref(null)
 const isEvaluating = ref(false)
 const evaluationResult = ref(null)
+const stageText = ref('')
+const configVisible = ref(false)
+
+const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 
 onMounted(() => {
-  const stored = localStorage.getItem('sopList')
-  if (stored) {
-    sopList.value = JSON.parse(stored)
-  }
-  
-  const historyStored = localStorage.getItem('sopHistoryList')
-  if (historyStored) {
-    historyList.value = JSON.parse(historyStored)
-  }
+  loadSops()
+  loadHistory()
+  loadApiConfig()
 })
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(SOP_DB_NAME, 1)
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result)
+    request.onupgradeneeded = () => {
+      const db = request.result
+      if (!db.objectStoreNames.contains(SOP_STORE_NAME)) {
+        db.createObjectStore(SOP_STORE_NAME)
+      }
+    }
+  })
+}
+
+async function getVideoFile(key) {
+  if (!key) return null
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SOP_STORE_NAME, 'readonly')
+    const request = tx.objectStore(SOP_STORE_NAME).get(key)
+    request.onsuccess = () => resolve(request.result || null)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+function loadSops() {
+  const stored = localStorage.getItem(SOP_LIST_KEY)
+  sopList.value = stored ? JSON.parse(stored) : []
+}
+
+function loadHistory() {
+  const historyStored = localStorage.getItem(SOP_HISTORY_KEY)
+  historyList.value = historyStored ? JSON.parse(historyStored) : []
+}
+
+function loadApiConfig() {
+  const stored = localStorage.getItem(API_CONFIG_KEY)
+  Object.assign(apiConfig, stored ? { ...DEFAULT_API_CONFIG, ...JSON.parse(stored) } : { ...DEFAULT_API_CONFIG })
+}
+
+function saveApiConfig() {
+  localStorage.setItem(API_CONFIG_KEY, JSON.stringify({ ...apiConfig }))
+  ElMessage.success('API 配置已保存')
+  configVisible.value = false
+}
+
+function resetApiConfig() {
+  Object.assign(apiConfig, { ...DEFAULT_API_CONFIG })
+}
 
 const handleLogout = () => {
   router.push('/login')
@@ -213,51 +355,271 @@ const handleLogout = () => {
 
 const startSop = (sop) => {
   currentSop.value = sop
-  activeStep.value = 0
   hasErrorInCurrentSop.value = false
-  resetStepState()
+  resetState()
 }
 
 const backToList = () => {
   currentSop.value = null
-  resetStepState()
+  resetState()
 }
 
-const resetStepState = () => {
+const resetState = () => {
   currentVideo.value = null
   isEvaluating.value = false
   evaluationResult.value = null
+  stageText.value = ''
 }
 
 const handleVideoChange = (file) => {
-  currentVideo.value = file
+  currentVideo.value = file?.raw || file
 }
 
-const submitStepVideo = () => {
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(reader.error || new Error('文件读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`请求超时（>${ms}ms）`)), ms)
+    promise.then((value) => {
+      clearTimeout(timer)
+      resolve(value)
+    }).catch((err) => {
+      clearTimeout(timer)
+      reject(err)
+    })
+  })
+}
+
+function resolveChatUrl(baseURL) {
+  const normalized = (baseURL || DEFAULT_API_CONFIG.baseURL).replace(/\/+$/, '')
+  return normalized.endsWith('/chat/completions') ? normalized : `${normalized}/chat/completions`
+}
+
+function stripDataUrl(value) {
+  if (typeof value !== 'string' || !value.startsWith('data:')) return value
+  const idx = value.indexOf(',')
+  return `${value.slice(0, idx + 1)}<base64 omitted>`
+}
+
+function sanitizePayload(payload) {
+  return JSON.parse(JSON.stringify(payload, (key, value) => {
+    if (key === 'url' && typeof value === 'string' && value.startsWith('data:')) return stripDataUrl(value)
+    return value
+  }))
+}
+
+function extractJsonString(content) {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    const textPart = content.find(item => item?.type === 'text' && item?.text)
+    if (textPart?.text) return textPart.text
+  }
+  return ''
+}
+
+function parseJsonFromModel(content) {
+  const raw = extractJsonString(content).trim()
+  if (!raw) throw new Error('模型未返回可解析内容')
+  try {
+    return JSON.parse(raw)
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/)
+    if (match) return JSON.parse(match[0])
+    throw new Error('模型返回不是合法 JSON')
+  }
+}
+
+async function buildContentBlocks(sop, demoFiles, userVideoFile) {
+  const blocks = [
+    {
+      type: 'text',
+      text: `请根据以下 SOP 步骤定义、管理员每一步示范视频和用户整段视频进行评测。SOP 名称：${sop.name}；适用场景：${sop.scene || '未填写'}。请判断步骤是否完成、顺序是否正确、是否存在明显异常，并输出 JSON。`
+    }
+  ]
+
+  for (const item of demoFiles) {
+    blocks.push({
+      type: 'text',
+      text: `管理员示范视频：步骤 ${item.stepNo}。步骤描述：${item.description}`
+    })
+    blocks.push({
+      type: 'video_url',
+      video_url: { url: item.dataUrl },
+      fps: apiConfig.fps
+    })
+  }
+
+  const userVideoDataUrl = await fileToDataUrl(userVideoFile)
+  blocks.push({
+    type: 'text',
+    text: '下面是用户上传的一整段 SOP 操作视频，请结合上面的步骤说明和示范视频进行逐步比对。'
+  })
+  blocks.push({
+    type: 'video_url',
+    video_url: { url: userVideoDataUrl },
+    fps: apiConfig.fps
+  })
+
+  return blocks
+}
+
+function buildResponseSchema(stepCount) {
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: 'sop_video_eval',
+      strict: true,
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          passed: { type: 'boolean' },
+          score: { type: 'integer', minimum: 0, maximum: 100 },
+          feedback: { type: 'string' },
+          issues: {
+            type: 'array',
+            items: { type: 'string' }
+          },
+          stepResults: {
+            type: 'array',
+            minItems: stepCount,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                stepNo: { type: 'integer', minimum: 1 },
+                description: { type: 'string' },
+                passed: { type: 'boolean' },
+                score: { type: 'integer', minimum: 0, maximum: 100 },
+                confidence: { type: 'number', minimum: 0, maximum: 1 },
+                evidence: { type: 'string' }
+              },
+              required: ['stepNo', 'description', 'passed', 'score', 'confidence', 'evidence']
+            }
+          }
+        },
+        required: ['passed', 'score', 'feedback', 'issues', 'stepResults']
+      }
+    }
+  }
+}
+
+async function evaluateByRealApi(sop, userVideoFile) {
+  if (!apiConfig.apiKey?.trim()) throw new Error('请先配置 API Key')
+
+  const steps = (sop.steps || []).map((step, index) => ({
+    ...step,
+    stepNo: step.stepNo || index + 1
+  }))
+
+  if (steps.some(step => !step.videoKey)) {
+    throw new Error('该 SOP 仍有步骤未上传示范视频，无法调用真实评测')
+  }
+
+  stageText.value = '正在读取管理员示范视频...'
+  const demoFiles = []
+  for (const step of steps) {
+    const file = await getVideoFile(step.videoKey)
+    if (!file) {
+      throw new Error(`步骤 ${step.stepNo} 的示范视频不存在，请回管理员端重新上传`)
+    }
+    demoFiles.push({
+      stepNo: step.stepNo,
+      description: step.description,
+      dataUrl: await fileToDataUrl(file)
+    })
+  }
+
+  stageText.value = '正在组装多模态请求...'
+  const contentBlocks = await buildContentBlocks(sop, demoFiles, userVideoFile)
+
+  const payload = {
+    model: apiConfig.model,
+    temperature: apiConfig.temperature,
+    messages: [
+      {
+        role: 'system',
+        content: '你是一个 SOP 视频评估助手。请严格按照给定 JSON Schema 输出 JSON，不要输出任何额外解释。'
+      },
+      {
+        role: 'user',
+        content: contentBlocks
+      }
+    ],
+    response_format: buildResponseSchema(steps.length)
+  }
+
+  stageText.value = '正在调用百炼接口...'
+  const response = await withTimeout(fetch(resolveChatUrl(apiConfig.baseURL), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiConfig.apiKey.trim()}`
+    },
+    body: JSON.stringify(payload)
+  }), apiConfig.timeoutMs)
+
+  const rawText = await response.text()
+  let rawJson = null
+  try {
+    rawJson = JSON.parse(rawText)
+  } catch {
+    rawJson = { rawText }
+  }
+
+  if (!response.ok) {
+    const message = rawJson?.error?.message || rawJson?.message || rawText || `HTTP ${response.status}`
+    throw new Error(message)
+  }
+
+  const parsed = parseJsonFromModel(rawJson?.choices?.[0]?.message?.content)
+  return {
+    ...parsed,
+    rawModelResult: rawJson,
+    payloadPreview: sanitizePayload(payload)
+  }
+}
+
+function formatConfidence(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '-'
+  return num.toFixed(2)
+}
+
+const submitVideo = async () => {
   if (!currentVideo.value) {
     ElMessage.warning('请先上传视频')
     return
   }
-  
+  if (!apiConfig.apiKey?.trim()) {
+    ElMessage.warning('请先配置 API Key')
+    configVisible.value = true
+    return
+  }
+
   isEvaluating.value = true
-  
-  setTimeout(() => {
+  evaluationResult.value = null
+  stageText.value = ''
+
+  try {
+    const result = await evaluateByRealApi(currentSop.value, currentVideo.value)
+    evaluationResult.value = result
+    hasErrorInCurrentSop.value = !result.passed
+    ElMessage.success('解析完成')
+  } catch (error) {
+    console.error(error)
+    ElMessage.error(error?.message || '调用失败')
+  } finally {
     isEvaluating.value = false
-    const isPassed = Math.random() > 0.3
-    
-    if (isPassed) {
-      evaluationResult.value = {
-        passed: true,
-        feedback: '动作顺序正确，操作符合规范要求。'
-      }
-    } else {
-      evaluationResult.value = {
-        passed: false,
-        feedback: '检测到动作不规范：未完全按照描述执行操作，请注意关键动作细节。建议重新操作并上传。'
-      }
-      hasErrorInCurrentSop.value = true
-    }
-  }, 2500)
+    if (!evaluationResult.value) stageText.value = ''
+  }
 }
 
 const saveHistory = () => {
@@ -267,25 +629,23 @@ const saveHistory = () => {
     taskName: currentSop.value.name,
     scene: currentSop.value.scene,
     finishTime: new Date().toLocaleString(),
+    score: evaluationResult.value?.score ?? null,
     status: hasErrorInCurrentSop.value ? 'failed' : 'passed'
   }
   historyList.value.unshift(record)
-  localStorage.setItem('sopHistoryList', JSON.stringify(historyList.value))
+  localStorage.setItem(SOP_HISTORY_KEY, JSON.stringify(historyList.value))
 }
 
-const nextStep = () => {
-  if (activeStep.value === currentSop.value.stepCount - 1) {
-    saveHistory()
-    ElMessage.success('恭喜，SOP 流程已全部完成！')
-    backToList()
-  } else {
-    activeStep.value++
-    resetStepState()
-  }
+const finishSop = () => {
+  saveHistory()
+  ElMessage.success('恭喜，SOP 流程验证完成并已记录！')
+  backToList()
 }
 
-const retryStep = () => {
-  resetStepState()
+const retrySop = () => {
+  currentVideo.value = null
+  evaluationResult.value = null
+  stageText.value = ''
 }
 </script>
 
@@ -337,6 +697,17 @@ const retryStep = () => {
   gap: 24px;
 }
 
+.api-config-btn,
+.logout-btn {
+  color: #86868b;
+  font-weight: 500;
+}
+
+.api-config-btn:hover,
+.logout-btn:hover {
+  color: #1d1d1f;
+}
+
 .user-info {
   display: flex;
   align-items: center;
@@ -346,15 +717,6 @@ const retryStep = () => {
   margin-left: 10px;
   font-size: 14px;
   font-weight: 500;
-  color: #1d1d1f;
-}
-
-.logout-btn {
-  color: #86868b;
-  font-weight: 500;
-}
-
-.logout-btn:hover {
   color: #1d1d1f;
 }
 
@@ -566,28 +928,58 @@ const retryStep = () => {
   font-weight: 500;
 }
 
-.progress-section {
-  margin-bottom: 40px;
+.sop-overview {
+  background: #ffffff;
+  border-radius: 16px;
+  border: 1px solid #e5e5ea;
+  padding: 32px;
+  margin-bottom: 24px;
 }
 
-.progress-text {
-  font-size: 13px;
+.overview-title {
+  font-size: 18px;
   font-weight: 600;
+  color: #1d1d1f;
+  margin-bottom: 24px;
+}
+
+.steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.step-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #000000;
+  color: #ffffff;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.step-content {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1d1d1f;
+  padding-top: 2px;
+}
+
+.step-subline {
+  font-size: 13px;
   color: #86868b;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 12px;
-}
-
-:deep(.minimal-progress .el-progress-bar__outer) {
-  background-color: #e5e5ea;
-  border-radius: 4px;
-  height: 4px !important;
-}
-
-:deep(.minimal-progress .el-progress-bar__inner) {
-  border-radius: 4px;
-  transition: width 0.6s ease;
+  margin-top: 4px;
 }
 
 .step-container {
@@ -691,6 +1083,12 @@ const retryStep = () => {
   border-color: #333333;
 }
 
+.stage-text {
+  margin-top: 16px;
+  font-size: 13px;
+  color: #86868b;
+}
+
 .result-card {
   margin-top: 24px;
   border-radius: 16px;
@@ -732,6 +1130,13 @@ const retryStep = () => {
 .success h3 { color: #1d1d1f; }
 .error h3 { color: #515154; }
 
+.result-score {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1d1d1f;
+  margin-bottom: 12px;
+}
+
 .result-feedback {
   font-size: 15px;
   line-height: 1.5;
@@ -740,6 +1145,88 @@ const retryStep = () => {
 
 .success .result-feedback { color: #515154; }
 .error .result-feedback { color: #86868b; }
+
+.issues-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.issue-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: #f5f5f7;
+  border-radius: 20px;
+  font-size: 13px;
+  color: #515154;
+}
+
+.step-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.step-result-item {
+  background: #ffffff;
+  border: 1px solid #e5e5ea;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.step-result-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+
+.step-result-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.step-result-status {
+  font-size: 13px;
+  color: #86868b;
+  white-space: nowrap;
+}
+
+.step-result-meta {
+  font-size: 13px;
+  color: #86868b;
+  margin-bottom: 6px;
+}
+
+.evidence-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #515154;
+}
+
+.result-collapse {
+  margin-bottom: 24px;
+}
+
+:deep(.result-collapse .el-collapse-item__header) {
+  font-weight: 500;
+  color: #1d1d1f;
+}
+
+.code-wrap {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #f5f5f7;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12px;
+  color: #515154;
+}
 
 .result-actions {
   display: flex;
@@ -767,5 +1254,108 @@ const retryStep = () => {
   border-color: #86868b;
   color: #000000;
   background-color: transparent;
+}
+
+.config-alert {
+  margin-bottom: 20px;
+}
+
+.config-form {
+  margin-top: 8px;
+}
+
+.config-row {
+  display: flex;
+  gap: 16px;
+}
+
+.config-row-small :deep(.el-input-number) {
+  width: 100%;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.submit-btn {
+  background-color: #000000;
+  border-color: #000000;
+  border-radius: 8px;
+}
+
+.submit-btn:hover {
+  background-color: #333333;
+  border-color: #333333;
+}
+
+:deep(.minimal-dialog) {
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+:deep(.minimal-dialog .el-dialog__header) {
+  padding: 24px 24px 16px;
+  margin-right: 0;
+  border-bottom: 1px solid #e5e5ea;
+}
+
+:deep(.minimal-dialog .el-dialog__title) {
+  font-weight: 600;
+  font-size: 18px;
+  color: #1d1d1f;
+}
+
+:deep(.minimal-dialog .el-dialog__body) {
+  padding: 24px;
+}
+
+:deep(.minimal-form .el-form-item__label) {
+  font-size: 13px;
+  font-weight: 500;
+  color: #515154;
+  padding-bottom: 4px;
+}
+
+:deep(.minimal-form .el-input__wrapper) {
+  box-shadow: 0 0 0 1px #e5e5ea inset;
+  border-radius: 8px;
+  padding: 4px 12px;
+  transition: all 0.2s ease;
+}
+
+:deep(.minimal-form .el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 2px #000000 inset;
+}
+
+.flex-1 {
+  flex: 1;
+}
+
+@media (max-width: 768px) {
+  .main-content {
+    padding: 24px 16px;
+  }
+
+  .top-nav {
+    padding: 0 16px;
+  }
+
+  .nav-right {
+    gap: 12px;
+  }
+
+  .header-titles,
+  .file-preview,
+  .step-result-top,
+  .config-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .result-actions {
+    flex-direction: column;
+  }
 }
 </style>

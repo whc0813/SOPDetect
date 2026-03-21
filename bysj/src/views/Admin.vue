@@ -18,7 +18,7 @@
           <span>数据统计</span>
         </el-menu-item>
       </el-menu>
-      
+
       <div class="sidebar-bottom">
         <div class="user-info">
           <el-avatar :size="32" src="https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png" />
@@ -43,16 +43,21 @@
           </el-button>
         </div>
       </el-header>
-      
+
       <el-main class="content-area">
         <div class="table-card">
           <el-table :data="sopList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }">
-            <el-table-column prop="id" label="ID" width="100" />
+            <el-table-column prop="id" label="ID" width="140" />
             <el-table-column prop="name" label="SOP 名称" />
             <el-table-column prop="scene" label="适用场景" />
             <el-table-column prop="stepCount" label="步骤数" width="120" align="center">
               <template #default="scope">
                 <el-tag size="small" class="minimal-tag">{{ scope.row.stepCount }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="示范视频" width="120" align="center">
+              <template #default="scope">
+                <el-tag size="small" class="minimal-tag">{{ scope.row.demoVideoCount || 0 }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="createTime" label="创建时间" width="180" />
@@ -78,11 +83,11 @@
             <el-input v-model="sopForm.scene" placeholder="例如：化学实验室"></el-input>
           </el-form-item>
         </div>
-        
+
         <el-form-item label="步骤数量">
           <el-input-number v-model="sopForm.stepCount" :min="1" :max="20" @change="handleStepCountChange" class="minimal-input-number" />
         </el-form-item>
-        
+
         <div class="steps-section">
           <div class="section-title">步骤详情</div>
           <div v-for="(step, index) in sopForm.steps" :key="index" class="step-card">
@@ -95,13 +100,37 @@
               resize="none"
               class="minimal-textarea"
             ></el-input>
+            <div class="step-video-upload">
+              <el-upload
+                class="minimal-step-upload"
+                action="#"
+                :auto-upload="false"
+                :show-file-list="false"
+                accept="video/*"
+                :on-change="(file) => handleStepVideoChange(index, file)"
+              >
+                <div v-if="!step.video" class="upload-trigger">
+                  <el-icon><VideoCamera /></el-icon>
+                  <span>上传标准动作视频</span>
+                </div>
+                <div v-else class="video-preview-item" @click.stop>
+                  <div class="video-info">
+                    <el-icon><VideoPlay /></el-icon>
+                    <span>{{ step.video.name }}</span>
+                  </div>
+                  <el-button text class="remove-video-btn" @click.stop="removeStepVideo(index)">
+                    <el-icon><Close /></el-icon>
+                  </el-button>
+                </div>
+              </el-upload>
+            </div>
           </div>
         </div>
       </el-form>
       <template #footer>
         <div class="dialog-footer">
           <el-button text @click="dialogVisible = false">取消</el-button>
-          <el-button type="primary" class="submit-btn" @click="saveSop">发布</el-button>
+          <el-button type="primary" class="submit-btn" @click="saveSop" :loading="isSaving">发布</el-button>
         </div>
       </template>
     </el-dialog>
@@ -109,36 +138,96 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Document, DataLine, Plus, SwitchButton, Monitor } from '@element-plus/icons-vue'
+import { Document, DataLine, Plus, SwitchButton, Monitor, VideoCamera, VideoPlay, Close } from '@element-plus/icons-vue'
 
 const router = useRouter()
 
-// Mock data
-const sopList = ref([
-  {
-    id: 1,
-    name: '穿戴防护装备规范',
-    scene: '无菌车间',
-    stepCount: 3,
-    createTime: '2023-10-24 10:00:00',
-    steps: [
-      { description: '戴上防护帽，完全遮盖头发' },
-      { description: '佩戴护目镜' },
-      { description: '穿上无菌防护服并拉好拉链' }
-    ]
-  }
-])
+const SOP_LIST_KEY = 'sopList'
+const SOP_DB_NAME = 'sop-demo-db'
+const SOP_STORE_NAME = 'videoFiles'
 
+const sopList = ref([])
 const dialogVisible = ref(false)
+const isSaving = ref(false)
 
 const sopForm = reactive({
   name: '',
   scene: '',
   stepCount: 1,
-  steps: [{ description: '' }]
+  steps: [createEmptyStep()]
+})
+
+function createEmptyStep() {
+  return { description: '', video: null }
+}
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(SOP_DB_NAME, 1)
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result)
+    request.onupgradeneeded = () => {
+      const db = request.result
+      if (!db.objectStoreNames.contains(SOP_STORE_NAME)) {
+        db.createObjectStore(SOP_STORE_NAME)
+      }
+    }
+  })
+}
+
+async function setVideoFile(key, file) {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SOP_STORE_NAME, 'readwrite')
+    tx.objectStore(SOP_STORE_NAME).put(file, key)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+async function deleteVideoFile(key) {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SOP_STORE_NAME, 'readwrite')
+    tx.objectStore(SOP_STORE_NAME).delete(key)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+function persistSopList() {
+  localStorage.setItem(SOP_LIST_KEY, JSON.stringify(sopList.value))
+}
+
+function loadSopList() {
+  const stored = localStorage.getItem(SOP_LIST_KEY)
+  if (stored) {
+    sopList.value = JSON.parse(stored)
+    return
+  }
+  sopList.value = [
+    {
+      id: 'demo-sop-001',
+      name: '穿戴防护装备规范',
+      scene: '无菌车间',
+      stepCount: 3,
+      demoVideoCount: 0,
+      createTime: '2023-10-24 10:00:00',
+      steps: [
+        { stepNo: 1, description: '戴上防护帽，完全遮盖头发', videoKey: '', videoMeta: null },
+        { stepNo: 2, description: '佩戴护目镜', videoKey: '', videoMeta: null },
+        { stepNo: 3, description: '穿上无菌防护服并拉好拉链', videoKey: '', videoMeta: null }
+      ]
+    }
+  ]
+  persistSopList()
+}
+
+onMounted(() => {
+  loadSopList()
 })
 
 const handleLogout = () => {
@@ -149,7 +238,7 @@ const openCreateDialog = () => {
   sopForm.name = ''
   sopForm.scene = ''
   sopForm.stepCount = 1
-  sopForm.steps = [{ description: '' }]
+  sopForm.steps = [createEmptyStep()]
   dialogVisible.value = true
 }
 
@@ -157,40 +246,87 @@ const handleStepCountChange = (newVal) => {
   const currentLen = sopForm.steps.length
   if (newVal > currentLen) {
     for (let i = currentLen; i < newVal; i++) {
-      sopForm.steps.push({ description: '' })
+      sopForm.steps.push(createEmptyStep())
     }
   } else if (newVal < currentLen) {
     sopForm.steps.splice(newVal)
   }
 }
 
-const saveSop = () => {
-  if (!sopForm.name) {
+const handleStepVideoChange = (index, file) => {
+  sopForm.steps[index].video = file?.raw || file
+}
+
+const removeStepVideo = (index) => {
+  sopForm.steps[index].video = null
+}
+
+const saveSop = async () => {
+  if (!sopForm.name.trim()) {
     ElMessage.warning('请输入 SOP 名称')
     return
   }
-  const newSop = {
-    id: Date.now(),
-    name: sopForm.name,
-    scene: sopForm.scene,
-    stepCount: sopForm.stepCount,
-    createTime: new Date().toLocaleString(),
-    steps: JSON.parse(JSON.stringify(sopForm.steps))
+  if (sopForm.steps.some(step => !step.description.trim())) {
+    ElMessage.warning('请补全每一步的文字描述')
+    return
   }
-  sopList.value.push(newSop)
-  localStorage.setItem('sopList', JSON.stringify(sopList.value))
-  
-  ElMessage.success('SOP 发布成功')
-  dialogVisible.value = false
+  if (sopForm.steps.some(step => !step.video)) {
+    ElMessage.warning('请为每一步上传示范视频')
+    return
+  }
+
+  isSaving.value = true
+  try {
+    const sopId = `sop-${Date.now()}`
+    const steps = await Promise.all(
+      sopForm.steps.map(async (step, index) => {
+        const videoKey = `${sopId}-step-${index + 1}`
+        await setVideoFile(videoKey, step.video)
+        return {
+          stepNo: index + 1,
+          description: step.description.trim(),
+          videoKey,
+          videoMeta: {
+            name: step.video.name,
+            type: step.video.type,
+            size: step.video.size,
+            lastModified: step.video.lastModified
+          }
+        }
+      })
+    )
+
+    const newSop = {
+      id: sopId,
+      name: sopForm.name.trim(),
+      scene: sopForm.scene.trim() || '未填写',
+      stepCount: sopForm.stepCount,
+      demoVideoCount: steps.length,
+      createTime: new Date().toLocaleString(),
+      steps
+    }
+    sopList.value.unshift(newSop)
+    persistSopList()
+    ElMessage.success('SOP 发布成功')
+    dialogVisible.value = false
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('保存失败，请检查浏览器本地存储权限')
+  } finally {
+    isSaving.value = false
+  }
 }
 
 const viewSop = (row) => {
   ElMessageBox.alert(
     `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-      ${row.steps.map((s, i) => `
+      ${(row.steps || []).map((s, i) => `
         <div style="margin-bottom: 12px; padding: 12px; background: #f5f5f7; border-radius: 8px;">
-          <div style="font-size: 12px; color: #86868b; margin-bottom: 4px;">步骤 ${i+1}</div>
-          <div style="font-size: 14px; color: #1d1d1f;">${s.description}</div>
+          <div style="font-size: 12px; color: #86868b; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+            <span>步骤 ${i + 1}</span>
+            ${(s.videoMeta || s.video) ? `<span style="color: #1d1d1f; font-weight: 500; display: flex; align-items: center; gap: 4px;"><svg viewBox="0 0 1024 1024" width="14" height="14"><path d="M512 64a448 448 0 1 1 0 896 448 448 0 0 1 0-896z m0 832a384 384 0 0 0 0-768 384 384 0 0 0 0 768z m-96-544l256 160-256 160V352z" fill="currentColor"></path></svg> ${(s.videoMeta?.name || s.video?.name)}</span>` : ''}
+          </div>
+          <div style="font-size: 14px; color: #1d1d1f;">${s.description || ''}</div>
         </div>
       `).join('')}
     </div>`,
@@ -201,9 +337,7 @@ const viewSop = (row) => {
       customClass: 'minimal-msgbox',
       showClose: false
     }
-  ).catch(() => {
-    // 捕获 cancel/close 事件，防止抛出未处理的 Promise 拒绝错误
-  })
+  ).catch(() => {})
 }
 
 const deleteSop = (row) => {
@@ -212,15 +346,18 @@ const deleteSop = (row) => {
     cancelButtonText: '取消',
     type: 'warning',
     customClass: 'minimal-msgbox'
-  }).then(() => {
-    sopList.value = sopList.value.filter(item => item.id !== row.id)
-    localStorage.setItem('sopList', JSON.stringify(sopList.value))
-    ElMessage.success('删除成功')
+  }).then(async () => {
+    try {
+      await Promise.all((row.steps || []).filter(item => item.videoKey).map(item => deleteVideoFile(item.videoKey)))
+      sopList.value = sopList.value.filter(item => item.id !== row.id)
+      persistSopList()
+      ElMessage.success('删除成功')
+    } catch (error) {
+      console.error(error)
+      ElMessage.error('删除失败')
+    }
   }).catch(() => {})
 }
-
-// Sync to localStorage on init
-localStorage.setItem('sopList', JSON.stringify(sopList.value))
 </script>
 
 <style scoped>
@@ -484,6 +621,57 @@ localStorage.setItem('sopList', JSON.stringify(sopList.value))
 
 :deep(.minimal-textarea .el-textarea__inner:focus) {
   border-color: #000000;
+}
+
+.step-video-upload {
+  margin-top: 12px;
+}
+
+.upload-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background-color: #ffffff;
+  border: 1px dashed #d2d2d7;
+  border-radius: 6px;
+  color: #86868b;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.upload-trigger:hover {
+  border-color: #000000;
+  color: #1d1d1f;
+}
+
+.video-preview-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background-color: #e5e5ea;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1d1d1f;
+}
+
+.video-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.remove-video-btn {
+  padding: 4px;
+  height: auto;
+  color: #86868b;
+}
+
+.remove-video-btn:hover {
+  color: #ff3b30;
 }
 
 .dialog-footer {
