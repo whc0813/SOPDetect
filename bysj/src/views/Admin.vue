@@ -63,7 +63,7 @@
             <el-table-column prop="createTime" label="创建时间" width="180" />
             <el-table-column label="操作" width="180" align="right">
               <template #default="scope">
-                <el-button text class="action-btn" @click="viewSop(scope.row)">查看</el-button>
+                <el-button text class="action-btn" @click="openDebugSop(scope.row)">查看</el-button>
                 <el-button text type="danger" class="action-btn" @click="deleteSop(scope.row)">删除</el-button>
               </template>
             </el-table-column>
@@ -134,6 +134,104 @@
         </div>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="debugVisible"
+      title="SOP 预处理调试"
+      width="880px"
+      class="minimal-dialog"
+      destroy-on-close
+    >
+      <div v-loading="debugLoading" class="debug-layout">
+        <template v-if="selectedSopDebug">
+          <div class="debug-summary">
+            <div class="debug-summary-card">
+              <div class="debug-summary-label">SOP 名称</div>
+              <div class="debug-summary-value">{{ selectedSopDebug.name || '-' }}</div>
+            </div>
+            <div class="debug-summary-card">
+              <div class="debug-summary-label">场景</div>
+              <div class="debug-summary-value">{{ selectedSopDebug.scene || '-' }}</div>
+            </div>
+            <div class="debug-summary-card">
+              <div class="debug-summary-label">步骤数</div>
+              <div class="debug-summary-value">{{ selectedSopDebug.stepCount || 0 }}</div>
+            </div>
+          </div>
+
+          <div v-for="step in selectedSopDebug.steps" :key="step.stepNo" class="debug-step-card">
+            <div class="debug-step-top">
+              <div>
+                <div class="debug-step-index">步骤 {{ step.stepNo }}</div>
+                <div class="debug-step-desc">{{ step.description || '未填写步骤说明' }}</div>
+              </div>
+              <el-tag size="small" class="minimal-tag">
+                {{ step.referenceFrames?.length || 0 }} 张关键帧
+              </el-tag>
+            </div>
+
+            <div class="debug-meta-grid">
+              <div class="debug-meta-item">
+                <span class="debug-meta-label">AI 预处理</span>
+                <span class="debug-meta-value">{{ step.aiUsed ? '已启用' : '未启用（回退为均匀抽帧）' }}</span>
+              </div>
+              <div class="debug-meta-item">
+                <span class="debug-meta-label">参考摘要</span>
+                <span class="debug-meta-value">{{ step.referenceSummary || '暂无' }}</span>
+              </div>
+              <div class="debug-meta-item">
+                <span class="debug-meta-label">关注区域提示</span>
+                <span class="debug-meta-value">{{ step.roiHint || '暂无' }}</span>
+              </div>
+              <div class="debug-meta-item">
+                <span class="debug-meta-label">时长</span>
+                <span class="debug-meta-value">{{ formatDuration(step.referenceFeatures?.durationSec) }}</span>
+              </div>
+              <div class="debug-meta-item">
+                <span class="debug-meta-label">原视频 FPS</span>
+                <span class="debug-meta-value">{{ formatNumber(step.referenceFeatures?.fps) }}</span>
+              </div>
+              <div class="debug-meta-item">
+                <span class="debug-meta-label">原视频帧数</span>
+                <span class="debug-meta-value">{{ formatInteger(step.referenceFeatures?.frameCount) }}</span>
+              </div>
+              <div class="debug-meta-item debug-meta-wide">
+                <span class="debug-meta-label">采样时间点</span>
+                <span class="debug-meta-value">{{ formatTimestamps(step.referenceFeatures?.sampleTimestamps) }}</span>
+              </div>
+            </div>
+
+            <div v-if="step.substeps?.length" class="debug-substeps">
+              <div class="debug-substeps-title">AI 子步骤时间点</div>
+              <div class="debug-substeps-list">
+                <div v-for="(item, index) in step.substeps" :key="`${step.stepNo}-sub-${index}`" class="debug-substep-chip">
+                  {{ item.title }} @ {{ formatDuration(item.timestampSec) }}
+                </div>
+              </div>
+            </div>
+
+            <div v-if="step.referenceFrames?.length" class="debug-frame-grid">
+              <div v-for="(frame, index) in step.referenceFrames" :key="`${step.stepNo}-${index}`" class="debug-frame-card">
+                <img :src="frame" :alt="`step-${step.stepNo}-frame-${index + 1}`" class="debug-frame-image" />
+                <div class="debug-frame-caption">关键帧 {{ index + 1 }}</div>
+              </div>
+            </div>
+
+            <div v-if="step.analysisFrames?.length" class="debug-analysis-section">
+              <div class="debug-substeps-title">AI 预分析采样帧</div>
+              <div class="debug-frame-grid">
+                <div v-for="(frame, index) in step.analysisFrames" :key="`${step.stepNo}-analysis-${index}`" class="debug-frame-card">
+                  <img :src="frame" :alt="`step-${step.stepNo}-analysis-${index + 1}`" class="debug-frame-image" />
+                  <div class="debug-frame-caption">采样帧 {{ index + 1 }}</div>
+                </div>
+              </div>
+            </div>
+
+            <el-empty v-if="!step.referenceFrames?.length" description="当前步骤还没有可展示的预处理结果" class="debug-empty" />
+          </div>
+        </template>
+      </div>
+    </el-dialog>
   </el-container>
 </template>
 
@@ -146,12 +244,16 @@ import { Document, DataLine, Plus, SwitchButton, Monitor, VideoCamera, VideoPlay
 const router = useRouter()
 
 const SOP_LIST_KEY = 'sopList'
+const API_CONFIG_KEY = 'dashscopeEvalConfig'
 const SOP_DB_NAME = 'sop-demo-db'
 const SOP_STORE_NAME = 'videoFiles'
 
 const sopList = ref([])
 const dialogVisible = ref(false)
 const isSaving = ref(false)
+const debugVisible = ref(false)
+const debugLoading = ref(false)
+const selectedSopDebug = ref(null)
 
 const sopForm = reactive({
   name: '',
@@ -178,17 +280,28 @@ function openDB() {
   })
 }
 
-async function setVideoFile(key, file) {
+async function setStoreValue(key, value) {
   const db = await openDB()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(SOP_STORE_NAME, 'readwrite')
-    tx.objectStore(SOP_STORE_NAME).put(file, key)
+    tx.objectStore(SOP_STORE_NAME).put(value, key)
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
   })
 }
 
-async function deleteVideoFile(key) {
+async function getStoreValue(key) {
+  if (!key) return null
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SOP_STORE_NAME, 'readonly')
+    const request = tx.objectStore(SOP_STORE_NAME).get(key)
+    request.onsuccess = () => resolve(request.result || null)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+async function deleteStoreValue(key) {
   const db = await openDB()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(SOP_STORE_NAME, 'readwrite')
@@ -205,7 +318,21 @@ function persistSopList() {
 function loadSopList() {
   const stored = localStorage.getItem(SOP_LIST_KEY)
   if (stored) {
-    sopList.value = JSON.parse(stored)
+    sopList.value = JSON.parse(stored).map(item => ({
+      ...item,
+      steps: (item.steps || []).map((step, index) => ({
+        stepNo: step.stepNo || index + 1,
+        description: step.description || '',
+        videoKey: step.videoKey || '',
+        videoMeta: step.videoMeta || null,
+        referenceAssetKey: step.referenceAssetKey || '',
+        referenceSummary: step.referenceSummary || '',
+        referenceFeatures: step.referenceFeatures || null,
+        substeps: Array.isArray(step.substeps) ? step.substeps : [],
+        roiHint: step.roiHint || '',
+        aiUsed: Boolean(step.aiUsed)
+      }))
+    }))
     return
   }
   sopList.value = [
@@ -217,9 +344,9 @@ function loadSopList() {
       demoVideoCount: 0,
       createTime: '2023-10-24 10:00:00',
       steps: [
-        { stepNo: 1, description: '戴上防护帽，完全遮盖头发', videoKey: '', videoMeta: null },
-        { stepNo: 2, description: '佩戴护目镜', videoKey: '', videoMeta: null },
-        { stepNo: 3, description: '穿上无菌防护服并拉好拉链', videoKey: '', videoMeta: null }
+        { stepNo: 1, description: '戴上防护帽，完全遮盖头发', videoKey: '', videoMeta: null, referenceAssetKey: '', referenceSummary: '', referenceFeatures: null },
+        { stepNo: 2, description: '佩戴护目镜', videoKey: '', videoMeta: null, referenceAssetKey: '', referenceSummary: '', referenceFeatures: null },
+        { stepNo: 3, description: '穿上无菌防护服并拉好拉链', videoKey: '', videoMeta: null, referenceAssetKey: '', referenceSummary: '', referenceFeatures: null }
       ]
     }
   ]
@@ -261,6 +388,52 @@ const removeStepVideo = (index) => {
   sopForm.steps[index].video = null
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(reader.error || new Error('文件读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function loadApiConfig() {
+  const stored = localStorage.getItem(API_CONFIG_KEY)
+  if (!stored) return null
+
+  try {
+    const parsed = JSON.parse(stored)
+    if (!parsed?.apiKey?.trim()) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+async function prepareStepReference(stepNo, description, video) {
+  const videoDataUrl = await fileToDataUrl(video)
+  const apiConfig = loadApiConfig()
+  const response = await fetch('http://localhost:8000/api/prepare-step-video', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      stepNo,
+      description,
+      videoDataUrl,
+      maxFrames: 8,
+      apiConfig
+    })
+  })
+
+  const result = await response.json().catch(() => null)
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.detail || result?.message || '步骤参考素材预处理失败')
+  }
+  return result.data
+}
+
 const saveSop = async () => {
   if (!sopForm.name.trim()) {
     ElMessage.warning('请输入 SOP 名称')
@@ -277,24 +450,37 @@ const saveSop = async () => {
 
   isSaving.value = true
   try {
+    if (!loadApiConfig()) {
+      ElMessage.warning('未检测到可用 API 配置，本次将回退为普通均匀抽帧预处理')
+    }
     const sopId = `sop-${Date.now()}`
-    const steps = await Promise.all(
-      sopForm.steps.map(async (step, index) => {
-        const videoKey = `${sopId}-step-${index + 1}`
-        await setVideoFile(videoKey, step.video)
-        return {
-          stepNo: index + 1,
-          description: step.description.trim(),
-          videoKey,
-          videoMeta: {
-            name: step.video.name,
-            type: step.video.type,
-            size: step.video.size,
-            lastModified: step.video.lastModified
-          }
+    const steps = []
+
+    for (let index = 0; index < sopForm.steps.length; index += 1) {
+      const step = sopForm.steps[index]
+      const stepNo = index + 1
+      const referenceAssetKey = `${sopId}-step-${stepNo}-reference`
+      const referenceAsset = await prepareStepReference(stepNo, step.description.trim(), step.video)
+      await setStoreValue(referenceAssetKey, referenceAsset)
+
+      steps.push({
+        stepNo,
+        description: step.description.trim(),
+        videoKey: '',
+        referenceAssetKey,
+        referenceSummary: referenceAsset.referenceSummary || '',
+        referenceFeatures: referenceAsset.referenceFeatures || null,
+        substeps: Array.isArray(referenceAsset.substeps) ? referenceAsset.substeps : [],
+        roiHint: referenceAsset.roiHint || '',
+        aiUsed: Boolean(referenceAsset.aiUsed),
+        videoMeta: {
+          name: step.video.name,
+          type: step.video.type,
+          size: step.video.size,
+          lastModified: step.video.lastModified
         }
       })
-    )
+    }
 
     const newSop = {
       id: sopId,
@@ -340,6 +526,66 @@ const viewSop = (row) => {
   ).catch(() => {})
 }
 
+void viewSop
+
+function formatDuration(value) {
+  const num = Number(value)
+  return Number.isFinite(num) ? `${num.toFixed(2)} s` : '-'
+}
+
+function formatNumber(value) {
+  const num = Number(value)
+  return Number.isFinite(num) ? num.toFixed(2) : '-'
+}
+
+function formatInteger(value) {
+  const num = Number(value)
+  return Number.isFinite(num) ? `${Math.round(num)}` : '-'
+}
+
+function formatTimestamps(values) {
+  return Array.isArray(values) && values.length
+    ? values.map(item => `${Number(item).toFixed(2)}s`).join(' / ')
+    : '-'
+}
+
+const openDebugSop = async (row) => {
+  debugVisible.value = true
+  debugLoading.value = true
+  selectedSopDebug.value = {
+    ...row,
+    steps: []
+  }
+
+  try {
+    const steps = await Promise.all((row.steps || []).map(async (step, index) => {
+      const asset = step.referenceAssetKey ? await getStoreValue(step.referenceAssetKey) : null
+      return {
+        stepNo: step.stepNo || index + 1,
+        description: step.description || '',
+        referenceSummary: asset?.referenceSummary || step.referenceSummary || '',
+        referenceFeatures: asset?.referenceFeatures || step.referenceFeatures || null,
+        referenceFrames: Array.isArray(asset?.referenceFrames) ? asset.referenceFrames : [],
+        analysisFrames: Array.isArray(asset?.analysisFrames) ? asset.analysisFrames : [],
+        substeps: Array.isArray(asset?.substeps) ? asset.substeps : (Array.isArray(step.substeps) ? step.substeps : []),
+        roiHint: asset?.roiHint || step.roiHint || '',
+        aiUsed: typeof asset?.aiUsed === 'boolean' ? asset.aiUsed : Boolean(step.aiUsed)
+      }
+    }))
+
+    selectedSopDebug.value = {
+      ...row,
+      steps
+    }
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('加载预处理调试信息失败')
+    debugVisible.value = false
+  } finally {
+    debugLoading.value = false
+  }
+}
+
 const deleteSop = (row) => {
   ElMessageBox.confirm('确定要删除该 SOP 吗？', '提示', {
     confirmButtonText: '删除',
@@ -348,7 +594,8 @@ const deleteSop = (row) => {
     customClass: 'minimal-msgbox'
   }).then(async () => {
     try {
-      await Promise.all((row.steps || []).filter(item => item.videoKey).map(item => deleteVideoFile(item.videoKey)))
+      const storeKeys = (row.steps || []).flatMap(item => [item.videoKey, item.referenceAssetKey].filter(Boolean))
+      await Promise.all(storeKeys.map(item => deleteStoreValue(item)))
       sopList.value = sopList.value.filter(item => item.id !== row.id)
       persistSopList()
       ElMessage.success('删除成功')
@@ -672,6 +919,147 @@ const deleteSop = (row) => {
 
 .remove-video-btn:hover {
   color: #ff3b30;
+}
+
+.debug-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 200px;
+}
+
+.debug-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.debug-summary-card {
+  background: #f5f5f7;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.debug-summary-label,
+.debug-meta-label,
+.debug-step-index,
+.debug-frame-caption {
+  font-size: 12px;
+  color: #86868b;
+}
+
+.debug-summary-value {
+  margin-top: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1d1d1f;
+  word-break: break-word;
+}
+
+.debug-step-card {
+  border: 1px solid #e5e5ea;
+  border-radius: 14px;
+  padding: 18px;
+  background: #ffffff;
+}
+
+.debug-step-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.debug-step-desc {
+  margin-top: 6px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1d1d1f;
+}
+
+.debug-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.debug-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 10px;
+}
+
+.debug-meta-wide {
+  grid-column: 1 / -1;
+}
+
+.debug-meta-value {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1d1d1f;
+  word-break: break-word;
+}
+
+.debug-substeps,
+.debug-analysis-section {
+  margin-bottom: 16px;
+}
+
+.debug-substeps-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d1d1f;
+  margin-bottom: 10px;
+}
+
+.debug-substeps-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.debug-substep-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #f5f5f7;
+  color: #1d1d1f;
+  font-size: 13px;
+}
+
+.debug-frame-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.debug-frame-card {
+  background: #fafafa;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.debug-frame-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #e5e5ea;
+}
+
+.debug-frame-caption {
+  margin-top: 8px;
+}
+
+.debug-empty {
+  padding: 8px 0 0;
 }
 
 .dialog-footer {

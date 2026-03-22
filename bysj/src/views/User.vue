@@ -74,6 +74,11 @@
                   </el-tag>
                 </template>
               </el-table-column>
+              <el-table-column label="操作" width="120" align="center">
+                <template #default="scope">
+                  <el-button text class="action-link-btn" @click="openHistoryDetail(scope.row)">查看详情</el-button>
+                </template>
+              </el-table-column>
             </el-table>
           </div>
         </div>
@@ -250,6 +255,98 @@
         </div>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="historyDetailVisible"
+      title="历史记录详情"
+      width="820px"
+      class="minimal-dialog history-detail-dialog"
+      destroy-on-close
+    >
+      <template v-if="selectedHistoryRecord">
+        <div class="history-detail-layout">
+          <div class="history-summary-grid">
+            <div class="history-summary-card">
+              <div class="history-summary-label">SOP 名称</div>
+              <div class="history-summary-value">{{ selectedHistoryRecord.taskName || '-' }}</div>
+            </div>
+            <div class="history-summary-card">
+              <div class="history-summary-label">适用场景</div>
+              <div class="history-summary-value">{{ selectedHistoryRecord.scene || '-' }}</div>
+            </div>
+            <div class="history-summary-card">
+              <div class="history-summary-label">完成时间</div>
+              <div class="history-summary-value">{{ selectedHistoryRecord.finishTime || '-' }}</div>
+            </div>
+            <div class="history-summary-card">
+              <div class="history-summary-label">最终结果</div>
+              <div class="history-summary-value">
+                <el-tag :class="['minimal-status-tag', selectedHistoryRecord.status === 'passed' ? 'is-passed' : 'is-failed']">
+                  {{ getStatusText(selectedHistoryRecord.status) }}
+                </el-tag>
+              </div>
+            </div>
+            <div class="history-summary-card">
+              <div class="history-summary-label">总分</div>
+              <div class="history-summary-value">{{ formatScore(selectedHistoryRecord.score) }}</div>
+            </div>
+            <div class="history-summary-card">
+              <div class="history-summary-label">上传视频</div>
+              <div class="history-summary-value">{{ selectedHistoryRecord.detail.uploadedVideo?.name || '未记录' }}</div>
+            </div>
+          </div>
+
+          <template v-if="hasHistoryDetail(selectedHistoryRecord)">
+            <div class="history-detail-section" v-if="selectedHistoryRecord.detail.feedback">
+              <div class="history-detail-title">总体反馈</div>
+              <div class="history-feedback-card">{{ selectedHistoryRecord.detail.feedback }}</div>
+            </div>
+
+            <div class="history-detail-section" v-if="selectedHistoryRecord.detail.issues.length">
+              <div class="history-detail-title">问题摘要</div>
+              <div class="issues-list compact">
+                <span v-for="(issue, index) in selectedHistoryRecord.detail.issues" :key="index" class="issue-chip">
+                  {{ issue }}
+                </span>
+              </div>
+            </div>
+
+            <div class="history-detail-section" v-if="selectedHistoryRecord.detail.stepResults.length">
+              <div class="history-detail-title">逐步分析</div>
+              <div class="step-result-list compact">
+                <div v-for="item in selectedHistoryRecord.detail.stepResults" :key="`${selectedHistoryRecord.id}-${item.stepNo}`" class="step-result-item">
+                  <div class="step-result-top">
+                    <div class="step-result-title">步骤 {{ item.stepNo }}：{{ item.description || '未命名步骤' }}</div>
+                    <div class="step-result-status">{{ getStepResultText(item.passed) }} · {{ formatScore(item.score, '--') }}</div>
+                  </div>
+                  <div class="step-result-meta">置信度：{{ formatConfidence(item.confidence) }}</div>
+                  <div class="evidence-text">{{ item.evidence || '未返回分析说明' }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="history-detail-section" v-if="selectedHistoryRecord.detail.sopSteps.length">
+              <div class="history-detail-title">执行时 SOP 快照</div>
+              <div class="history-step-list">
+                <div v-for="item in selectedHistoryRecord.detail.sopSteps" :key="`${selectedHistoryRecord.id}-sop-${item.stepNo}`" class="history-step-item">
+                  <div class="history-step-index">{{ item.stepNo }}</div>
+                  <div class="history-step-content">
+                    <div class="history-step-text">{{ item.description || '未填写步骤说明' }}</div>
+                    <div class="history-step-meta">{{ item.videoName ? `示范视频：${item.videoName}` : '未记录示范视频信息' }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <el-empty
+            v-else
+            description="这条历史记录生成于详情功能上线前，当前只保留了摘要信息。"
+            class="minimal-empty"
+          />
+        </div>
+      </template>
+    </el-dialog>
   </el-container>
 </template>
 
@@ -274,7 +371,7 @@ const DEFAULT_API_CONFIG = {
   apiKey: '',
   baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   model: 'qwen3.5-plus',
-  fps: 1,
+  fps: 2,
   temperature: 0.1,
   timeoutMs: 120000
 }
@@ -290,6 +387,8 @@ const isEvaluating = ref(false)
 const evaluationResult = ref(null)
 const stageText = ref('')
 const configVisible = ref(false)
+const historyDetailVisible = ref(false)
+const selectedHistoryRecord = ref(null)
 
 const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 
@@ -324,14 +423,47 @@ async function getVideoFile(key) {
   })
 }
 
+async function setStoreValue(key, value) {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SOP_STORE_NAME, 'readwrite')
+    tx.objectStore(SOP_STORE_NAME).put(value, key)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+function normalizeSop(item = {}) {
+  return {
+    ...item,
+    steps: (item.steps || []).map((step, index) => ({
+      ...step,
+      stepNo: step.stepNo || index + 1,
+      description: step.description || '',
+      videoKey: step.videoKey || '',
+      videoMeta: step.videoMeta || null,
+      referenceAssetKey: step.referenceAssetKey || '',
+      referenceSummary: step.referenceSummary || '',
+      referenceFeatures: step.referenceFeatures || null,
+      substeps: Array.isArray(step.substeps) ? step.substeps : [],
+      roiHint: step.roiHint || '',
+      aiUsed: Boolean(step.aiUsed)
+    }))
+  }
+}
+
+function persistSops() {
+  localStorage.setItem(SOP_LIST_KEY, JSON.stringify(sopList.value))
+}
+
 function loadSops() {
   const stored = localStorage.getItem(SOP_LIST_KEY)
-  sopList.value = stored ? JSON.parse(stored) : []
+  sopList.value = stored ? JSON.parse(stored).map(normalizeSop) : []
 }
 
 function loadHistory() {
   const historyStored = localStorage.getItem(SOP_HISTORY_KEY)
-  historyList.value = historyStored ? JSON.parse(historyStored) : []
+  historyList.value = historyStored ? JSON.parse(historyStored).map(normalizeHistoryRecord) : []
 }
 
 function loadApiConfig() {
@@ -397,22 +529,105 @@ function withTimeout(promise, ms) {
   })
 }
 
-function resolveChatUrl(baseURL) {
-  const normalized = (baseURL || DEFAULT_API_CONFIG.baseURL).replace(/\/+$/, '')
-  return normalized.endsWith('/chat/completions') ? normalized : `${normalized}/chat/completions`
+async function prepareStepReference(stepNo, description, videoFile) {
+  const videoDataUrl = await fileToDataUrl(videoFile)
+  const response = await withTimeout(fetch('http://localhost:8000/api/prepare-step-video', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      stepNo,
+      description,
+      videoDataUrl,
+      maxFrames: 8,
+      apiConfig: {
+        apiKey: apiConfig.apiKey,
+        baseURL: apiConfig.baseURL,
+        model: apiConfig.model,
+        fps: apiConfig.fps,
+        temperature: apiConfig.temperature,
+        timeoutMs: apiConfig.timeoutMs
+      }
+    })
+  }), apiConfig.timeoutMs)
+
+  const rawText = await response.text()
+  let resultJson = null
+  try {
+    resultJson = JSON.parse(rawText)
+  } catch {
+    throw new Error(rawText || `HTTP ${response.status}`)
+  }
+
+  if (!response.ok || !resultJson.success) {
+    const message = resultJson?.detail || resultJson?.message || rawText || `HTTP ${response.status}`
+    throw new Error(message)
+  }
+
+  return resultJson.data
 }
 
-function stripDataUrl(value) {
-  if (typeof value !== 'string' || !value.startsWith('data:')) return value
-  const idx = value.indexOf(',')
-  return `${value.slice(0, idx + 1)}<base64 omitted>`
-}
-
-function sanitizePayload(payload) {
-  return JSON.parse(JSON.stringify(payload, (key, value) => {
-    if (key === 'url' && typeof value === 'string' && value.startsWith('data:')) return stripDataUrl(value)
-    return value
+async function ensureReferenceAssets(sop) {
+  const steps = (sop.steps || []).map((step, index) => ({
+    ...step,
+    stepNo: step.stepNo || index + 1
   }))
+
+  const sopIndex = sopList.value.findIndex(item => item.id === sop.id)
+  let changed = false
+  const resolvedSteps = []
+
+  for (const step of steps) {
+    let assetKey = step.referenceAssetKey || ''
+    let asset = assetKey ? await getVideoFile(assetKey) : null
+
+    if ((!asset || !asset.referenceFrames?.length) && step.videoKey) {
+      stageText.value = `正在为步骤 ${step.stepNo} 生成可复用参考素材...`
+      const sourceVideo = await getVideoFile(step.videoKey)
+      if (!sourceVideo) {
+        throw new Error(`步骤 ${step.stepNo} 的示范视频不存在，请联系管理员重新发布 SOP`)
+      }
+      asset = await prepareStepReference(step.stepNo, step.description, sourceVideo)
+      assetKey = assetKey || `${sop.id}-step-${step.stepNo}-reference`
+      await setStoreValue(assetKey, asset)
+      step.referenceAssetKey = assetKey
+      step.referenceSummary = asset.referenceSummary || ''
+      step.referenceFeatures = asset.referenceFeatures || null
+      step.substeps = Array.isArray(asset.substeps) ? asset.substeps : []
+      step.roiHint = asset.roiHint || ''
+      step.aiUsed = Boolean(asset.aiUsed)
+      changed = true
+    }
+
+    if (!asset || !asset.referenceFrames?.length) {
+      throw new Error(`步骤 ${step.stepNo} 缺少参考素材，请重新发布 SOP`)
+    }
+
+    resolvedSteps.push({
+      stepNo: step.stepNo,
+      description: step.description,
+      referenceFrames: asset.referenceFrames,
+      referenceSummary: asset.referenceSummary || step.referenceSummary || '',
+      referenceFeatures: asset.referenceFeatures || step.referenceFeatures || null,
+      substeps: Array.isArray(asset.substeps) ? asset.substeps : (Array.isArray(step.substeps) ? step.substeps : []),
+      roiHint: asset.roiHint || step.roiHint || ''
+    })
+  }
+
+  if (changed && sopIndex !== -1) {
+    const updatedSop = normalizeSop({
+      ...sopList.value[sopIndex],
+      steps
+    })
+    sopList.value.splice(sopIndex, 1, updatedSop)
+    persistSops()
+    if (currentSop.value?.id === updatedSop.id) {
+      currentSop.value = updatedSop
+    }
+  }
+
+  return resolvedSteps
 }
 
 function extractJsonString(content) {
@@ -433,81 +648,6 @@ function parseJsonFromModel(content) {
     const match = raw.match(/\{[\s\S]*\}/)
     if (match) return JSON.parse(match[0])
     throw new Error('模型返回不是合法 JSON')
-  }
-}
-
-async function buildContentBlocks(sop, demoFiles, userVideoFile) {
-  const blocks = [
-    {
-      type: 'text',
-      text: `请根据以下 SOP 步骤定义、管理员每一步示范视频和用户整段视频进行评测。SOP 名称：${sop.name}；适用场景：${sop.scene || '未填写'}。请判断步骤是否完成、顺序是否正确、是否存在明显异常，并输出 JSON。`
-    }
-  ]
-
-  for (const item of demoFiles) {
-    blocks.push({
-      type: 'text',
-      text: `管理员示范视频：步骤 ${item.stepNo}。步骤描述：${item.description}`
-    })
-    blocks.push({
-      type: 'video_url',
-      video_url: { url: item.dataUrl },
-      fps: apiConfig.fps
-    })
-  }
-
-  const userVideoDataUrl = await fileToDataUrl(userVideoFile)
-  blocks.push({
-    type: 'text',
-    text: '下面是用户上传的一整段 SOP 操作视频，请结合上面的步骤说明和示范视频进行逐步比对。'
-  })
-  blocks.push({
-    type: 'video_url',
-    video_url: { url: userVideoDataUrl },
-    fps: apiConfig.fps
-  })
-
-  return blocks
-}
-
-function buildResponseSchema(stepCount) {
-  return {
-    type: 'json_schema',
-    json_schema: {
-      name: 'sop_video_eval',
-      strict: true,
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          passed: { type: 'boolean' },
-          score: { type: 'integer', minimum: 0, maximum: 100 },
-          feedback: { type: 'string' },
-          issues: {
-            type: 'array',
-            items: { type: 'string' }
-          },
-          stepResults: {
-            type: 'array',
-            minItems: stepCount,
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                stepNo: { type: 'integer', minimum: 1 },
-                description: { type: 'string' },
-                passed: { type: 'boolean' },
-                score: { type: 'integer', minimum: 0, maximum: 100 },
-                confidence: { type: 'number', minimum: 0, maximum: 1 },
-                evidence: { type: 'string' }
-              },
-              required: ['stepNo', 'description', 'passed', 'score', 'confidence', 'evidence']
-            }
-          }
-        },
-        required: ['passed', 'score', 'feedback', 'issues', 'stepResults']
-      }
-    }
   }
 }
 
@@ -537,53 +677,114 @@ async function evaluateByRealApi(sop, userVideoFile) {
     })
   }
 
-  stageText.value = '正在组装多模态请求...'
-  const contentBlocks = await buildContentBlocks(sop, demoFiles, userVideoFile)
+  stageText.value = '正在转换用户视频...'
+  const userVideoDataUrl = await fileToDataUrl(userVideoFile)
 
   const payload = {
-    model: apiConfig.model,
-    temperature: apiConfig.temperature,
-    messages: [
-      {
-        role: 'system',
-        content: '你是一个 SOP 视频评估助手。请严格按照给定 JSON Schema 输出 JSON，不要输出任何额外解释。'
-      },
-      {
-        role: 'user',
-        content: contentBlocks
-      }
-    ],
-    response_format: buildResponseSchema(steps.length)
+    apiConfig: {
+      apiKey: apiConfig.apiKey,
+      baseURL: apiConfig.baseURL,
+      model: apiConfig.model,
+      fps: apiConfig.fps,
+      temperature: apiConfig.temperature,
+      timeoutMs: apiConfig.timeoutMs
+    },
+    sop: {
+      name: sop.name,
+      scene: sop.scene,
+      stepCount: steps.length
+    },
+    demoFiles,
+    userVideoDataUrl
   }
 
-  stageText.value = '正在调用百炼接口...'
-  const response = await withTimeout(fetch(resolveChatUrl(apiConfig.baseURL), {
+  stageText.value = '正在请求后端评估接口...'
+  const response = await withTimeout(fetch('http://localhost:8000/api/evaluate', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiConfig.apiKey.trim()}`
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify(payload)
-  }), apiConfig.timeoutMs)
+  }), apiConfig.timeoutMs + 10000)
 
   const rawText = await response.text()
-  let rawJson = null
+  let resultJson = null
   try {
-    rawJson = JSON.parse(rawText)
+    resultJson = JSON.parse(rawText)
   } catch {
-    rawJson = { rawText }
+    throw new Error(rawText || `HTTP ${response.status}`)
   }
 
-  if (!response.ok) {
-    const message = rawJson?.error?.message || rawJson?.message || rawText || `HTTP ${response.status}`
+  if (!response.ok || !resultJson.success) {
+    const message = resultJson?.detail || resultJson?.message || rawText || `HTTP ${response.status}`
     throw new Error(message)
   }
 
-  const parsed = parseJsonFromModel(rawJson?.choices?.[0]?.message?.content)
+  const rawModelResult = resultJson.data
+  const parsed = parseJsonFromModel(rawModelResult?.choices?.[0]?.message?.content)
   return {
     ...parsed,
-    rawModelResult: rawJson,
-    payloadPreview: sanitizePayload(payload)
+    rawModelResult,
+    payloadPreview: resultJson.payloadPreview
+  }
+}
+
+async function evaluateByStepAssets(sop, userVideoFile) {
+  if (!apiConfig.apiKey?.trim()) throw new Error('请先配置 API Key')
+
+  stageText.value = '正在准备可复用的参考素材...'
+  const steps = await ensureReferenceAssets(sop)
+
+  stageText.value = '正在转换用户视频...'
+  const userVideoDataUrl = await fileToDataUrl(userVideoFile)
+
+  const payload = {
+    apiConfig: {
+      apiKey: apiConfig.apiKey,
+      baseURL: apiConfig.baseURL,
+      model: apiConfig.model,
+      fps: apiConfig.fps,
+      temperature: apiConfig.temperature,
+      timeoutMs: apiConfig.timeoutMs
+    },
+    sop: {
+      name: sop.name,
+      scene: sop.scene,
+      stepCount: steps.length,
+      steps
+    },
+    userVideoDataUrl
+  }
+
+  stageText.value = '正在请求后端评估接口...'
+  const response = await withTimeout(fetch('http://localhost:8000/api/evaluate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  }), apiConfig.timeoutMs + 10000)
+
+  const rawText = await response.text()
+  let resultJson = null
+  try {
+    resultJson = JSON.parse(rawText)
+  } catch {
+    throw new Error(rawText || `HTTP ${response.status}`)
+  }
+
+  if (!response.ok || !resultJson.success) {
+    const message = resultJson?.detail || resultJson?.message || rawText || `HTTP ${response.status}`
+    throw new Error(message)
+  }
+
+  const rawModelResult = resultJson.data
+  const parsed = parseJsonFromModel(rawModelResult?.choices?.[0]?.message?.content)
+  return {
+    ...parsed,
+    rawModelResult,
+    payloadPreview: resultJson.payloadPreview,
+    segmentPreview: resultJson.segmentPreview
   }
 }
 
@@ -591,6 +792,52 @@ function formatConfidence(value) {
   const num = Number(value)
   if (!Number.isFinite(num)) return '-'
   return num.toFixed(2)
+}
+
+function formatScore(value, fallback = '-') {
+  const num = Number(value)
+  return Number.isFinite(num) ? `${num} / 100` : fallback
+}
+
+function getStatusText(status) {
+  return status === 'passed' ? '验证通过' : '存在异常'
+}
+
+function getStepResultText(passed) {
+  if (passed === true) return '通过'
+  if (passed === false) return '异常'
+  return '未知'
+}
+
+function normalizeHistoryRecord(record = {}) {
+  const detail = record.detail || {}
+  return {
+    ...record,
+    detail: {
+      feedback: detail.feedback || record.feedback || '',
+      issues: Array.isArray(detail.issues) ? detail.issues : (Array.isArray(record.issues) ? record.issues : []),
+      stepResults: Array.isArray(detail.stepResults) ? detail.stepResults : (Array.isArray(record.stepResults) ? record.stepResults : []),
+      sopSteps: Array.isArray(detail.sopSteps) ? detail.sopSteps : (Array.isArray(record.sopSteps) ? record.sopSteps : []),
+      uploadedVideo: detail.uploadedVideo || record.uploadedVideo || null
+    }
+  }
+}
+
+function hasHistoryDetail(record) {
+  const normalized = normalizeHistoryRecord(record)
+  const detail = normalized.detail
+  return Boolean(
+    detail.feedback ||
+    detail.issues.length ||
+    detail.stepResults.length ||
+    detail.sopSteps.length ||
+    detail.uploadedVideo?.name
+  )
+}
+
+function openHistoryDetail(record) {
+  selectedHistoryRecord.value = normalizeHistoryRecord(record)
+  historyDetailVisible.value = true
 }
 
 const submitVideo = async () => {
@@ -609,7 +856,7 @@ const submitVideo = async () => {
   stageText.value = ''
 
   try {
-    const result = await evaluateByRealApi(currentSop.value, currentVideo.value)
+    const result = await evaluateByStepAssets(currentSop.value, currentVideo.value)
     evaluationResult.value = result
     hasErrorInCurrentSop.value = !result.passed
     ElMessage.success('解析完成')
@@ -623,15 +870,44 @@ const submitVideo = async () => {
 }
 
 const saveHistory = () => {
-  const record = {
+  const record = normalizeHistoryRecord({
     id: Date.now(),
     taskId: currentSop.value.id,
     taskName: currentSop.value.name,
     scene: currentSop.value.scene,
     finishTime: new Date().toLocaleString(),
     score: evaluationResult.value?.score ?? null,
-    status: hasErrorInCurrentSop.value ? 'failed' : 'passed'
-  }
+    status: hasErrorInCurrentSop.value ? 'failed' : 'passed',
+    detail: {
+      feedback: evaluationResult.value?.feedback || '',
+      issues: Array.isArray(evaluationResult.value?.issues) ? [...evaluationResult.value.issues] : [],
+      stepResults: Array.isArray(evaluationResult.value?.stepResults)
+        ? evaluationResult.value.stepResults.map(item => ({
+          stepNo: item.stepNo ?? null,
+          description: item.description || '',
+          passed: typeof item.passed === 'boolean' ? item.passed : null,
+          score: item.score ?? null,
+          confidence: item.confidence ?? null,
+          evidence: item.evidence || ''
+        }))
+        : [],
+      sopSteps: Array.isArray(currentSop.value?.steps)
+        ? currentSop.value.steps.map((step, index) => ({
+          stepNo: step.stepNo || index + 1,
+          description: step.description || '',
+          videoName: step.videoMeta?.name || ''
+        }))
+        : [],
+      uploadedVideo: currentVideo.value
+        ? {
+          name: currentVideo.value.name || '',
+          type: currentVideo.value.type || '',
+          size: currentVideo.value.size ?? null,
+          lastModified: currentVideo.value.lastModified ?? null
+        }
+        : null
+    }
+  })
   historyList.value.unshift(record)
   localStorage.setItem(SOP_HISTORY_KEY, JSON.stringify(historyList.value))
 }
@@ -869,6 +1145,15 @@ const retrySop = () => {
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
   padding: 8px;
   overflow: hidden;
+}
+
+.action-link-btn {
+  color: #1d1d1f;
+  font-weight: 500;
+}
+
+.action-link-btn:hover {
+  color: #000000;
 }
 
 :deep(.el-table) {
@@ -1271,6 +1556,112 @@ const retrySop = () => {
 
 .config-row-small :deep(.el-input-number) {
   width: 100%;
+}
+
+.history-detail-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.history-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.history-summary-card {
+  background: #f5f5f7;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.history-summary-label {
+  font-size: 12px;
+  color: #86868b;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.history-summary-value {
+  font-size: 14px;
+  color: #1d1d1f;
+  font-weight: 500;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.history-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-detail-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.history-feedback-card {
+  background: #ffffff;
+  border: 1px solid #e5e5ea;
+  border-radius: 12px;
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #515154;
+}
+
+.issues-list.compact,
+.step-result-list.compact {
+  margin-bottom: 0;
+}
+
+.history-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-step-item {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #ffffff;
+  border: 1px solid #e5e5ea;
+  border-radius: 12px;
+}
+
+.history-step-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #000000;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.history-step-content {
+  min-width: 0;
+}
+
+.history-step-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1d1d1f;
+}
+
+.history-step-meta {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #86868b;
 }
 
 .dialog-footer {
