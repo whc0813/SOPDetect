@@ -59,7 +59,7 @@
         <div v-if="!currentSop && activeTab === 'history'" class="view-transition">
           <div class="page-header">
             <h2>执行历史</h2>
-            <p class="subtitle">查看您过去完成的操作流程记录</p>
+            <p class="subtitle">查看已完成记录，以及管理员同步回来的人工复核意见。</p>
           </div>
 
           <div class="table-card">
@@ -67,10 +67,17 @@
               <el-table-column prop="taskName" label="SOP 名称" />
               <el-table-column prop="scene" label="适用场景" width="150" />
               <el-table-column prop="finishTime" label="完成时间" width="200" />
-              <el-table-column label="最终结果" width="120" align="center">
+              <el-table-column label="自动评测" width="120" align="center">
                 <template #default="scope">
                   <el-tag :class="['minimal-status-tag', scope.row.status === 'passed' ? 'is-passed' : 'is-failed']">
                     {{ scope.row.status === 'passed' ? '验证通过' : '存在异常' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="人工复核" width="140" align="center">
+                <template #default="scope">
+                  <el-tag :class="['minimal-status-tag', getManualReviewTagClass(scope.row.manualReview?.status)]">
+                    {{ getManualReviewText(scope.row.manualReview?.status) }}
                   </el-tag>
                 </template>
               </el-table-column>
@@ -279,7 +286,7 @@
               <div class="history-summary-value">{{ selectedHistoryRecord.finishTime || '-' }}</div>
             </div>
             <div class="history-summary-card">
-              <div class="history-summary-label">最终结果</div>
+              <div class="history-summary-label">自动评测</div>
               <div class="history-summary-value">
                 <el-tag :class="['minimal-status-tag', selectedHistoryRecord.status === 'passed' ? 'is-passed' : 'is-failed']">
                   {{ getStatusText(selectedHistoryRecord.status) }}
@@ -287,8 +294,12 @@
               </div>
             </div>
             <div class="history-summary-card">
-              <div class="history-summary-label">总分</div>
-              <div class="history-summary-value">{{ formatScore(selectedHistoryRecord.score) }}</div>
+              <div class="history-summary-label">人工复核</div>
+              <div class="history-summary-value">
+                <el-tag :class="['minimal-status-tag', getManualReviewTagClass(selectedHistoryRecord.manualReview?.status)]">
+                  {{ getManualReviewText(selectedHistoryRecord.manualReview?.status) }}
+                </el-tag>
+              </div>
             </div>
             <div class="history-summary-card">
               <div class="history-summary-label">上传视频</div>
@@ -300,6 +311,23 @@
             <div class="history-detail-section" v-if="selectedHistoryRecord.detail.feedback">
               <div class="history-detail-title">总体反馈</div>
               <div class="history-feedback-card">{{ selectedHistoryRecord.detail.feedback }}</div>
+            </div>
+
+            <div class="history-detail-section" v-if="selectedHistoryRecord.manualReview">
+              <div class="history-detail-title">人工复核意见</div>
+              <div class="history-feedback-card">
+                <div class="review-status-row">
+                  <span class="review-status-label">复核结论</span>
+                  <el-tag :class="['minimal-status-tag', getManualReviewTagClass(selectedHistoryRecord.manualReview.status)]">
+                    {{ getManualReviewText(selectedHistoryRecord.manualReview.status) }}
+                  </el-tag>
+                </div>
+                <div class="review-meta">
+                  <span>复核人：{{ selectedHistoryRecord.manualReview.reviewer || '管理员' }}</span>
+                  <span>复核时间：{{ selectedHistoryRecord.manualReview.reviewTime || '-' }}</span>
+                </div>
+                <div class="review-note">{{ selectedHistoryRecord.manualReview.note || '管理员暂未填写补充意见。' }}</div>
+              </div>
             </div>
 
             <div class="history-detail-section" v-if="selectedHistoryRecord.detail.issues.length">
@@ -320,7 +348,7 @@
                     <div class="step-result-status">{{ getStepResultText(item.passed) }} · {{ formatScore(item.score, '--') }}</div>
                   </div>
                   <div class="step-result-meta">置信度：{{ formatConfidence(item.confidence) }}</div>
-                  <div class="evidence-text">{{ item.evidence || '未返回分析说明' }}</div>
+                  <div class="evidence-text">{{ item.evidence || '未返回分析说明。' }}</div>
                 </div>
               </div>
             </div>
@@ -347,11 +375,15 @@
         </div>
       </template>
     </el-dialog>
+
+
+
+
   </el-container>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ArrowRight, Location, List, ArrowLeft,
@@ -392,10 +424,24 @@ const selectedHistoryRecord = ref(null)
 
 const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 
+const handleStorageSync = (event) => {
+  if (!event.key || event.key === SOP_HISTORY_KEY) {
+    loadHistory()
+  }
+  if (!event.key || event.key === SOP_LIST_KEY) {
+    loadSops()
+  }
+}
+
 onMounted(() => {
   loadSops()
   loadHistory()
   loadApiConfig()
+  window.addEventListener('storage', handleStorageSync)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('storage', handleStorageSync)
 })
 
 function openDB() {
@@ -464,6 +510,12 @@ function loadSops() {
 function loadHistory() {
   const historyStored = localStorage.getItem(SOP_HISTORY_KEY)
   historyList.value = historyStored ? JSON.parse(historyStored).map(normalizeHistoryRecord) : []
+  if (selectedHistoryRecord.value) {
+    const latestRecord = historyList.value.find(item => item.id === selectedHistoryRecord.value.id)
+    if (latestRecord) {
+      selectedHistoryRecord.value = latestRecord
+    }
+  }
 }
 
 function loadApiConfig() {
@@ -809,17 +861,53 @@ function getStepResultText(passed) {
   return '未知'
 }
 
+function getManualReviewText(status) {
+  if (status === 'approved') return '人工复核通过'
+  if (status === 'rejected') return '人工复核不通过'
+  if (status === 'needs_attention') return '需要整改'
+  return '待复核'
+}
+
+function getManualReviewTagClass(status) {
+  if (status === 'approved') return 'is-review-approved'
+  if (status === 'rejected') return 'is-review-rejected'
+  if (status === 'needs_attention') return 'is-review-attention'
+  return 'is-review-pending'
+}
+
+function normalizeManualReview(review) {
+  if (!review || typeof review !== 'object') return null
+  return {
+    status: review.status || '',
+    note: review.note || '',
+    reviewer: review.reviewer || '',
+    reviewTime: review.reviewTime || ''
+  }
+}
+
 function normalizeHistoryRecord(record = {}) {
   const detail = record.detail || {}
   return {
     ...record,
+    manualReview: normalizeManualReview(record.manualReview),
     detail: {
       feedback: detail.feedback || record.feedback || '',
       issues: Array.isArray(detail.issues) ? detail.issues : (Array.isArray(record.issues) ? record.issues : []),
       stepResults: Array.isArray(detail.stepResults) ? detail.stepResults : (Array.isArray(record.stepResults) ? record.stepResults : []),
       sopSteps: Array.isArray(detail.sopSteps) ? detail.sopSteps : (Array.isArray(record.sopSteps) ? record.sopSteps : []),
-      uploadedVideo: detail.uploadedVideo || record.uploadedVideo || null
+      uploadedVideo: normalizeUploadedVideo(detail.uploadedVideo || record.uploadedVideo || null)
     }
+  }
+}
+
+function normalizeUploadedVideo(uploadedVideo) {
+  if (!uploadedVideo || typeof uploadedVideo !== 'object') return null
+  return {
+    name: uploadedVideo.name || '',
+    type: uploadedVideo.type || '',
+    size: uploadedVideo.size ?? null,
+    lastModified: uploadedVideo.lastModified ?? null,
+    videoKey: uploadedVideo.videoKey || ''
   }
 }
 
@@ -831,7 +919,9 @@ function hasHistoryDetail(record) {
     detail.issues.length ||
     detail.stepResults.length ||
     detail.sopSteps.length ||
-    detail.uploadedVideo?.name
+    detail.uploadedVideo?.name ||
+    normalized.manualReview?.status ||
+    normalized.manualReview?.note
   )
 }
 
@@ -869,9 +959,24 @@ const submitVideo = async () => {
   }
 }
 
-const saveHistory = () => {
+const saveHistory = async () => {
+  const recordId = Date.now()
+  let uploadedVideo = null
+
+  if (currentVideo.value) {
+    const videoKey = `${currentSop.value.id}-${recordId}-uploaded-video`
+    await setStoreValue(videoKey, currentVideo.value)
+    uploadedVideo = normalizeUploadedVideo({
+      name: currentVideo.value.name || '',
+      type: currentVideo.value.type || '',
+      size: currentVideo.value.size ?? null,
+      lastModified: currentVideo.value.lastModified ?? null,
+      videoKey
+    })
+  }
+
   const record = normalizeHistoryRecord({
-    id: Date.now(),
+    id: recordId,
     taskId: currentSop.value.id,
     taskName: currentSop.value.name,
     scene: currentSop.value.scene,
@@ -898,24 +1003,22 @@ const saveHistory = () => {
           videoName: step.videoMeta?.name || ''
         }))
         : [],
-      uploadedVideo: currentVideo.value
-        ? {
-          name: currentVideo.value.name || '',
-          type: currentVideo.value.type || '',
-          size: currentVideo.value.size ?? null,
-          lastModified: currentVideo.value.lastModified ?? null
-        }
-        : null
+      uploadedVideo
     }
   })
   historyList.value.unshift(record)
   localStorage.setItem(SOP_HISTORY_KEY, JSON.stringify(historyList.value))
 }
 
-const finishSop = () => {
-  saveHistory()
-  ElMessage.success('恭喜，SOP 流程验证完成并已记录！')
-  backToList()
+const finishSop = async () => {
+  try {
+    await saveHistory()
+    ElMessage.success('SOP 流程验证完成并已记录')
+    backToList()
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('记录历史失败，请检查浏览器本地存储权限')
+  }
 }
 
 const retrySop = () => {
@@ -1127,17 +1230,27 @@ const retrySop = () => {
   border: 1px solid;
 }
 
-:deep(.minimal-status-tag.is-passed) {
+:deep(.minimal-status-tag.is-passed),
+:deep(.minimal-status-tag.is-review-approved) {
   background-color: #ffffff;
   color: #1d1d1f;
   border-color: #1d1d1f;
 }
 
-:deep(.minimal-status-tag.is-failed) {
+:deep(.minimal-status-tag.is-failed),
+:deep(.minimal-status-tag.is-review-rejected) {
   background-color: #f5f5f7;
   color: #86868b;
   border-color: #e5e5ea;
 }
+
+:deep(.minimal-status-tag.is-review-attention),
+:deep(.minimal-status-tag.is-review-pending) {
+  background-color: #fff8e8;
+  color: #9a6700;
+  border-color: #f3d58b;
+}
+
 
 .table-card {
   background-color: #ffffff;
@@ -1613,6 +1726,34 @@ const retrySop = () => {
   line-height: 1.7;
   color: #515154;
 }
+
+.review-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.review-status-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #86868b;
+}
+
+.review-note {
+  margin-top: 12px;
+  color: #515154;
+}
+
 
 .issues-list.compact,
 .step-result-list.compact {
