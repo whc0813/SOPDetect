@@ -15,6 +15,7 @@ try:
     from storage import (
         add_history,
         add_sop,
+        authenticate_user,
         attach_media,
         build_stats,
         delete_sop,
@@ -38,6 +39,7 @@ except ModuleNotFoundError:
     from .storage import (
         add_history,
         add_sop,
+        authenticate_user,
         attach_media,
         build_stats,
         delete_sop,
@@ -531,6 +533,7 @@ def build_reference_bundle(
 async def store_demo_video_and_prepare_bundle(
     data: dict,
     api_config: ApiConfig,
+    sop_id: Optional[str],
     step_no: int,
     description: str,
     video_data_url: str,
@@ -544,6 +547,11 @@ async def store_demo_video_and_prepare_bundle(
         original_name=(video_meta.name if video_meta else "") or f"sop-step-{step_no}",
         size=video_meta.size if video_meta else None,
         last_modified=video_meta.lastModified if video_meta else None,
+        owner_role="admin",
+        business_type="sop_step_demo",
+        related_sop_id=sop_id,
+        related_step_no=step_no,
+        uploaded_by="admin",
     )
     bundle = await prepare_reference_bundle(
         step_no=step_no,
@@ -1024,13 +1032,18 @@ async def login(req: LoginRequest):
     if not username or not password:
         raise HTTPException(status_code=400, detail="用户名和密码不能为空")
 
-    if username == "admin":
-        return {"success": True, "data": LoginResponse(username="admin", role="admin", displayName="管理员").model_dump()}
+    user = authenticate_user(username, password)
+    if not user:
+        raise HTTPException(status_code=401, detail="账号或密码错误")
 
-    if username == "user":
-        return {"success": True, "data": LoginResponse(username="user", role="user", displayName="操作用户").model_dump()}
-
-    raise HTTPException(status_code=401, detail="账号不存在")
+    return {
+        "success": True,
+        "data": LoginResponse(
+            username=user["username"],
+            role=user["role"],
+            displayName=user["displayName"],
+        ).model_dump(),
+    }
 
 
 @app.get("/api/config")
@@ -1074,6 +1087,7 @@ async def update_step_demo_video(sop_id: str, step_no: int, req: UpdateStepDemoV
     demo_video, bundle = await store_demo_video_and_prepare_bundle(
         data=data,
         api_config=api_config,
+        sop_id=sop_id,
         step_no=step_no,
         description=step_record.get("description") or "",
         video_data_url=req.videoDataUrl,
@@ -1189,6 +1203,7 @@ async def create_sop(req: CreateSopRequest):
     step_items = []
     warnings = []
     data = load_db()
+    sop_id = f"sop-{int(time.time() * 1000)}"
     if not api_config.apiKey.strip():
         warnings.append("后端未配置 API Key，本次已回退为均匀抽帧预处理。")
 
@@ -1201,6 +1216,7 @@ async def create_sop(req: CreateSopRequest):
             demo_video, bundle = await store_demo_video_and_prepare_bundle(
                 data=data,
                 api_config=api_config,
+                sop_id=sop_id,
                 step_no=step_no,
                 description=description,
                 video_data_url=step.videoDataUrl,
@@ -1230,7 +1246,7 @@ async def create_sop(req: CreateSopRequest):
 
     save_db(data)
     sop = {
-        "id": f"sop-{int(time.time() * 1000)}",
+        "id": sop_id,
         "name": name,
         "scene": (req.scene or "").strip() or "未填写",
         "stepCount": len(step_items),
@@ -1287,6 +1303,7 @@ async def create_history(req: CreateHistoryRequest):
     if not sop:
         raise HTTPException(status_code=404, detail="SOP 不存在")
 
+    record_id = f"history-{int(time.time() * 1000)}"
     uploaded_video = None
     data = load_db()
     if req.userVideoDataUrl:
@@ -1298,12 +1315,17 @@ async def create_history(req: CreateHistoryRequest):
             original_name=(req.uploadedVideo.name if req.uploadedVideo else "") or "uploaded-video",
             size=req.uploadedVideo.size if req.uploadedVideo else None,
             last_modified=req.uploadedVideo.lastModified if req.uploadedVideo else None,
+            owner_role="user",
+            business_type="execution_upload",
+            related_sop_id=sop.get("id"),
+            related_execution_id=record_id,
+            uploaded_by="user",
         )
         save_db(data)
 
     evaluation = req.evaluationResult.model_dump()
     record = {
-        "id": f"history-{int(time.time() * 1000)}",
+        "id": record_id,
         "createdAtMs": int(time.time() * 1000),
         "taskId": sop.get("id"),
         "taskName": sop.get("name"),
