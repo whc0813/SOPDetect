@@ -5,10 +5,10 @@
         <div class="brand-logo">
           <el-icon><Monitor /></el-icon>
         </div>
-        <span>视觉智检</span>
+        <span>视觉巡检</span>
       </div>
       <div class="nav-right">
-        <el-button text class="api-config-btn" @click="configVisible = true">API 配置</el-button>
+        <el-button text class="config-btn" @click="openConfigDialog">API 配置</el-button>
         <div class="user-info">
           <el-avatar :size="32" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" />
           <span class="username">操作用户</span>
@@ -21,7 +21,6 @@
 
     <el-main class="main-content">
       <div class="content-wrapper">
-        <!-- Header Tabs -->
         <div class="user-tabs" v-if="!currentSop">
           <el-radio-group v-model="activeTab" class="minimal-radio-group">
             <el-radio-button label="tasks">待执行任务</el-radio-button>
@@ -29,7 +28,6 @@
           </el-radio-group>
         </div>
 
-        <!-- Task List View -->
         <div v-if="!currentSop && activeTab === 'tasks'" class="view-transition">
           <div class="page-header">
             <h2>可用任务</h2>
@@ -52,45 +50,40 @@
             </div>
           </div>
 
-          <el-empty v-if="sopList.length === 0" description="暂无可用流程，请联系管理员创建" class="minimal-empty"></el-empty>
+          <el-empty v-if="sopList.length === 0" description="暂无可用流程，请联系管理员创建" class="minimal-empty" />
         </div>
 
-        <!-- History List View -->
         <div v-if="!currentSop && activeTab === 'history'" class="view-transition">
           <div class="page-header">
             <h2>执行历史</h2>
-            <p class="subtitle">查看已完成记录，以及管理员同步回来的人工复核意见。</p>
+            <p class="subtitle">查看你过去完成的流程记录和复核结果</p>
           </div>
 
           <div class="table-card">
-            <el-table :data="historyList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无历史记录">
-              <el-table-column prop="taskName" label="SOP 名称" />
-              <el-table-column prop="scene" label="适用场景" width="150" />
-              <el-table-column prop="finishTime" label="完成时间" width="200" />
-              <el-table-column label="自动评测" width="120" align="center">
-                <template #default="scope">
-                  <el-tag :class="['minimal-status-tag', scope.row.status === 'passed' ? 'is-passed' : 'is-failed']">
-                    {{ scope.row.status === 'passed' ? '验证通过' : '存在异常' }}
+            <el-table :data="historyList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无执行记录">
+              <el-table-column prop="taskName" label="SOP 名称" min-width="180" />
+              <el-table-column prop="finishTime" label="完成时间" width="180" />
+              <el-table-column label="AI 结论" width="100" align="center">
+                <template #default="{ row }">
+                  <el-tag :class="['minimal-status-tag', row.status === 'passed' ? 'is-passed' : 'is-failed']">
+                    {{ getStatusText(row.status) }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="人工复核" width="140" align="center">
-                <template #default="scope">
-                  <el-tag :class="['minimal-status-tag', getManualReviewTagClass(scope.row.manualReview?.status)]">
-                    {{ getManualReviewText(scope.row.manualReview?.status) }}
-                  </el-tag>
+              <el-table-column label="人工复核" width="120" align="center">
+                <template #default="{ row }">
+                  <el-tag class="minimal-status-tag is-review">{{ getManualReviewText(row.manualReview?.status) }}</el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="操作" width="120" align="center">
-                <template #default="scope">
-                  <el-button text class="action-link-btn" @click="openHistoryDetail(scope.row)">查看详情</el-button>
+                <template #default="{ row }">
+                  <el-button text @click="openHistoryDetail(row)">查看详情</el-button>
                 </template>
               </el-table-column>
             </el-table>
           </div>
         </div>
 
-        <!-- Execution View -->
         <div v-else-if="currentSop" class="execution-view">
           <div class="execution-header">
             <el-button text @click="backToList" class="back-btn">
@@ -102,28 +95,23 @@
             </div>
           </div>
 
-          <div class="sop-overview">
-            <div class="overview-title">操作流程说明 (共 {{ currentSop.stepCount }} 步)</div>
-            <div class="steps-list">
-              <div v-for="(step, index) in currentSop.steps" :key="index" class="step-item">
-                <div class="step-index">{{ index + 1 }}</div>
-                <div class="step-content">
-                  <div>{{ step.description }}</div>
-                  <div class="step-subline">
-                    {{ step.videoMeta?.name ? `示范视频：${step.videoMeta.name}` : '未配置示范视频' }}
-                  </div>
-                </div>
-              </div>
-            </div>
+          <div class="progress-section">
+            <div class="progress-text">共 {{ currentSop.stepCount }} 个步骤</div>
+            <el-progress :percentage="evaluationResult ? 100 : 45" :show-text="false" color="#000000" class="minimal-progress" />
           </div>
 
-          <div class="step-container" v-if="!evaluationResult || !evaluationResult.passed">
-            <div class="step-instruction">
-              <div class="step-label">上传完整操作视频</div>
-              <p class="step-desc">请按照上述流程，录制并上传完整的操作视频以供系统自动评估。</p>
+          <div class="step-container">
+            <div class="step-label">操作流程</div>
+
+            <div v-for="step in currentSop.steps" :key="step.stepNo" class="step-item">
+              <div class="step-index">{{ step.stepNo }}</div>
+              <div class="step-main">
+                <p class="step-desc">{{ step.description }}</p>
+                <div class="step-sub">{{ step.referenceMode === 'text' ? '仅按文字规则校验，无示范视频' : (step.referenceSummary || '已生成该步骤的参考信息') }}</div>
+              </div>
             </div>
 
-            <div class="upload-section">
+            <div class="upload-section" v-if="!evaluationResult || !evaluationResult.passed">
               <el-upload
                 class="minimal-upload"
                 drag
@@ -138,7 +126,7 @@
                   <div class="upload-text">
                     <span class="bold">点击上传</span> 或将文件拖拽到此处
                   </div>
-                  <div class="upload-hint">支持 MP4 或 AVI 格式视频</div>
+                  <div class="upload-hint">支持 MP4 / MOV / AVI 格式视频</div>
                 </div>
               </el-upload>
 
@@ -147,281 +135,121 @@
                   <el-icon><VideoPlay /></el-icon>
                   <span>{{ currentVideo.name }}</span>
                 </div>
-                <el-button 
-                  type="primary" 
-                  class="submit-action-btn" 
-                  @click="submitVideo" 
-                  :loading="isEvaluating"
-                >
+                <el-button type="primary" class="submit-action-btn" @click="submitVideo" :loading="isEvaluating">
                   解析与验证
                 </el-button>
               </div>
-
-              <div v-if="stageText" class="stage-text">{{ stageText }}</div>
             </div>
           </div>
 
-          <!-- Result Area -->
           <div class="result-card" v-if="evaluationResult" :class="evaluationResult.passed ? 'success' : 'error'">
             <div class="result-header">
               <el-icon class="result-icon" v-if="evaluationResult.passed"><CircleCheckFilled /></el-icon>
               <el-icon class="result-icon" v-else><WarningFilled /></el-icon>
               <h3>{{ evaluationResult.passed ? '验证通过' : '验证未通过' }}</h3>
             </div>
-
-            <div v-if="typeof evaluationResult.score === 'number'" class="result-score">
-              总分：{{ evaluationResult.score }} / 100
+            <div class="result-score">综合得分：{{ formatScore(evaluationResult.score, '-') }}</div>
+            <div v-if="currentSopHasNoDemoVideo" class="result-note">
+              当前 SOP 没有上传示范视频，本次仅依据步骤文字和你上传的视频进行判断。
             </div>
-
             <p class="result-feedback">{{ evaluationResult.feedback }}</p>
 
             <div v-if="evaluationResult.issues?.length" class="issues-list">
-              <span v-for="(issue, index) in evaluationResult.issues" :key="index" class="issue-chip">
-                {{ issue }}
-              </span>
-            </div>
-            <div v-if="evaluationResult.sequenceAssessment || evaluationResult.prerequisiteViolated" class="issues-list">
-              <span v-if="evaluationResult.sequenceAssessment" class="issue-chip">顺序评估：{{ evaluationResult.sequenceAssessment }}</span>
-              <span v-if="evaluationResult.prerequisiteViolated" class="issue-chip">存在前置条件问题</span>
+              <span v-for="(issue, index) in evaluationResult.issues" :key="index" class="issue-chip">{{ issue }}</span>
             </div>
 
             <div v-if="evaluationResult.stepResults?.length" class="step-result-list">
               <div v-for="item in evaluationResult.stepResults" :key="item.stepNo" class="step-result-item">
                 <div class="step-result-top">
-                  <div class="step-result-title">步骤 {{ item.stepNo }}：{{ item.description }}</div>
-                  <div class="step-result-status">{{ item.passed ? '通过' : '异常' }} · {{ item.score }} 分</div>
+                  <div class="step-result-title">步骤 {{ item.stepNo }}: {{ item.description }}</div>
+                  <div class="step-result-status">{{ getStepResultText(item.passed) }}</div>
                 </div>
-                <div class="step-result-meta">置信度：{{ formatConfidence(item.confidence) }}</div>
-                <div v-if="item.issueType || item.completionLevel || item.orderIssue || item.prerequisiteViolated" class="step-flag-list">
-                  <span v-if="item.issueType" class="issue-chip">{{ item.issueType }}</span>
-                  <span v-if="item.completionLevel" class="issue-chip">完成度：{{ item.completionLevel }}</span>
-                  <span v-if="item.orderIssue" class="issue-chip">顺序异常</span>
-                  <span v-if="item.prerequisiteViolated" class="issue-chip">前置条件缺失</span>
-                </div>
-                <div class="evidence-text">{{ item.evidence }}</div>
+                <div class="step-result-meta">得分 {{ formatScore(item.score, '-') }} / 置信度 {{ formatConfidence(item.confidence) }}</div>
+                <div class="detail-text">{{ item.evidence }}</div>
               </div>
             </div>
 
-            <el-collapse v-if="evaluationResult.payloadPreview || evaluationResult.rawModelResult" class="result-collapse">
-              <el-collapse-item title="请求载荷预览（已隐藏 Base64）" name="1">
-                <pre class="code-wrap">{{ JSON.stringify(evaluationResult.payloadPreview, null, 2) }}</pre>
-              </el-collapse-item>
-              <el-collapse-item title="原始模型结果" name="2">
-                <pre class="code-wrap">{{ JSON.stringify(evaluationResult.rawModelResult, null, 2) }}</pre>
-              </el-collapse-item>
-            </el-collapse>
-
             <div class="result-actions">
-              <el-button 
-                type="primary" 
-                class="action-btn-primary"
-                @click="finishSop"
-              >
-                完成整个流程
-              </el-button>
-              <el-button 
-                v-if="!evaluationResult.passed" 
-                class="action-btn-secondary"
-                @click="retrySop"
-              >
-                重新上传视频
-              </el-button>
+              <el-button type="primary" class="action-btn-primary" @click="finishSop">完成并保存记录</el-button>
+              <el-button v-if="!evaluationResult.passed" class="action-btn-secondary" @click="retrySop">重新上传</el-button>
             </div>
           </div>
         </div>
       </div>
     </el-main>
 
-    <el-dialog v-model="configVisible" title="百炼 API 配置" width="680px" class="minimal-dialog" destroy-on-close>
-      <el-alert
-        class="config-alert"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="当前是前端直连版，API Key 会保存在浏览器 localStorage 中，仅建议用于本地调试。"
-      />
-      <el-form label-position="top" class="minimal-form config-form">
+    <el-dialog v-model="configVisible" title="后端 API 配置" width="640px">
+      <el-alert type="info" :closable="false" show-icon title="当前配置保存到后端，管理员创建 SOP 和用户执行评估都会共用这份配置。" />
+      <el-form label-position="top" class="config-form">
         <el-form-item label="API Key">
-          <el-input v-model="apiConfig.apiKey" type="password" show-password placeholder="请输入阿里百炼 API Key" />
+          <el-input v-model="apiConfig.apiKey" type="password" show-password />
         </el-form-item>
-        <div class="config-row">
-          <el-form-item label="Base URL" class="flex-1">
+        <div class="form-row">
+          <el-form-item label="Base URL" class="grow">
             <el-input v-model="apiConfig.baseURL" />
           </el-form-item>
-          <el-form-item label="模型名称" class="flex-1">
+          <el-form-item label="模型名称" class="grow">
             <el-input v-model="apiConfig.model" />
           </el-form-item>
         </div>
-        <div class="config-row config-row-small">
-          <el-form-item label="fps" class="flex-1">
+        <div class="form-row">
+          <el-form-item label="fps" class="grow">
             <el-input-number v-model="apiConfig.fps" :min="0.1" :max="10" :step="0.5" />
           </el-form-item>
-          <el-form-item label="temperature" class="flex-1">
+          <el-form-item label="temperature" class="grow">
             <el-input-number v-model="apiConfig.temperature" :min="0" :max="2" :step="0.1" />
           </el-form-item>
-          <el-form-item label="超时(ms)" class="flex-1">
+          <el-form-item label="timeout(ms)" class="grow">
             <el-input-number v-model="apiConfig.timeoutMs" :min="10000" :max="300000" :step="10000" />
           </el-form-item>
         </div>
       </el-form>
       <template #footer>
-        <div class="dialog-footer">
-          <el-button text @click="resetApiConfig">恢复默认</el-button>
-          <el-button type="primary" class="submit-btn" @click="saveApiConfig">保存配置</el-button>
-        </div>
+        <el-button @click="resetApiConfig">恢复默认</el-button>
+        <el-button type="primary" @click="saveApiConfig">保存配置</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog
-      v-model="historyDetailVisible"
-      title="历史记录详情"
-      width="820px"
-      class="minimal-dialog history-detail-dialog"
-      destroy-on-close
-    >
-      <template v-if="selectedHistoryRecord">
-        <div class="history-detail-layout">
-          <div class="history-summary-grid">
-            <div class="history-summary-card">
-              <div class="history-summary-label">SOP 名称</div>
-              <div class="history-summary-value">{{ selectedHistoryRecord.taskName || '-' }}</div>
+    <el-dialog v-model="historyDetailVisible" title="执行记录详情" width="820px">
+      <div v-if="selectedHistoryRecord" class="detail-wrap">
+        <div class="summary">{{ selectedHistoryRecord.taskName }} / {{ selectedHistoryRecord.finishTime }}</div>
+        <div class="detail-box">
+          <div class="detail-title">综合反馈</div>
+          <div class="detail-text">{{ selectedHistoryRecord.detail.feedback || '暂无反馈' }}</div>
+        </div>
+        <div class="detail-box" v-if="selectedHistoryVideoUrl">
+          <div class="detail-title">上传视频</div>
+          <video :src="selectedHistoryVideoUrl" controls class="video" />
+        </div>
+        <div class="detail-box" v-if="selectedHistoryRecord.manualReview">
+          <div class="detail-title">人工复核</div>
+          <div class="detail-text">{{ getManualReviewText(selectedHistoryRecord.manualReview.status) }}</div>
+          <div class="detail-text">{{ selectedHistoryRecord.manualReview.note || '暂无复核意见' }}</div>
+        </div>
+        <div class="detail-box" v-if="selectedHistoryRecord.detail.stepResults?.length">
+          <div class="detail-title">步骤结果</div>
+          <div v-for="item in selectedHistoryRecord.detail.stepResults" :key="item.stepNo" class="step-result-item">
+            <div class="step-result-top">
+              <div class="step-result-title">步骤 {{ item.stepNo }}: {{ item.description }}</div>
+              <div class="step-result-status">{{ getStepResultText(item.passed) }}</div>
             </div>
-            <div class="history-summary-card">
-              <div class="history-summary-label">适用场景</div>
-              <div class="history-summary-value">{{ selectedHistoryRecord.scene || '-' }}</div>
-            </div>
-            <div class="history-summary-card">
-              <div class="history-summary-label">完成时间</div>
-              <div class="history-summary-value">{{ selectedHistoryRecord.finishTime || '-' }}</div>
-            </div>
-            <div class="history-summary-card">
-              <div class="history-summary-label">自动评测</div>
-              <div class="history-summary-value">
-                <el-tag :class="['minimal-status-tag', selectedHistoryRecord.status === 'passed' ? 'is-passed' : 'is-failed']">
-                  {{ getStatusText(selectedHistoryRecord.status) }}
-                </el-tag>
-              </div>
-            </div>
-            <div class="history-summary-card">
-              <div class="history-summary-label">人工复核</div>
-              <div class="history-summary-value">
-                <el-tag :class="['minimal-status-tag', getManualReviewTagClass(selectedHistoryRecord.manualReview?.status)]">
-                  {{ getManualReviewText(selectedHistoryRecord.manualReview?.status) }}
-                </el-tag>
-              </div>
-            </div>
-            <div class="history-summary-card">
-              <div class="history-summary-label">上传视频</div>
-              <div class="history-summary-value">{{ selectedHistoryRecord.detail.uploadedVideo?.name || '未记录' }}</div>
-            </div>
+            <div class="step-result-meta">得分 {{ formatScore(item.score, '-') }}</div>
+            <div class="detail-text">{{ item.evidence }}</div>
           </div>
-
-          <template v-if="hasHistoryDetail(selectedHistoryRecord)">
-            <div class="history-detail-section" v-if="selectedHistoryRecord.detail.feedback">
-              <div class="history-detail-title">总体反馈</div>
-              <div class="history-feedback-card">{{ selectedHistoryRecord.detail.feedback }}</div>
-            </div>
-
-            <div class="history-detail-section" v-if="selectedHistoryRecord.manualReview">
-              <div class="history-detail-title">人工复核意见</div>
-              <div class="history-feedback-card">
-                <div class="review-status-row">
-                  <span class="review-status-label">复核结论</span>
-                  <el-tag :class="['minimal-status-tag', getManualReviewTagClass(selectedHistoryRecord.manualReview.status)]">
-                    {{ getManualReviewText(selectedHistoryRecord.manualReview.status) }}
-                  </el-tag>
-                </div>
-                <div class="review-meta">
-                  <span>复核人：{{ selectedHistoryRecord.manualReview.reviewer || '管理员' }}</span>
-                  <span>复核时间：{{ selectedHistoryRecord.manualReview.reviewTime || '-' }}</span>
-                </div>
-                <div class="review-note">{{ selectedHistoryRecord.manualReview.note || '管理员暂未填写补充意见。' }}</div>
-              </div>
-            </div>
-
-            <div class="history-detail-section" v-if="selectedHistoryRecord.detail.issues.length">
-              <div class="history-detail-title">问题摘要</div>
-              <div class="issues-list compact">
-                <span v-for="(issue, index) in selectedHistoryRecord.detail.issues" :key="index" class="issue-chip">
-                  {{ issue }}
-                </span>
-              </div>
-            </div>
-
-            <div class="history-detail-section" v-if="selectedHistoryRecord.detail.sequenceAssessment || selectedHistoryRecord.detail.prerequisiteViolated">
-              <div class="history-detail-title">流程判断</div>
-              <div class="issues-list compact">
-                <span v-if="selectedHistoryRecord.detail.sequenceAssessment" class="issue-chip">顺序评估：{{ selectedHistoryRecord.detail.sequenceAssessment }}</span>
-                <span v-if="selectedHistoryRecord.detail.prerequisiteViolated" class="issue-chip">存在前置条件问题</span>
-              </div>
-            </div>
-
-            <div class="history-detail-section" v-if="selectedHistoryRecord.detail.stepResults.length">
-              <div class="history-detail-title">逐步分析</div>
-              <div class="step-result-list compact">
-                <div v-for="item in selectedHistoryRecord.detail.stepResults" :key="`${selectedHistoryRecord.id}-${item.stepNo}`" class="step-result-item">
-                  <div class="step-result-top">
-                    <div class="step-result-title">步骤 {{ item.stepNo }}：{{ item.description || '未命名步骤' }}</div>
-                    <div class="step-result-status">{{ getStepResultText(item.passed) }} · {{ formatScore(item.score, '--') }}</div>
-                  </div>
-                  <div class="step-result-meta">置信度：{{ formatConfidence(item.confidence) }}</div>
-                  <div v-if="item.issueType || item.completionLevel || item.orderIssue || item.prerequisiteViolated" class="step-flag-list">
-                    <span v-if="item.issueType" class="issue-chip">{{ item.issueType }}</span>
-                    <span v-if="item.completionLevel" class="issue-chip">完成度：{{ item.completionLevel }}</span>
-                    <span v-if="item.orderIssue" class="issue-chip">顺序异常</span>
-                    <span v-if="item.prerequisiteViolated" class="issue-chip">前置条件缺失</span>
-                  </div>
-                  <div class="evidence-text">{{ item.evidence || '未返回分析说明。' }}</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="history-detail-section" v-if="selectedHistoryRecord.detail.sopSteps.length">
-              <div class="history-detail-title">执行时 SOP 快照</div>
-              <div class="history-step-list">
-                <div v-for="item in selectedHistoryRecord.detail.sopSteps" :key="`${selectedHistoryRecord.id}-sop-${item.stepNo}`" class="history-step-item">
-                  <div class="history-step-index">{{ item.stepNo }}</div>
-                  <div class="history-step-content">
-                    <div class="history-step-text">{{ item.description || '未填写步骤说明' }}</div>
-                    <div class="history-step-meta">{{ item.videoName ? `示范视频：${item.videoName}` : '未记录示范视频信息' }}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
-
-          <el-empty
-            v-else
-            description="这条历史记录生成于详情功能上线前，当前只保留了摘要信息。"
-            class="minimal-empty"
-          />
         </div>
-      </template>
+      </div>
     </el-dialog>
-
-
-
-
   </el-container>
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import {
-  ArrowRight, Location, List, ArrowLeft,
-  VideoCamera, VideoPlay, CircleCheckFilled, WarningFilled, Monitor
-} from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { ArrowLeft, ArrowRight, CircleCheckFilled, List, Location, Monitor, VideoCamera, VideoPlay, WarningFilled } from '@element-plus/icons-vue'
+import { createHistory, evaluateSop, fileToDataUrl, getConfig, getHistoryDetail, listHistory, listSops, toAbsoluteApiUrl, updateConfig } from '../api/client'
 
 const router = useRouter()
-
-const SOP_LIST_KEY = 'sopList'
-const SOP_HISTORY_KEY = 'sopHistoryList'
-const API_CONFIG_KEY = 'dashscopeEvalConfig'
-const SOP_DB_NAME = 'sop-demo-db'
-const SOP_STORE_NAME = 'videoFiles'
-
 const DEFAULT_API_CONFIG = {
   apiKey: '',
   baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -435,438 +263,139 @@ const sopList = ref([])
 const historyList = ref([])
 const activeTab = ref('tasks')
 const currentSop = ref(null)
-const hasErrorInCurrentSop = ref(false)
-
 const currentVideo = ref(null)
 const isEvaluating = ref(false)
 const evaluationResult = ref(null)
-const stageText = ref('')
 const configVisible = ref(false)
 const historyDetailVisible = ref(false)
 const selectedHistoryRecord = ref(null)
-
 const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 
-const handleStorageSync = (event) => {
-  if (!event.key || event.key === SOP_HISTORY_KEY) {
-    loadHistory()
-  }
-  if (!event.key || event.key === SOP_LIST_KEY) {
-    loadSops()
-  }
-}
-
-onMounted(() => {
-  loadSops()
-  loadHistory()
-  loadApiConfig()
-  window.addEventListener('storage', handleStorageSync)
+const selectedHistoryVideoUrl = computed(() => toAbsoluteApiUrl(selectedHistoryRecord.value?.detail?.uploadedVideo?.url || ''))
+const currentSopHasNoDemoVideo = computed(() => {
+  const steps = currentSop.value?.steps || []
+  return steps.length > 0 && steps.every((step) => step.referenceMode === 'text')
 })
 
-onBeforeUnmount(() => {
-  window.removeEventListener('storage', handleStorageSync)
-})
-
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(SOP_DB_NAME, 1)
-    request.onerror = () => reject(request.error)
-    request.onsuccess = () => resolve(request.result)
-    request.onupgradeneeded = () => {
-      const db = request.result
-      if (!db.objectStoreNames.contains(SOP_STORE_NAME)) {
-        db.createObjectStore(SOP_STORE_NAME)
-      }
-    }
-  })
-}
-
-async function getVideoFile(key) {
-  if (!key) return null
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(SOP_STORE_NAME, 'readonly')
-    const request = tx.objectStore(SOP_STORE_NAME).get(key)
-    request.onsuccess = () => resolve(request.result || null)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-async function setStoreValue(key, value) {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(SOP_STORE_NAME, 'readwrite')
-    tx.objectStore(SOP_STORE_NAME).put(value, key)
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-  })
-}
-
-function normalizeSop(item = {}) {
+function normalizeHistory(record = {}) {
   return {
-    ...item,
-    steps: (item.steps || []).map((step, index) => ({
-      ...step,
-      stepNo: step.stepNo || index + 1,
-      description: step.description || '',
-      videoKey: step.videoKey || '',
-      videoMeta: step.videoMeta || null,
-      referenceAssetKey: step.referenceAssetKey || '',
-      referenceSummary: step.referenceSummary || '',
-      referenceFeatures: step.referenceFeatures || null,
-      substeps: Array.isArray(step.substeps) ? step.substeps : [],
-      roiHint: step.roiHint || '',
-      aiUsed: Boolean(step.aiUsed)
-    }))
+    ...record,
+    detail: {
+      feedback: record.detail?.feedback || '',
+      issues: Array.isArray(record.detail?.issues) ? record.detail.issues : [],
+      stepResults: Array.isArray(record.detail?.stepResults) ? record.detail.stepResults : [],
+      uploadedVideo: record.detail?.uploadedVideo || null
+    },
+    manualReview: record.manualReview || null
   }
 }
 
-function persistSops() {
-  localStorage.setItem(SOP_LIST_KEY, JSON.stringify(sopList.value))
+async function loadSops() {
+  sopList.value = (await listSops()).data || []
 }
 
-function loadSops() {
-  const stored = localStorage.getItem(SOP_LIST_KEY)
-  sopList.value = stored ? JSON.parse(stored).map(normalizeSop) : []
+async function loadHistory() {
+  historyList.value = ((await listHistory()).data || []).map(normalizeHistory)
 }
 
-function loadHistory() {
-  const historyStored = localStorage.getItem(SOP_HISTORY_KEY)
-  historyList.value = historyStored ? JSON.parse(historyStored).map(normalizeHistoryRecord) : []
-  if (selectedHistoryRecord.value) {
-    const latestRecord = historyList.value.find(item => item.id === selectedHistoryRecord.value.id)
-    if (latestRecord) {
-      selectedHistoryRecord.value = latestRecord
-    }
+async function loadApiConfig() {
+  Object.assign(apiConfig, DEFAULT_API_CONFIG, (await getConfig()).data || {})
+}
+
+function openConfigDialog() {
+  configVisible.value = true
+}
+
+async function saveApiConfig() {
+  try {
+    await updateConfig({ ...apiConfig })
+    configVisible.value = false
+    ElMessage.success('配置已保存到后端')
+  } catch (error) {
+    ElMessage.error(error.message || '保存配置失败')
   }
-}
-
-function loadApiConfig() {
-  const stored = localStorage.getItem(API_CONFIG_KEY)
-  Object.assign(apiConfig, stored ? { ...DEFAULT_API_CONFIG, ...JSON.parse(stored) } : { ...DEFAULT_API_CONFIG })
-}
-
-function saveApiConfig() {
-  localStorage.setItem(API_CONFIG_KEY, JSON.stringify({ ...apiConfig }))
-  ElMessage.success('API 配置已保存')
-  configVisible.value = false
 }
 
 function resetApiConfig() {
-  Object.assign(apiConfig, { ...DEFAULT_API_CONFIG })
+  Object.assign(apiConfig, DEFAULT_API_CONFIG)
 }
 
-const handleLogout = () => {
+function handleLogout() {
+  sessionStorage.removeItem('currentUser')
   router.push('/login')
 }
 
-const startSop = (sop) => {
+function startSop(sop) {
   currentSop.value = sop
-  hasErrorInCurrentSop.value = false
-  resetState()
-}
-
-const backToList = () => {
-  currentSop.value = null
-  resetState()
-}
-
-const resetState = () => {
   currentVideo.value = null
-  isEvaluating.value = false
   evaluationResult.value = null
-  stageText.value = ''
 }
 
-const handleVideoChange = (file) => {
+function backToList() {
+  currentSop.value = null
+  currentVideo.value = null
+  evaluationResult.value = null
+}
+
+function handleVideoChange(file) {
   currentVideo.value = file?.raw || file
 }
 
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.onerror = () => reject(reader.error || new Error('文件读取失败'))
-    reader.readAsDataURL(file)
-  })
-}
+async function submitVideo() {
+  if (!currentVideo.value) return ElMessage.warning('请先上传视频')
+  if (!apiConfig.apiKey?.trim()) return ElMessage.warning('请先配置 API Key')
 
-function withTimeout(promise, ms) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`请求超时（>${ms}ms）`)), ms)
-    promise.then((value) => {
-      clearTimeout(timer)
-      resolve(value)
-    }).catch((err) => {
-      clearTimeout(timer)
-      reject(err)
-    })
-  })
-}
-
-async function prepareStepReference(stepNo, description, videoFile) {
-  const videoDataUrl = await fileToDataUrl(videoFile)
-  const response = await withTimeout(fetch('http://localhost:8000/api/prepare-step-video', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      stepNo,
-      description,
-      videoDataUrl,
-      maxFrames: 8,
-      apiConfig: {
-        apiKey: apiConfig.apiKey,
-        baseURL: apiConfig.baseURL,
-        model: apiConfig.model,
-        fps: apiConfig.fps,
-        temperature: apiConfig.temperature,
-        timeoutMs: apiConfig.timeoutMs
-      }
-    })
-  }), apiConfig.timeoutMs)
-
-  const rawText = await response.text()
-  let resultJson = null
+  isEvaluating.value = true
   try {
-    resultJson = JSON.parse(rawText)
-  } catch {
-    throw new Error(rawText || `HTTP ${response.status}`)
+    const result = await evaluateSop(currentSop.value.id, await fileToDataUrl(currentVideo.value))
+    evaluationResult.value = result.data
+    ElMessage.success('评估完成')
+  } catch (error) {
+    ElMessage.error(error.message || '评估失败')
+  } finally {
+    isEvaluating.value = false
   }
-
-  if (!response.ok || !resultJson.success) {
-    const message = resultJson?.detail || resultJson?.message || rawText || `HTTP ${response.status}`
-    throw new Error(message)
-  }
-
-  return resultJson.data
 }
 
-async function ensureReferenceAssets(sop) {
-  const steps = (sop.steps || []).map((step, index) => ({
-    ...step,
-    stepNo: step.stepNo || index + 1
-  }))
-
-  const sopIndex = sopList.value.findIndex(item => item.id === sop.id)
-  let changed = false
-  const resolvedSteps = []
-
-  for (const step of steps) {
-    let assetKey = step.referenceAssetKey || ''
-    let asset = assetKey ? await getVideoFile(assetKey) : null
-
-    if ((!asset || !asset.referenceFrames?.length) && step.videoKey) {
-      stageText.value = `正在为步骤 ${step.stepNo} 生成可复用参考素材...`
-      const sourceVideo = await getVideoFile(step.videoKey)
-      if (!sourceVideo) {
-        throw new Error(`步骤 ${step.stepNo} 的示范视频不存在，请联系管理员重新发布 SOP`)
-      }
-      asset = await prepareStepReference(step.stepNo, step.description, sourceVideo)
-      assetKey = assetKey || `${sop.id}-step-${step.stepNo}-reference`
-      await setStoreValue(assetKey, asset)
-      step.referenceAssetKey = assetKey
-      step.referenceSummary = asset.referenceSummary || ''
-      step.referenceFeatures = asset.referenceFeatures || null
-      step.substeps = Array.isArray(asset.substeps) ? asset.substeps : []
-      step.roiHint = asset.roiHint || ''
-      step.aiUsed = Boolean(asset.aiUsed)
-      changed = true
-    }
-
-    if (!asset || !asset.referenceFrames?.length) {
-      throw new Error(`步骤 ${step.stepNo} 缺少参考素材，请重新发布 SOP`)
-    }
-
-    resolvedSteps.push({
-      stepNo: step.stepNo,
-      description: step.description,
-      referenceFrames: asset.referenceFrames,
-      referenceSummary: asset.referenceSummary || step.referenceSummary || '',
-      referenceFeatures: asset.referenceFeatures || step.referenceFeatures || null,
-      substeps: Array.isArray(asset.substeps) ? asset.substeps : (Array.isArray(step.substeps) ? step.substeps : []),
-      roiHint: asset.roiHint || step.roiHint || ''
-    })
-  }
-
-  if (changed && sopIndex !== -1) {
-    const updatedSop = normalizeSop({
-      ...sopList.value[sopIndex],
-      steps
-    })
-    sopList.value.splice(sopIndex, 1, updatedSop)
-    persistSops()
-    if (currentSop.value?.id === updatedSop.id) {
-      currentSop.value = updatedSop
-    }
-  }
-
-  return resolvedSteps
-}
-
-function extractJsonString(content) {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    const textPart = content.find(item => item?.type === 'text' && item?.text)
-    if (textPart?.text) return textPart.text
-  }
-  return ''
-}
-
-function parseJsonFromModel(content) {
-  const raw = extractJsonString(content).trim()
-  if (!raw) throw new Error('模型未返回可解析内容')
+async function finishSop() {
+  if (!currentSop.value || !evaluationResult.value || !currentVideo.value) return
   try {
-    return JSON.parse(raw)
-  } catch {
-    const match = raw.match(/\{[\s\S]*\}/)
-    if (match) return JSON.parse(match[0])
-    throw new Error('模型返回不是合法 JSON')
-  }
-}
-
-async function evaluateByRealApi(sop, userVideoFile) {
-  if (!apiConfig.apiKey?.trim()) throw new Error('请先配置 API Key')
-
-  const steps = (sop.steps || []).map((step, index) => ({
-    ...step,
-    stepNo: step.stepNo || index + 1
-  }))
-
-  if (steps.some(step => !step.videoKey)) {
-    throw new Error('该 SOP 仍有步骤未上传示范视频，无法调用真实评测')
-  }
-
-  stageText.value = '正在读取管理员示范视频...'
-  const demoFiles = []
-  for (const step of steps) {
-    const file = await getVideoFile(step.videoKey)
-    if (!file) {
-      throw new Error(`步骤 ${step.stepNo} 的示范视频不存在，请回管理员端重新上传`)
-    }
-    demoFiles.push({
-      stepNo: step.stepNo,
-      description: step.description,
-      dataUrl: await fileToDataUrl(file)
+    await createHistory({
+      taskId: currentSop.value.id,
+      userVideoDataUrl: await fileToDataUrl(currentVideo.value),
+      uploadedVideo: {
+        name: currentVideo.value.name || '',
+        type: currentVideo.value.type || '',
+        size: currentVideo.value.size ?? null,
+        lastModified: currentVideo.value.lastModified ?? null
+      },
+      evaluationResult: evaluationResult.value
     })
-  }
-
-  stageText.value = '正在转换用户视频...'
-  const userVideoDataUrl = await fileToDataUrl(userVideoFile)
-
-  const payload = {
-    apiConfig: {
-      apiKey: apiConfig.apiKey,
-      baseURL: apiConfig.baseURL,
-      model: apiConfig.model,
-      fps: apiConfig.fps,
-      temperature: apiConfig.temperature,
-      timeoutMs: apiConfig.timeoutMs
-    },
-    sop: {
-      name: sop.name,
-      scene: sop.scene,
-      stepCount: steps.length
-    },
-    demoFiles,
-    userVideoDataUrl
-  }
-
-  stageText.value = '正在请求后端评估接口...'
-  const response = await withTimeout(fetch('http://localhost:8000/api/evaluate', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  }), apiConfig.timeoutMs + 10000)
-
-  const rawText = await response.text()
-  let resultJson = null
-  try {
-    resultJson = JSON.parse(rawText)
-  } catch {
-    throw new Error(rawText || `HTTP ${response.status}`)
-  }
-
-  if (!response.ok || !resultJson.success) {
-    const message = resultJson?.detail || resultJson?.message || rawText || `HTTP ${response.status}`
-    throw new Error(message)
-  }
-
-  const rawModelResult = resultJson.data
-  const parsed = parseJsonFromModel(rawModelResult?.choices?.[0]?.message?.content)
-  return {
-    ...normalizeEvaluationResult(parsed),
-    rawModelResult,
-    payloadPreview: resultJson.payloadPreview
+    await loadHistory()
+    ElMessage.success('记录已保存')
+    backToList()
+  } catch (error) {
+    ElMessage.error(error.message || '保存记录失败')
   }
 }
 
-async function evaluateByStepAssets(sop, userVideoFile) {
-  if (!apiConfig.apiKey?.trim()) throw new Error('请先配置 API Key')
+function retrySop() {
+  currentVideo.value = null
+  evaluationResult.value = null
+}
 
-  stageText.value = '正在准备可复用的参考素材...'
-  const steps = await ensureReferenceAssets(sop)
-
-  stageText.value = '正在转换用户视频...'
-  const userVideoDataUrl = await fileToDataUrl(userVideoFile)
-
-  const payload = {
-    apiConfig: {
-      apiKey: apiConfig.apiKey,
-      baseURL: apiConfig.baseURL,
-      model: apiConfig.model,
-      fps: apiConfig.fps,
-      temperature: apiConfig.temperature,
-      timeoutMs: apiConfig.timeoutMs
-    },
-    sop: {
-      name: sop.name,
-      scene: sop.scene,
-      stepCount: steps.length,
-      steps
-    },
-    userVideoDataUrl
-  }
-
-  stageText.value = '正在请求后端评估接口...'
-  const response = await withTimeout(fetch('http://localhost:8000/api/evaluate', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  }), apiConfig.timeoutMs + 10000)
-
-  const rawText = await response.text()
-  let resultJson = null
+async function openHistoryDetail(row) {
   try {
-    resultJson = JSON.parse(rawText)
-  } catch {
-    throw new Error(rawText || `HTTP ${response.status}`)
-  }
-
-  if (!response.ok || !resultJson.success) {
-    const message = resultJson?.detail || resultJson?.message || rawText || `HTTP ${response.status}`
-    throw new Error(message)
-  }
-
-  const rawModelResult = resultJson.data
-  const parsed = parseJsonFromModel(rawModelResult?.choices?.[0]?.message?.content)
-  return {
-    ...normalizeEvaluationResult(parsed),
-    rawModelResult,
-    payloadPreview: resultJson.payloadPreview,
-    segmentPreview: resultJson.segmentPreview
+    selectedHistoryRecord.value = normalizeHistory((await getHistoryDetail(row.id)).data)
+    historyDetailVisible.value = true
+  } catch (error) {
+    ElMessage.error(error.message || '加载详情失败')
   }
 }
 
 function formatConfidence(value) {
   const num = Number(value)
-  if (!Number.isFinite(num)) return '-'
-  return num.toFixed(2)
+  return Number.isFinite(num) ? num.toFixed(2) : '-'
 }
 
 function formatScore(value, fallback = '-') {
@@ -875,207 +404,25 @@ function formatScore(value, fallback = '-') {
 }
 
 function getStatusText(status) {
-  return status === 'passed' ? '验证通过' : '存在异常'
+  return status === 'passed' ? '通过' : '异常'
 }
 
 function getStepResultText(passed) {
-  if (passed === true) return '通过'
-  if (passed === false) return '异常'
-  return '未知'
+  return passed === true ? '通过' : passed === false ? '异常' : '未知'
 }
 
 function getManualReviewText(status) {
-  if (status === 'approved') return '人工复核通过'
-  if (status === 'rejected') return '人工复核不通过'
+  if (status === 'approved') return '复核通过'
+  if (status === 'rejected') return '复核不通过'
   if (status === 'needs_attention') return '需要整改'
   return '待复核'
 }
 
-function getManualReviewTagClass(status) {
-  if (status === 'approved') return 'is-review-approved'
-  if (status === 'rejected') return 'is-review-rejected'
-  if (status === 'needs_attention') return 'is-review-attention'
-  return 'is-review-pending'
-}
-
-function normalizeManualReview(review) {
-  if (!review || typeof review !== 'object') return null
-  return {
-    status: review.status || '',
-    note: review.note || '',
-    reviewer: review.reviewer || '',
-    reviewTime: review.reviewTime || ''
-  }
-}
-
-function normalizeStepResult(item = {}) {
-  const passed = typeof item.passed === 'boolean' ? item.passed : null
-  return {
-    stepNo: item.stepNo ?? null,
-    description: item.description || '',
-    passed,
-    score: item.score ?? null,
-    confidence: item.confidence ?? null,
-    issueType: item.issueType || (passed === true ? '正常' : ''),
-    completionLevel: item.completionLevel || '',
-    orderIssue: Boolean(item.orderIssue),
-    prerequisiteViolated: Boolean(item.prerequisiteViolated),
-    evidence: item.evidence || ''
-  }
-}
-
-function normalizeEvaluationResult(result = {}) {
-  return {
-    ...result,
-    issues: Array.isArray(result.issues) ? result.issues : [],
-    sequenceAssessment: result.sequenceAssessment || '',
-    prerequisiteViolated: Boolean(result.prerequisiteViolated),
-    stepResults: Array.isArray(result.stepResults) ? result.stepResults.map(normalizeStepResult) : []
-  }
-}
-
-function normalizeHistoryRecord(record = {}) {
-  const detail = record.detail || {}
-  return {
-    ...record,
-    manualReview: normalizeManualReview(record.manualReview),
-    detail: {
-      feedback: detail.feedback || record.feedback || '',
-      issues: Array.isArray(detail.issues) ? detail.issues : (Array.isArray(record.issues) ? record.issues : []),
-      sequenceAssessment: detail.sequenceAssessment || record.sequenceAssessment || '',
-      prerequisiteViolated: Boolean(detail.prerequisiteViolated || record.prerequisiteViolated),
-      stepResults: Array.isArray(detail.stepResults)
-        ? detail.stepResults.map(normalizeStepResult)
-        : (Array.isArray(record.stepResults) ? record.stepResults.map(normalizeStepResult) : []),
-      sopSteps: Array.isArray(detail.sopSteps) ? detail.sopSteps : (Array.isArray(record.sopSteps) ? record.sopSteps : []),
-      uploadedVideo: normalizeUploadedVideo(detail.uploadedVideo || record.uploadedVideo || null)
-    }
-  }
-}
-
-function normalizeUploadedVideo(uploadedVideo) {
-  if (!uploadedVideo || typeof uploadedVideo !== 'object') return null
-  return {
-    name: uploadedVideo.name || '',
-    type: uploadedVideo.type || '',
-    size: uploadedVideo.size ?? null,
-    lastModified: uploadedVideo.lastModified ?? null,
-    videoKey: uploadedVideo.videoKey || ''
-  }
-}
-
-function hasHistoryDetail(record) {
-  const normalized = normalizeHistoryRecord(record)
-  const detail = normalized.detail
-  return Boolean(
-    detail.feedback ||
-    detail.issues.length ||
-    detail.sequenceAssessment ||
-    detail.prerequisiteViolated ||
-    detail.stepResults.length ||
-    detail.sopSteps.length ||
-    detail.uploadedVideo?.name ||
-    normalized.manualReview?.status ||
-    normalized.manualReview?.note
-  )
-}
-
-function openHistoryDetail(record) {
-  selectedHistoryRecord.value = normalizeHistoryRecord(record)
-  historyDetailVisible.value = true
-}
-
-const submitVideo = async () => {
-  if (!currentVideo.value) {
-    ElMessage.warning('请先上传视频')
-    return
-  }
-  if (!apiConfig.apiKey?.trim()) {
-    ElMessage.warning('请先配置 API Key')
-    configVisible.value = true
-    return
-  }
-
-  isEvaluating.value = true
-  evaluationResult.value = null
-  stageText.value = ''
-
-  try {
-    const result = await evaluateByStepAssets(currentSop.value, currentVideo.value)
-    evaluationResult.value = result
-    hasErrorInCurrentSop.value = !result.passed
-    ElMessage.success('解析完成')
-  } catch (error) {
-    console.error(error)
-    ElMessage.error(error?.message || '调用失败')
-  } finally {
-    isEvaluating.value = false
-    if (!evaluationResult.value) stageText.value = ''
-  }
-}
-
-const saveHistory = async () => {
-  const recordId = Date.now()
-  let uploadedVideo = null
-
-  if (currentVideo.value) {
-    const videoKey = `${currentSop.value.id}-${recordId}-uploaded-video`
-    await setStoreValue(videoKey, currentVideo.value)
-    uploadedVideo = normalizeUploadedVideo({
-      name: currentVideo.value.name || '',
-      type: currentVideo.value.type || '',
-      size: currentVideo.value.size ?? null,
-      lastModified: currentVideo.value.lastModified ?? null,
-      videoKey
-    })
-  }
-
-  const record = normalizeHistoryRecord({
-    id: recordId,
-    taskId: currentSop.value.id,
-    taskName: currentSop.value.name,
-    scene: currentSop.value.scene,
-    finishTime: new Date().toLocaleString(),
-    score: evaluationResult.value?.score ?? null,
-    status: hasErrorInCurrentSop.value ? 'failed' : 'passed',
-    detail: {
-      feedback: evaluationResult.value?.feedback || '',
-      issues: Array.isArray(evaluationResult.value?.issues) ? [...evaluationResult.value.issues] : [],
-      sequenceAssessment: evaluationResult.value?.sequenceAssessment || '',
-      prerequisiteViolated: Boolean(evaluationResult.value?.prerequisiteViolated),
-      stepResults: Array.isArray(evaluationResult.value?.stepResults)
-        ? evaluationResult.value.stepResults.map(normalizeStepResult)
-        : [],
-      sopSteps: Array.isArray(currentSop.value?.steps)
-        ? currentSop.value.steps.map((step, index) => ({
-          stepNo: step.stepNo || index + 1,
-          description: step.description || '',
-          videoName: step.videoMeta?.name || ''
-        }))
-        : [],
-      uploadedVideo
-    }
+onMounted(() => {
+  Promise.all([loadSops(), loadHistory(), loadApiConfig()]).catch((error) => {
+    ElMessage.error(error.message || '初始化失败')
   })
-  historyList.value.unshift(record)
-  localStorage.setItem(SOP_HISTORY_KEY, JSON.stringify(historyList.value))
-}
-
-const finishSop = async () => {
-  try {
-    await saveHistory()
-    ElMessage.success('SOP 流程验证完成并已记录')
-    backToList()
-  } catch (error) {
-    console.error(error)
-    ElMessage.error('记录历史失败，请检查浏览器本地存储权限')
-  }
-}
-
-const retrySop = () => {
-  currentVideo.value = null
-  evaluationResult.value = null
-  stageText.value = ''
-}
+})
 </script>
 
 <style scoped>
@@ -1126,17 +473,6 @@ const retrySop = () => {
   gap: 24px;
 }
 
-.api-config-btn,
-.logout-btn {
-  color: #86868b;
-  font-weight: 500;
-}
-
-.api-config-btn:hover,
-.logout-btn:hover {
-  color: #1d1d1f;
-}
-
 .user-info {
   display: flex;
   align-items: center;
@@ -1149,6 +485,17 @@ const retrySop = () => {
   color: #1d1d1f;
 }
 
+.config-btn,
+.logout-btn {
+  color: #86868b;
+  font-weight: 500;
+}
+
+.config-btn:hover,
+.logout-btn:hover {
+  color: #1d1d1f;
+}
+
 .main-content {
   padding: 40px 32px;
 }
@@ -1156,6 +503,12 @@ const retrySop = () => {
 .content-wrapper {
   max-width: 800px;
   margin: 0 auto;
+}
+
+.user-tabs {
+  margin-bottom: 32px;
+  display: flex;
+  justify-content: center;
 }
 
 .page-header {
@@ -1176,7 +529,6 @@ const retrySop = () => {
   margin: 0;
 }
 
-/* Grid layout for Task Cards */
 .grid-container {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -1197,7 +549,7 @@ const retrySop = () => {
 
 .task-card:hover {
   border-color: #000000;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
   transform: translateY(-2px);
 }
 
@@ -1233,12 +585,6 @@ const retrySop = () => {
   border-top: 1px solid #f5f5f7;
 }
 
-.user-tabs {
-  margin-bottom: 32px;
-  display: flex;
-  justify-content: center;
-}
-
 :deep(.minimal-radio-group) {
   background-color: #e5e5ea;
   padding: 4px;
@@ -1255,11 +601,7 @@ const retrySop = () => {
   border-radius: 8px !important;
   padding: 8px 32px;
   font-size: 15px;
-  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-:deep(.minimal-radio-group .el-radio-button:hover .el-radio-button__inner) {
-  color: #1d1d1f;
+  transition: all 0.3s ease;
 }
 
 :deep(.minimal-radio-group .el-radio-button__original-radio:checked + .el-radio-button__inner) {
@@ -1269,8 +611,12 @@ const retrySop = () => {
   font-weight: 600;
 }
 
-:deep(.minimal-radio-group .el-radio-button:first-child .el-radio-button__inner) {
-  border-left: none;
+.table-card {
+  background-color: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  padding: 8px;
+  overflow: hidden;
 }
 
 :deep(.minimal-status-tag) {
@@ -1280,43 +626,17 @@ const retrySop = () => {
   border: 1px solid;
 }
 
-:deep(.minimal-status-tag.is-passed),
-:deep(.minimal-status-tag.is-review-approved) {
+:deep(.minimal-status-tag.is-passed) {
   background-color: #ffffff;
   color: #1d1d1f;
   border-color: #1d1d1f;
 }
 
 :deep(.minimal-status-tag.is-failed),
-:deep(.minimal-status-tag.is-review-rejected) {
+:deep(.minimal-status-tag.is-review) {
   background-color: #f5f5f7;
   color: #86868b;
   border-color: #e5e5ea;
-}
-
-:deep(.minimal-status-tag.is-review-attention),
-:deep(.minimal-status-tag.is-review-pending) {
-  background-color: #fff8e8;
-  color: #9a6700;
-  border-color: #f3d58b;
-}
-
-
-.table-card {
-  background-color: #ffffff;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-  padding: 8px;
-  overflow: hidden;
-}
-
-.action-link-btn {
-  color: #1d1d1f;
-  font-weight: 500;
-}
-
-.action-link-btn:hover {
-  color: #000000;
 }
 
 :deep(.el-table) {
@@ -1338,7 +658,6 @@ const retrySop = () => {
   font-size: 14px;
 }
 
-/* Execution View Styles */
 .execution-header {
   margin-bottom: 40px;
 }
@@ -1376,58 +695,28 @@ const retrySop = () => {
   font-weight: 500;
 }
 
-.sop-overview {
-  background: #ffffff;
-  border-radius: 16px;
-  border: 1px solid #e5e5ea;
-  padding: 32px;
-  margin-bottom: 24px;
+.progress-section {
+  margin-bottom: 40px;
 }
 
-.overview-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: #1d1d1f;
-  margin-bottom: 24px;
-}
-
-.steps-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.step-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.step-index {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: #000000;
-  color: #ffffff;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-size: 14px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.step-content {
-  font-size: 15px;
-  line-height: 1.6;
-  color: #1d1d1f;
-  padding-top: 2px;
-}
-
-.step-subline {
+.progress-text {
   font-size: 13px;
+  font-weight: 600;
   color: #86868b;
-  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+:deep(.minimal-progress .el-progress-bar__outer) {
+  background-color: #e5e5ea;
+  border-radius: 4px;
+  height: 4px !important;
+}
+
+:deep(.minimal-progress .el-progress-bar__inner) {
+  border-radius: 4px;
+  transition: width 0.6s ease;
 }
 
 .step-container {
@@ -1446,11 +735,41 @@ const retrySop = () => {
   margin-bottom: 12px;
 }
 
+.step-item {
+  display: flex;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.step-main {
+  flex: 1;
+}
+
+.step-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #000000;
+  color: #ffffff;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
 .step-desc {
-  font-size: 18px;
-  line-height: 1.5;
+  font-size: 16px;
+  line-height: 1.6;
   color: #1d1d1f;
   margin: 0;
+}
+
+.step-sub {
+  font-size: 13px;
+  color: #86868b;
+  margin-top: 6px;
 }
 
 .upload-section {
@@ -1531,12 +850,6 @@ const retrySop = () => {
   border-color: #333333;
 }
 
-.stage-text {
-  margin-top: 16px;
-  font-size: 13px;
-  color: #86868b;
-}
-
 .result-card {
   margin-top: 24px;
   border-radius: 16px;
@@ -1566,17 +879,19 @@ const retrySop = () => {
   font-size: 24px;
 }
 
-.success .result-icon { color: #1d1d1f; }
-.error .result-icon { color: #86868b; }
+.success .result-icon {
+  color: #1d1d1f;
+}
+
+.error .result-icon {
+  color: #86868b;
+}
 
 .result-header h3 {
   margin: 0;
   font-size: 20px;
   font-weight: 600;
 }
-
-.success h3 { color: #1d1d1f; }
-.error h3 { color: #515154; }
 
 .result-score {
   font-size: 15px;
@@ -1585,14 +900,21 @@ const retrySop = () => {
   margin-bottom: 12px;
 }
 
+.result-note {
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #9a6700;
+  line-height: 1.7;
+}
+
 .result-feedback {
   font-size: 15px;
   line-height: 1.5;
   margin: 0 0 24px 0;
+  color: #515154;
 }
-
-.success .result-feedback { color: #515154; }
-.error .result-feedback { color: #86868b; }
 
 .issues-list {
   display: flex;
@@ -1618,11 +940,12 @@ const retrySop = () => {
   margin-bottom: 24px;
 }
 
-.step-result-item {
+.step-result-item,
+.detail-box {
   background: #ffffff;
   border: 1px solid #e5e5ea;
-  border-radius: 10px;
-  padding: 14px 16px;
+  border-radius: 12px;
+  padding: 16px;
 }
 
 .step-result-top {
@@ -1632,60 +955,47 @@ const retrySop = () => {
   margin-bottom: 6px;
 }
 
-.step-result-title {
+.step-result-title,
+.detail-title {
   font-size: 14px;
   font-weight: 600;
   color: #1d1d1f;
 }
 
-.step-result-status {
-  font-size: 13px;
-  color: #86868b;
-  white-space: nowrap;
-}
-
+.step-result-status,
 .step-result-meta {
   font-size: 13px;
   color: #86868b;
-  margin-bottom: 6px;
 }
 
-.step-flag-list {
+.detail-wrap {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.evidence-text {
+.summary {
   font-size: 14px;
-  line-height: 1.6;
-  color: #515154;
-}
-
-.result-collapse {
-  margin-bottom: 24px;
-}
-
-:deep(.result-collapse .el-collapse-item__header) {
-  font-weight: 500;
+  font-weight: 600;
   color: #1d1d1f;
 }
 
-.code-wrap {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
-  background: #f5f5f7;
-  border-radius: 8px;
-  padding: 12px;
-  font-size: 12px;
+.detail-text {
   color: #515154;
+  line-height: 1.7;
 }
 
-.result-actions {
+.video {
+  width: 100%;
+  max-height: 360px;
+  background: #000;
+  border-radius: 18px;
+}
+
+.result-actions,
+.form-row {
   display: flex;
-  gap: 16px;
+  gap: 12px;
 }
 
 .action-btn-primary {
@@ -1711,215 +1021,52 @@ const retrySop = () => {
   background-color: transparent;
 }
 
-.config-alert {
-  margin-bottom: 20px;
+.grow {
+  flex: 1;
 }
 
 .config-form {
-  margin-top: 8px;
+  margin-top: 16px;
 }
 
-.config-row {
-  display: flex;
-  gap: 16px;
-}
-
-.config-row-small :deep(.el-input-number) {
-  width: 100%;
-}
-
-.history-detail-layout {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.history-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-}
-
-.history-summary-card {
-  background: #f5f5f7;
-  border-radius: 12px;
-  padding: 16px;
-}
-
-.history-summary-label {
-  font-size: 12px;
-  color: #86868b;
-  margin-bottom: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-
-.history-summary-value {
-  font-size: 14px;
-  color: #1d1d1f;
-  font-weight: 500;
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-.history-detail-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.history-detail-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1d1d1f;
-}
-
-.history-feedback-card {
-  background: #ffffff;
-  border: 1px solid #e5e5ea;
-  border-radius: 12px;
-  padding: 16px;
-  font-size: 14px;
-  line-height: 1.7;
-  color: #515154;
-}
-
-.review-status-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.review-status-label {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1d1d1f;
-}
-
-.review-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin-top: 12px;
-  font-size: 13px;
-  color: #86868b;
-}
-
-.review-note {
-  margin-top: 12px;
-  color: #515154;
-}
-
-
-.issues-list.compact,
-.step-result-list.compact {
-  margin-bottom: 0;
-}
-
-.history-step-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.history-step-item {
-  display: flex;
-  gap: 12px;
-  padding: 14px 16px;
-  background: #ffffff;
-  border: 1px solid #e5e5ea;
-  border-radius: 12px;
-}
-
-.history-step-index {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: #000000;
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.history-step-content {
-  min-width: 0;
-}
-
-.history-step-text {
-  font-size: 14px;
-  line-height: 1.6;
-  color: #1d1d1f;
-}
-
-.history-step-meta {
-  margin-top: 4px;
-  font-size: 13px;
-  color: #86868b;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
-.submit-btn {
-  background-color: #000000;
-  border-color: #000000;
-  border-radius: 8px;
-}
-
-.submit-btn:hover {
-  background-color: #333333;
-  border-color: #333333;
-}
-
-:deep(.minimal-dialog) {
+:deep(.el-dialog) {
   border-radius: 16px;
   overflow: hidden;
+  border: 1px solid #e5e5ea;
 }
 
-:deep(.minimal-dialog .el-dialog__header) {
+:deep(.el-dialog__header) {
   padding: 24px 24px 16px;
   margin-right: 0;
   border-bottom: 1px solid #e5e5ea;
 }
 
-:deep(.minimal-dialog .el-dialog__title) {
-  font-weight: 600;
+:deep(.el-dialog__title) {
   font-size: 18px;
-  color: #1d1d1f;
+  font-weight: 600;
 }
 
-:deep(.minimal-dialog .el-dialog__body) {
+:deep(.el-dialog__body) {
   padding: 24px;
 }
 
-:deep(.minimal-form .el-form-item__label) {
-  font-size: 13px;
-  font-weight: 500;
-  color: #515154;
-  padding-bottom: 4px;
+:deep(.el-dialog__footer) {
+  padding: 0 24px 24px;
 }
 
-:deep(.minimal-form .el-input__wrapper) {
-  box-shadow: 0 0 0 1px #e5e5ea inset;
+:deep(.el-button) {
   border-radius: 8px;
-  padding: 4px 12px;
-  transition: all 0.2s ease;
+  font-weight: 500;
 }
 
-:deep(.minimal-form .el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 2px #000000 inset;
+:deep(.el-button--primary) {
+  background: #000000;
+  border-color: #000000;
 }
 
-.flex-1 {
-  flex: 1;
+:deep(.el-button--primary:hover) {
+  background: #333333;
+  border-color: #333333;
 }
 
 @media (max-width: 768px) {
@@ -1928,23 +1075,23 @@ const retrySop = () => {
   }
 
   .top-nav {
-    padding: 0 16px;
-  }
-
-  .nav-right {
-    gap: 12px;
-  }
-
-  .header-titles,
-  .file-preview,
-  .step-result-top,
-  .config-row {
-    flex-direction: column;
+    padding: 16px;
+    height: auto;
     align-items: flex-start;
   }
 
-  .result-actions {
+  .nav-right,
+  .header-titles,
+  .file-preview,
+  .step-result-top,
+  .result-actions,
+  .form-row {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .grid-container {
+    grid-template-columns: 1fr;
   }
 }
 </style>

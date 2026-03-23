@@ -2,13 +2,61 @@ import base64
 import json
 import os
 import tempfile
+import time
 from typing import List, Optional
 
 import cv2
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+try:
+    from storage import (
+        add_history,
+        add_sop,
+        attach_media,
+        build_stats,
+        delete_sop,
+        get_config,
+        get_history,
+        get_media,
+        get_sop,
+        list_history,
+        list_sops,
+        load_db,
+        now_display,
+        save_db,
+        serialize_history,
+        serialize_sop_detail,
+        serialize_sop_summary,
+        set_config,
+        update_sop,
+        update_manual_review,
+    )
+except ModuleNotFoundError:
+    from .storage import (
+        add_history,
+        add_sop,
+        attach_media,
+        build_stats,
+        delete_sop,
+        get_config,
+        get_history,
+        get_media,
+        get_sop,
+        list_history,
+        list_sops,
+        load_db,
+        now_display,
+        save_db,
+        serialize_history,
+        serialize_sop_detail,
+        serialize_sop_summary,
+        set_config,
+        update_sop,
+        update_manual_review,
+    )
 
 app = FastAPI(title="SOP Video Evaluation API")
 
@@ -65,12 +113,93 @@ class EvaluateRequest(BaseModel):
     userVideoDataUrl: str
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    username: str
+    role: str
+    displayName: str
+
+
 class PrepareStepVideoRequest(BaseModel):
     stepNo: int
     description: str
     videoDataUrl: str
     maxFrames: int = 4
     apiConfig: Optional[ApiConfig] = None
+
+
+class StepVideoMeta(BaseModel):
+    name: str = ""
+    type: str = ""
+    size: Optional[int] = None
+    lastModified: Optional[int] = None
+
+
+class StepVideoInput(BaseModel):
+    description: str
+    videoDataUrl: str = ""
+    videoMeta: Optional[StepVideoMeta] = None
+
+
+class CreateSopRequest(BaseModel):
+    name: str
+    scene: Optional[str] = None
+    steps: List[StepVideoInput] = Field(default_factory=list)
+
+
+class UpdateStepDemoVideoRequest(BaseModel):
+    videoDataUrl: str
+    videoMeta: Optional[StepVideoMeta] = None
+
+
+class ManualSegmentationRequest(BaseModel):
+    timestamps: List[float] = Field(default_factory=list)
+
+
+class StoredSopEvaluateRequest(BaseModel):
+    userVideoDataUrl: str
+
+
+class StepResultPayload(BaseModel):
+    stepNo: int
+    description: str
+    passed: bool
+    score: float
+    confidence: float
+    issueType: str = ""
+    completionLevel: str = ""
+    orderIssue: bool = False
+    prerequisiteViolated: bool = False
+    evidence: str = ""
+
+
+class EvaluationResultPayload(BaseModel):
+    passed: bool
+    score: float
+    feedback: str
+    issues: List[str] = Field(default_factory=list)
+    sequenceAssessment: str = ""
+    prerequisiteViolated: bool = False
+    stepResults: List[StepResultPayload] = Field(default_factory=list)
+    payloadPreview: Optional[dict] = None
+    rawModelResult: Optional[dict] = None
+
+
+class CreateHistoryRequest(BaseModel):
+    taskId: str
+    userVideoDataUrl: Optional[str] = None
+    uploadedVideo: Optional[StepVideoMeta] = None
+    evaluationResult: EvaluationResultPayload
+
+
+class ManualReviewRequest(BaseModel):
+    status: str
+    note: str = ""
+    reviewer: str = "管理员"
 
 
 class AIReferencePlan(BaseModel):
@@ -399,6 +528,33 @@ def build_reference_bundle(
     }
 
 
+async def store_demo_video_and_prepare_bundle(
+    data: dict,
+    api_config: ApiConfig,
+    step_no: int,
+    description: str,
+    video_data_url: str,
+    video_meta: Optional[StepVideoMeta],
+):
+    mime_type, binary = split_data_url(video_data_url)
+    demo_video = attach_media(
+        data,
+        binary=binary,
+        mime_type=mime_type,
+        original_name=(video_meta.name if video_meta else "") or f"sop-step-{step_no}",
+        size=video_meta.size if video_meta else None,
+        last_modified=video_meta.lastModified if video_meta else None,
+    )
+    bundle = await prepare_reference_bundle(
+        step_no=step_no,
+        description=description,
+        video_data_url=video_data_url,
+        max_frames=8,
+        api_config=api_config,
+    )
+    return demo_video, bundle
+
+
 def build_user_segments(video_path: str, step_count: int, frames_per_segment: int = 2):
     if step_count <= 0:
         raise HTTPException(status_code=400, detail="步骤数量必须大于 0")
@@ -429,6 +585,21 @@ def build_user_segments(video_path: str, step_count: int, frames_per_segment: in
     return segments
 
 
+def build_video_overview(video_path: str, max_frames: int = 6):
+    meta = read_video_meta(video_path)
+    duration_sec = meta["durationSec"]
+    if duration_sec <= 0:
+        raise HTTPException(status_code=400, detail="Unable to read uploaded user video duration")
+
+    timestamps = build_sample_timestamps(0, duration_sec, max_frames)
+    frames = extract_frames(video_path, timestamps)
+    return {
+        "durationSec": duration_sec,
+        "timestamps": timestamps[: len(frames)],
+        "frames": frames,
+    }
+
+
 def build_evaluation_system_prompt():
     return (
         "你是一个严格的 SOP 执行评估助手。"
@@ -453,20 +624,26 @@ def build_evaluation_system_prompt():
         "- 每个步骤的 completionLevel 只能从以下值中选择：['完整', '部分完成', '未完成', '无法判断']。\n"
         "- orderIssue 表示该步骤是否存在顺序问题；prerequisiteViolated 表示该步骤是否存在前置条件问题。\n"
         "- evidence 必须点明你为什么这样判断，必要时明确写出“顺序颠倒”“过早执行”“延后执行”“证据不足”等。\n"
+        "- 当前输入里会直接提供整段用户测试视频；除非题面明确提供了用户视频关键帧，否则不要臆造“用户视频关键帧”“全局关键帧”“步骤片段”等不存在的证据形式。\n"
+        "- 你必须严格区分“示范视频关键帧”和“用户测试视频”。如果 SOP 没有示范视频，只能说“仅基于文字 SOP + 用户测试视频”进行判断，不能让人误以为系统存在示范视频关键帧。\n"
         "只返回合法 JSON，不要输出任何额外解释。"
     )
 
 
 def build_evaluation_overview_text(sop: SopData):
     step_order_text = " -> ".join([f"{step.stepNo}:{step.description}" for step in sop.steps]) or "无"
+    has_demo_video_reference = any(bool(step.referenceFrames) for step in sop.steps)
+    reference_source_text = "含示范视频关键帧" if has_demo_video_reference else "仅文字 SOP，无示范视频关键帧"
     return (
         "请从全流程视角评估用户的 SOP 执行情况。\n"
         f"SOP 名称：{sop.name}\n"
         f"适用场景：{sop.scene or '未提供'}\n"
         f"期望步骤顺序：{step_order_text}\n"
-        "系统为了便于分析，把用户视频均匀切成了若干时间片段；这些片段只是辅助观察，不保证与真实步骤边界完全一致。\n"
+        f"SOP 参考来源：{reference_source_text}\n"
+        "系统会直接提供整段用户测试视频，不再先把用户视频切成步骤片段或关键帧。\n"
+        "如果 SOP 参考来源显示为“仅文字 SOP，无示范视频关键帧”，那么你只能基于文字 SOP 与整段用户测试视频判断，不代表系统存在示范视频关键帧。\n"
         "因此你必须主动考虑这些实际情况：步骤颠倒、后一步抢跑、当前步骤被拖到后面、漏做前置步骤、重复操作、额外风险动作，以及证据不足无法确认完成。\n"
-        "判断每一步时，请同时结合步骤说明、参考关键帧、可选的子步骤时间轴、用户对应片段关键帧，以及整个流程的全局顺序关系。\n"
+        "判断每一步时，请同时结合步骤说明、参考关键帧、可选的子步骤时间轴，以及整段用户测试视频中的全流程顺序关系。\n"
         "不要把“看到了动作”直接等同于“该步骤正确完成”；要重点判断动作意图、执行顺序、完成度和前后依赖关系。\n"
         "只返回 JSON。"
     )
@@ -480,8 +657,8 @@ def build_content_blocks_legacy(sop: SopData, user_segments: List[dict]):
                     "请评估用户的 SOP 执行情况。\n"
                     f"SOP 名称：{sop.name}\n"
                     f"适用场景：{sop.scene or '未填写'}\n"
-                    "系统已经把用户视频切成步骤级片段，每个片段只保留了少量关键帧。"
-                    "请结合步骤说明、参考关键帧、可选的子步骤时间轴，以及用户对应片段的关键帧进行判断。"
+                    "这是旧版的关键帧辅助评估输入。"
+                    "请结合步骤说明、参考关键帧、可选的子步骤时间轴，以及提供的辅助片段内容进行判断。"
                     "只返回 JSON，不要输出额外说明。"
                 ),
             }
@@ -491,6 +668,7 @@ def build_content_blocks_legacy(sop: SopData, user_segments: List[dict]):
 
     for step in sop.steps:
         segment = segment_map.get(step.stepNo)
+        has_reference_frames = bool(step.referenceFrames)
         substeps_text = (
             "; ".join([f"{item.title}@{item.timestampSec:.2f}s" for item in step.substeps])
             if step.substeps
@@ -529,12 +707,27 @@ def build_content_blocks_legacy(sop: SopData, user_segments: List[dict]):
     return blocks
 
 
-def build_content_blocks(sop: SopData, user_segments: List[dict]):
+def build_content_blocks(sop: SopData, user_video_data_url: str, user_video_fps: float):
     blocks = [{"type": "text", "text": build_evaluation_overview_text(sop)}]
-    segment_map = {item["stepNo"]: item for item in user_segments}
+    blocks.append(
+        {
+            "type": "text",
+            "text": (
+                "下面是整段用户测试视频。"
+                "请直接基于完整视频判断各步骤是否出现、出现顺序是否正确、前置条件是否满足，以及是否存在延后执行、过早执行、缺失步骤等问题。"
+            ),
+        }
+    )
+    blocks.append(
+        {
+            "type": "video_url",
+            "video_url": {"url": user_video_data_url},
+            "fps": max(0.1, float(user_video_fps or 2)),
+        }
+    )
 
     for step in sop.steps:
-        segment = segment_map.get(step.stepNo)
+        has_reference_frames = bool(step.referenceFrames)
         substeps_text = (
             "; ".join([f"{item.title}@{item.timestampSec:.2f}s" for item in step.substeps])
             if step.substeps
@@ -551,6 +744,7 @@ def build_content_blocks(sop: SopData, user_segments: List[dict]):
                     f"关注区域提示：{step.roiHint or '无'}\n"
                     f"参考子步骤时间点：{substeps_text}\n"
                     f"参考特征：{json.dumps((step.referenceFeatures.model_dump() if step.referenceFeatures else {}), ensure_ascii=False)}\n"
+                    f"参考模式：{'示范视频关键帧' if has_reference_frames else '仅文字 SOP，无示范视频'}\n"
                     "请判断该步骤是否被正确执行、完整执行，并且出现在正确的流程顺序位置。"
                 ),
             }
@@ -558,21 +752,6 @@ def build_content_blocks(sop: SopData, user_segments: List[dict]):
 
         for frame in step.referenceFrames[:6]:
             blocks.append({"type": "image_url", "image_url": {"url": frame}})
-
-        if segment:
-            blocks.append(
-                {
-                    "type": "text",
-                    "text": (
-                        f"下面是用户视频中与预期步骤 {step.stepNo} 对应的分析片段\n"
-                        f"片段时间范围：{segment['startSec']:.2f}s - {segment['endSec']:.2f}s\n"
-                        "注意：这个片段只是分析辅助，不代表真实步骤边界。"
-                        "如果该步骤动作明显出现得过早、过晚、跑到了别的顺序位置，或者当前片段证据不足，请在该步骤 evidence 和顶层 issues 中明确体现。"
-                    ),
-                }
-            )
-            for frame in segment["keyframes"][:3]:
-                blocks.append({"type": "image_url", "image_url": {"url": frame}})
 
     return blocks
 
@@ -666,22 +845,69 @@ def sanitize_payload(payload):
     return walk(payload)
 
 
-@app.post("/api/prepare-step-video")
-async def prepare_step_video(req: PrepareStepVideoRequest):
+def build_runtime_api_config():
+    return ApiConfig.model_validate(get_config())
+
+
+def build_text_only_reference_bundle(step_no: int, description: str):
+    return {
+        "referenceFrames": [],
+        "analysisFrames": [],
+        "referenceSummary": f"仅基于文字 SOP 评估：{description}",
+        "referenceFeatures": None,
+        "substeps": [],
+        "roiHint": "",
+        "aiUsed": False,
+        "rawAIResult": None,
+    }
+
+
+def build_sop_model_from_record(record: dict):
+    steps = []
+    for index, step in enumerate(record.get("steps") or []):
+        steps.append(
+            {
+                "stepNo": step.get("stepNo") or index + 1,
+                "description": step.get("description") or "",
+                "referenceFrames": step.get("referenceFrames") or [],
+                "referenceSummary": step.get("referenceSummary") or "",
+                "referenceFeatures": step.get("referenceFeatures") or None,
+                "substeps": step.get("substeps") or [],
+                "roiHint": step.get("roiHint") or "",
+            }
+        )
+
+    return SopData.model_validate(
+        {
+            "name": record.get("name") or "",
+            "scene": record.get("scene") or "",
+            "stepCount": record.get("stepCount") or len(steps),
+            "steps": steps,
+        }
+    )
+
+
+async def prepare_reference_bundle(
+    step_no: int,
+    description: str,
+    video_data_url: str,
+    max_frames: int = 8,
+    api_config: Optional[ApiConfig] = None,
+):
     temp_path = None
     try:
-        temp_path = data_url_to_temp_path(req.videoDataUrl)
+        temp_path = data_url_to_temp_path(video_data_url)
         meta = read_video_meta(temp_path)
         analysis_timestamps, analysis_frames = extract_analysis_samples(temp_path, meta["durationSec"])
         ai_plan = None
         raw_ai_result = None
 
-        if req.apiConfig and req.apiConfig.apiKey.strip():
+        if api_config and api_config.apiKey.strip():
             try:
                 ai_plan, raw_ai_result = await build_ai_reference_plan(
-                    req.apiConfig,
-                    req.stepNo,
-                    req.description,
+                    api_config,
+                    step_no,
+                    description,
                     meta["durationSec"],
                     analysis_timestamps,
                     analysis_frames,
@@ -693,80 +919,476 @@ async def prepare_step_video(req: PrepareStepVideoRequest):
                 raw_ai_result = None
 
         bundle = build_reference_bundle(
-            req.stepNo,
-            req.description,
+            step_no,
+            description,
             temp_path,
-            max(1, min(req.maxFrames, 8)),
+            max(1, min(max_frames, 8)),
             ai_plan=ai_plan,
             analysis_samples=analysis_timestamps,
         )
 
         return {
-            "success": True,
-            "data": {
-                **bundle,
-                "analysisFrames": analysis_frames,
-                "aiUsed": bool(ai_plan),
-                "rawAIResult": sanitize_payload(raw_ai_result) if raw_ai_result else None,
-            },
+            **bundle,
+            "analysisFrames": analysis_frames,
+            "aiUsed": bool(ai_plan),
+            "rawAIResult": sanitize_payload(raw_ai_result) if raw_ai_result else None,
         }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
         cleanup_file(temp_path)
 
 
-@app.post("/api/evaluate")
-async def evaluate(req: EvaluateRequest):
-    if not req.apiConfig.apiKey or not req.apiConfig.apiKey.strip():
+def rebuild_reference_bundle_from_video(
+    video_path: str,
+    step_no: int,
+    description: str,
+    timestamps: List[float],
+):
+    meta = read_video_meta(video_path)
+    duration_sec = meta["durationSec"] if meta["durationSec"] > 0 else 0.1
+    normalized = normalize_timestamps(timestamps, duration_sec, max(len(timestamps), 1))
+    if not normalized:
+        raise HTTPException(status_code=400, detail="请至少提供一个有效时间点")
+
+    frames = extract_frames(video_path, normalized)
+    return {
+        "referenceFrames": frames,
+        "analysisFrames": [],
+        "referenceSummary": f"管理员手动切帧：步骤 {step_no} / {description}",
+        "referenceFeatures": {
+            "durationSec": meta["durationSec"],
+            "fps": meta["fps"],
+            "frameCount": meta["frameCount"],
+            "sampleTimestamps": normalized[: len(frames)],
+        },
+        "substeps": [
+            {"title": f"手动关键帧 {index + 1}", "timestampSec": value}
+            for index, value in enumerate(normalized[: len(frames)])
+        ],
+        "roiHint": "",
+        "aiUsed": False,
+        "rawAIResult": None,
+    }
+
+
+async def run_sop_evaluation(api_config: ApiConfig, sop: SopData, user_video_data_url: str):
+    if not api_config.apiKey or not api_config.apiKey.strip():
         raise HTTPException(status_code=400, detail="请先配置 API Key")
 
-    if not req.sop.steps:
+    if not sop.steps:
         raise HTTPException(status_code=400, detail="当前 SOP 缺少预处理后的参考数据")
-
-    for step in req.sop.steps:
-        if not step.referenceFrames:
-            raise HTTPException(status_code=400, detail=f"步骤 {step.stepNo} 缺少参考关键帧")
 
     temp_user_video = None
     try:
-        temp_user_video = data_url_to_temp_path(req.userVideoDataUrl)
-        user_segments = build_user_segments(temp_user_video, req.sop.stepCount, frames_per_segment=2)
-        content_blocks = build_content_blocks(req.sop, user_segments)
+        temp_user_video = data_url_to_temp_path(user_video_data_url)
+        user_video_meta = read_video_meta(temp_user_video)
+        content_blocks = build_content_blocks(sop, user_video_data_url, api_config.fps or user_video_meta.get("fps") or 2)
 
         payload = {
-            "model": req.apiConfig.model,
-            "temperature": req.apiConfig.temperature,
+            "model": api_config.model,
+            "temperature": api_config.temperature,
             "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "你是一个 SOP 执行评估助手。"
-                        "请根据参考关键帧、子步骤时间轴和用户片段关键帧判断该步骤是否合规完成。"
-                        "只返回合法 JSON，不要输出额外解释。"
-                    ),
-                },
+                {"role": "system", "content": build_evaluation_system_prompt()},
                 {"role": "user", "content": content_blocks},
             ],
-            "response_format": build_response_schema(req.sop.stepCount),
+            "response_format": build_response_schema(sop.stepCount),
         }
-        payload["messages"][0]["content"] = build_evaluation_system_prompt()
 
-        raw_json = await call_chat_completion(req.apiConfig, payload)
+        raw_json = await call_chat_completion(api_config, payload)
+        parsed = EvaluationResultPayload.model_validate(
+            parse_json_content(raw_json.get("choices", [{}])[0].get("message", {}).get("content"))
+        )
+        result = parsed.model_dump()
+        result["payloadPreview"] = sanitize_payload(payload)
+        result["rawModelResult"] = sanitize_payload(raw_json)
+        result["segmentPreview"] = []
+        result["overviewPreview"] = {
+            "mode": "full_video",
+            "durationSec": user_video_meta.get("durationSec"),
+            "fps": user_video_meta.get("fps"),
+        }
+        return result
+    finally:
+        cleanup_file(temp_user_video)
+
+
+@app.get("/api/health")
+async def health_check():
+    return {"success": True}
+
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest):
+    username = (req.username or "").strip()
+    password = (req.password or "").strip()
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="用户名和密码不能为空")
+
+    if username == "admin":
+        return {"success": True, "data": LoginResponse(username="admin", role="admin", displayName="管理员").model_dump()}
+
+    if username == "user":
+        return {"success": True, "data": LoginResponse(username="user", role="user", displayName="操作用户").model_dump()}
+
+    raise HTTPException(status_code=401, detail="账号不存在")
+
+
+@app.get("/api/config")
+async def fetch_config():
+    return {"success": True, "data": get_config()}
+
+
+@app.put("/api/config")
+async def update_config(config: ApiConfig):
+    return {"success": True, "data": set_config(config.model_dump())}
+
+
+@app.get("/api/sops")
+async def fetch_sops():
+    return {"success": True, "data": [serialize_sop_summary(item) for item in list_sops()]}
+
+
+@app.get("/api/sops/{sop_id}")
+async def fetch_sop_detail(sop_id: str):
+    sop = get_sop(sop_id)
+    if not sop:
+        raise HTTPException(status_code=404, detail="SOP 不存在")
+    return {"success": True, "data": serialize_sop_detail(sop)}
+
+
+@app.put("/api/sops/{sop_id}/steps/{step_no}/demo-video")
+async def update_step_demo_video(sop_id: str, step_no: int, req: UpdateStepDemoVideoRequest):
+    if not (req.videoDataUrl or "").strip():
+        raise HTTPException(status_code=400, detail="请上传示范视频")
+
+    sop = get_sop(sop_id)
+    if not sop:
+        raise HTTPException(status_code=404, detail="SOP 不存在")
+
+    step_record = next((item for item in (sop.get("steps") or []) if int(item.get("stepNo") or 0) == step_no), None)
+    if not step_record:
+        raise HTTPException(status_code=404, detail="步骤不存在")
+
+    api_config = build_runtime_api_config()
+    data = load_db()
+    demo_video, bundle = await store_demo_video_and_prepare_bundle(
+        data=data,
+        api_config=api_config,
+        step_no=step_no,
+        description=step_record.get("description") or "",
+        video_data_url=req.videoDataUrl,
+        video_meta=req.videoMeta,
+    )
+    save_db(data)
+
+    def apply_update(existing):
+        updated_steps = []
+        for item in existing.get("steps") or []:
+            if int(item.get("stepNo") or 0) != step_no:
+                updated_steps.append(item)
+                continue
+            updated_steps.append(
+                {
+                    **item,
+                    "videoMeta": req.videoMeta.model_dump() if req.videoMeta else item.get("videoMeta"),
+                    "demoVideo": demo_video,
+                    "referenceMode": "video",
+                    "referenceFrames": bundle["referenceFrames"],
+                    "analysisFrames": bundle["analysisFrames"],
+                    "referenceSummary": bundle["referenceSummary"],
+                    "referenceFeatures": bundle["referenceFeatures"],
+                    "substeps": bundle["substeps"],
+                    "roiHint": bundle["roiHint"],
+                    "aiUsed": bool(bundle["aiUsed"]),
+                    "rawAIResult": bundle["rawAIResult"],
+                }
+            )
+        return {
+            **existing,
+            "steps": updated_steps,
+            "demoVideoCount": sum(1 for item in updated_steps if item.get("demoVideo")),
+        }
+
+    updated = update_sop(sop_id, apply_update)
+    if not updated:
+        raise HTTPException(status_code=404, detail="SOP 不存在")
+    return {"success": True, "data": serialize_sop_detail(updated)}
+
+
+@app.put("/api/sops/{sop_id}/steps/{step_no}/manual-segmentation")
+async def update_step_segmentation(sop_id: str, step_no: int, req: ManualSegmentationRequest):
+    if not req.timestamps:
+        raise HTTPException(status_code=400, detail="请至少提供一个时间点")
+
+    sop = get_sop(sop_id)
+    if not sop:
+        raise HTTPException(status_code=404, detail="SOP 不存在")
+
+    step_record = next((item for item in (sop.get("steps") or []) if int(item.get("stepNo") or 0) == step_no), None)
+    if not step_record:
+        raise HTTPException(status_code=404, detail="步骤不存在")
+
+    demo_video = step_record.get("demoVideo") or {}
+    media_id = demo_video.get("mediaId")
+    if not media_id:
+        if step_record.get("referenceMode") == "video" or step_record.get("referenceFrames"):
+            raise HTTPException(status_code=400, detail="该步骤已有参考帧，但原始示范视频引用缺失，请重新上传示范视频后再手动切帧")
+        raise HTTPException(status_code=400, detail="该步骤没有示范视频，无法手动切帧")
+
+    media = get_media(media_id)
+    if not media:
+        raise HTTPException(status_code=404, detail="示范视频文件不存在")
+
+    bundle = rebuild_reference_bundle_from_video(media["path"], step_no, step_record.get("description") or "", req.timestamps)
+
+    def apply_update(existing):
+        updated_steps = []
+        for item in existing.get("steps") or []:
+            if int(item.get("stepNo") or 0) != step_no:
+                updated_steps.append(item)
+                continue
+            updated_steps.append(
+                {
+                    **item,
+                    "referenceMode": "video",
+                    "referenceFrames": bundle["referenceFrames"],
+                    "analysisFrames": bundle["analysisFrames"],
+                    "referenceSummary": bundle["referenceSummary"],
+                    "referenceFeatures": bundle["referenceFeatures"],
+                    "substeps": bundle["substeps"],
+                    "roiHint": bundle["roiHint"],
+                    "aiUsed": False,
+                    "rawAIResult": None,
+                }
+            )
+        return {
+            **existing,
+            "steps": updated_steps,
+            "demoVideoCount": sum(1 for item in updated_steps if item.get("demoVideo")),
+        }
+
+    updated = update_sop(sop_id, apply_update)
+    if not updated:
+        raise HTTPException(status_code=404, detail="SOP 不存在")
+    return {"success": True, "data": serialize_sop_detail(updated)}
+
+
+@app.post("/api/sops")
+async def create_sop(req: CreateSopRequest):
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="请输入 SOP 名称")
+    if not req.steps:
+        raise HTTPException(status_code=400, detail="至少需要一个步骤")
+
+    for index, step in enumerate(req.steps):
+        if not (step.description or "").strip():
+            raise HTTPException(status_code=400, detail=f"步骤 {index + 1} 缺少文字描述")
+
+    api_config = build_runtime_api_config()
+    step_items = []
+    warnings = []
+    data = load_db()
+    if not api_config.apiKey.strip():
+        warnings.append("后端未配置 API Key，本次已回退为均匀抽帧预处理。")
+
+    for index, step in enumerate(req.steps):
+        step_no = index + 1
+        description = step.description.strip()
+        demo_video = None
+
+        if (step.videoDataUrl or "").strip():
+            demo_video, bundle = await store_demo_video_and_prepare_bundle(
+                data=data,
+                api_config=api_config,
+                step_no=step_no,
+                description=description,
+                video_data_url=step.videoDataUrl,
+                video_meta=step.videoMeta,
+            )
+        else:
+            bundle = build_text_only_reference_bundle(step_no, description)
+            warnings.append(f"步骤 {step_no} 未上传示范视频，将仅基于文字 SOP 评估。")
+
+        step_items.append(
+            {
+                "stepNo": step_no,
+                "description": description,
+                "videoMeta": step.videoMeta.model_dump() if step.videoMeta else None,
+                "demoVideo": demo_video,
+                "referenceMode": "video" if bundle["referenceFrames"] else "text",
+                "referenceFrames": bundle["referenceFrames"],
+                "analysisFrames": bundle["analysisFrames"],
+                "referenceSummary": bundle["referenceSummary"],
+                "referenceFeatures": bundle["referenceFeatures"],
+                "substeps": bundle["substeps"],
+                "roiHint": bundle["roiHint"],
+                "aiUsed": bool(bundle["aiUsed"]),
+                "rawAIResult": bundle["rawAIResult"],
+            }
+        )
+
+    save_db(data)
+    sop = {
+        "id": f"sop-{int(time.time() * 1000)}",
+        "name": name,
+        "scene": (req.scene or "").strip() or "未填写",
+        "stepCount": len(step_items),
+        "demoVideoCount": sum(1 for item in step_items if item.get("demoVideo")),
+        "createTime": now_display(),
+        "createdAtMs": int(time.time() * 1000),
+        "steps": step_items,
+    }
+    add_sop(sop)
+    return {
+        "success": True,
+        "data": serialize_sop_summary(sop),
+        "warnings": warnings,
+    }
+
+
+@app.delete("/api/sops/{sop_id}")
+async def remove_sop(sop_id: str):
+    if not delete_sop(sop_id):
+        raise HTTPException(status_code=404, detail="SOP 不存在")
+    return {"success": True}
+
+
+@app.post("/api/sops/{sop_id}/evaluate")
+async def evaluate_sop(sop_id: str, req: StoredSopEvaluateRequest):
+    sop_record = get_sop(sop_id)
+    if not sop_record:
+        raise HTTPException(status_code=404, detail="SOP 不存在")
+
+    result = await run_sop_evaluation(
+        build_runtime_api_config(),
+        build_sop_model_from_record(sop_record),
+        req.userVideoDataUrl,
+    )
+    return {"success": True, "data": result}
+
+
+@app.get("/api/history")
+async def fetch_history():
+    return {"success": True, "data": [serialize_history(item) for item in list_history()]}
+
+
+@app.get("/api/history/{record_id}")
+async def fetch_history_detail(record_id: str):
+    record = get_history(record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return {"success": True, "data": serialize_history(record)}
+
+
+@app.post("/api/history")
+async def create_history(req: CreateHistoryRequest):
+    sop = get_sop(req.taskId)
+    if not sop:
+        raise HTTPException(status_code=404, detail="SOP 不存在")
+
+    uploaded_video = None
+    data = load_db()
+    if req.userVideoDataUrl:
+        mime_type, binary = split_data_url(req.userVideoDataUrl)
+        uploaded_video = attach_media(
+            data,
+            binary=binary,
+            mime_type=mime_type,
+            original_name=(req.uploadedVideo.name if req.uploadedVideo else "") or "uploaded-video",
+            size=req.uploadedVideo.size if req.uploadedVideo else None,
+            last_modified=req.uploadedVideo.lastModified if req.uploadedVideo else None,
+        )
+        save_db(data)
+
+    evaluation = req.evaluationResult.model_dump()
+    record = {
+        "id": f"history-{int(time.time() * 1000)}",
+        "createdAtMs": int(time.time() * 1000),
+        "taskId": sop.get("id"),
+        "taskName": sop.get("name"),
+        "scene": sop.get("scene"),
+        "finishTime": now_display(),
+        "score": evaluation.get("score"),
+        "status": "passed" if evaluation.get("passed") else "failed",
+        "manualReview": None,
+        "detail": {
+            "feedback": evaluation.get("feedback") or "",
+            "issues": evaluation.get("issues") or [],
+            "sequenceAssessment": evaluation.get("sequenceAssessment") or "",
+            "prerequisiteViolated": bool(evaluation.get("prerequisiteViolated")),
+            "stepResults": evaluation.get("stepResults") or [],
+            "sopSteps": [
+                {
+                    "stepNo": step.get("stepNo"),
+                    "description": step.get("description") or "",
+                    "videoName": (step.get("videoMeta") or {}).get("name") if isinstance(step.get("videoMeta"), dict) else "",
+                }
+                for step in (sop.get("steps") or [])
+            ],
+            "uploadedVideo": uploaded_video,
+        },
+    }
+    add_history(record)
+    return {"success": True, "data": serialize_history(record)}
+
+
+@app.put("/api/history/{record_id}/review")
+async def review_history(record_id: str, req: ManualReviewRequest):
+    review = {
+        "status": req.status,
+        "note": (req.note or "").strip(),
+        "reviewer": (req.reviewer or "").strip() or "管理员",
+        "reviewTime": now_display(),
+    }
+    updated = update_manual_review(record_id, review)
+    if not updated:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return {"success": True, "data": serialize_history(updated)}
+
+
+@app.get("/api/stats")
+async def fetch_stats():
+    return {"success": True, "data": build_stats()}
+
+
+@app.get("/api/media/{media_id}")
+async def fetch_media(media_id: str):
+    media = get_media(media_id)
+    if not media:
+        raise HTTPException(status_code=404, detail="媒体文件不存在")
+    return FileResponse(path=media["path"], media_type=media.get("type") or "application/octet-stream", filename=media.get("name") or None)
+
+
+@app.post("/api/prepare-step-video")
+async def prepare_step_video(req: PrepareStepVideoRequest):
+    try:
+        bundle = await prepare_reference_bundle(
+            step_no=req.stepNo,
+            description=req.description,
+            video_data_url=req.videoDataUrl,
+            max_frames=req.maxFrames,
+            api_config=req.apiConfig,
+        )
         return {
             "success": True,
-            "data": raw_json,
-            "payloadPreview": sanitize_payload(payload),
-            "segmentPreview": user_segments,
+            "data": bundle,
         }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    finally:
-        cleanup_file(temp_user_video)
+
+
+@app.post("/api/evaluate")
+async def evaluate(req: EvaluateRequest):
+    try:
+        result = await run_sop_evaluation(req.apiConfig, req.sop, req.userVideoDataUrl)
+        return {"success": True, "data": result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":

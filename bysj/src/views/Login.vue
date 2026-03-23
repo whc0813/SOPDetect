@@ -2,37 +2,37 @@
   <div class="login-container">
     <div class="login-content">
       <div class="title-section">
-        <h1>视觉智检</h1>
+        <h1>视觉巡检</h1>
         <p class="subtitle">标准操作流程管理系统</p>
       </div>
-      
-      <el-form :model="loginForm" :rules="rules" ref="loginFormRef" class="login-form">
+
+      <el-form ref="loginFormRef" :model="loginForm" :rules="rules" class="login-form">
         <el-form-item prop="username">
-          <el-input 
-            v-model="loginForm.username" 
+          <el-input
+            v-model="loginForm.username"
             placeholder="账号 (admin / user)"
             class="minimal-input"
             :prefix-icon="User"
-          ></el-input>
+          />
         </el-form-item>
         <el-form-item prop="password">
-          <el-input 
-            type="password" 
-            v-model="loginForm.password" 
-            placeholder="密码" 
-            @keyup.enter="handleLogin"
+          <el-input
+            v-model="loginForm.password"
+            type="password"
+            placeholder="密码"
             class="minimal-input"
             :prefix-icon="Lock"
             show-password
-          ></el-input>
+            @keyup.enter="handleLogin"
+          />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" class="login-btn" @click="handleLogin" :loading="loading">
+          <el-button type="primary" class="login-btn" :loading="loading" @click="handleLogin">
             登录
           </el-button>
         </el-form-item>
       </el-form>
-      
+
       <div class="tip">
         <span>管理员: admin</span> | <span>用户: user</span>
       </div>
@@ -41,10 +41,11 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
+import { login } from '../api/client'
 
 const router = useRouter()
 const loginFormRef = ref(null)
@@ -64,24 +65,25 @@ const rules = reactive({
   ]
 })
 
-const handleLogin = () => {
-  loginFormRef.value.validate((valid) => {
-    if (valid) {
-      loading.value = true
-      setTimeout(() => {
-        loading.value = false
-        if (loginForm.username === 'admin') {
-          ElMessage.success('欢迎回来，管理员')
-          router.push('/admin')
-        } else if (loginForm.username === 'user') {
-          ElMessage.success('欢迎回来，用户')
-          router.push('/user')
-        } else {
-          ElMessage.error('账号不存在')
-        }
-      }, 600)
-    }
-  })
+const handleLogin = async () => {
+  const valid = await loginFormRef.value.validate().catch(() => false)
+  if (!valid) return
+
+  loading.value = true
+  try {
+    const result = await login({
+      username: loginForm.username.trim(),
+      password: loginForm.password
+    })
+    const user = result.data
+    sessionStorage.setItem('currentUser', JSON.stringify(user))
+    ElMessage.success(`欢迎回来，${user.displayName}`)
+    router.push(user.role === 'admin' ? '/admin' : '/user')
+  } catch (error) {
+    ElMessage.error(error.message || '登录失败')
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
@@ -163,7 +165,8 @@ const handleLogin = () => {
   transition: all 0.3s ease;
 }
 
-.login-btn:hover, .login-btn:focus {
+.login-btn:hover,
+.login-btn:focus {
   background-color: #333333;
   border-color: #333333;
   transform: translateY(-1px);

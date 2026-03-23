@@ -18,12 +18,12 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
 #app {
   color: #1d1d1f;
   height: 100%;
 }
 
-/* Global styles for Element Plus Message Box (minimalist style) */
 .minimal-msgbox {
   border-radius: 16px !important;
   border: none !important;
