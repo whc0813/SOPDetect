@@ -429,7 +429,50 @@ def build_user_segments(video_path: str, step_count: int, frames_per_segment: in
     return segments
 
 
-def build_content_blocks(sop: SopData, user_segments: List[dict]):
+def build_evaluation_system_prompt():
+    return (
+        "你是一个严格的 SOP 执行评估助手。"
+        "你的任务不是只判断用户“做没做”，还要判断是否按正确顺序、正确意图、正确完整度、安全地完成了整个流程。"
+        "你必须从全流程视角综合判断，不能把每个步骤彼此孤立地看待。\n"
+        "评估时必须重点考虑这些真实情况：\n"
+        "1. 漏做步骤，或只做了一部分关键动作。\n"
+        "2. 步骤顺序颠倒，后置步骤先于前置步骤发生。\n"
+        "3. 过早执行，用户在前一步未完成前就开始后一步。\n"
+        "4. 延后执行，某一步应在当前阶段完成，却明显拖到更后面才出现。\n"
+        "5. 重复操作或多余操作，出现不必要的重复、额外动作或潜在风险动作。\n"
+        "6. 动作错误或替代动作，虽然有动作，但不符合该步骤真实意图。\n"
+        "7. 证据不足，画面遮挡、模糊、采样过 sparse 或无法支持高置信判断。\n"
+        "8. 前置条件未满足，如果某一步依赖前一步先完成，则顺序错误要明确扣分。\n"
+        "输出要求：\n"
+        "- feedback、issues、evidence 全部使用中文。\n"
+        "- issues 用简短中文短语概括最重要的问题。\n"
+        "- 如果动作看起来存在，但顺序位置错误，不能算完全通过。\n"
+        "- passed=true 只能在整个 SOP 基本按正确顺序完成、没有明显漏做/错做/严重错序时给出。\n"
+        "- 顶层字段 sequenceAssessment 只能从以下值中选择：['顺序正确', '轻微顺序偏差', '明显顺序错误', '无法判断顺序']。\n"
+        "- 每个步骤的 issueType 只能从以下值中选择：['正常', '缺失', '顺序颠倒', '过早执行', '延后执行', '重复操作', '动作错误', '部分完成', '证据不足', '前置条件缺失']。\n"
+        "- 每个步骤的 completionLevel 只能从以下值中选择：['完整', '部分完成', '未完成', '无法判断']。\n"
+        "- orderIssue 表示该步骤是否存在顺序问题；prerequisiteViolated 表示该步骤是否存在前置条件问题。\n"
+        "- evidence 必须点明你为什么这样判断，必要时明确写出“顺序颠倒”“过早执行”“延后执行”“证据不足”等。\n"
+        "只返回合法 JSON，不要输出任何额外解释。"
+    )
+
+
+def build_evaluation_overview_text(sop: SopData):
+    step_order_text = " -> ".join([f"{step.stepNo}:{step.description}" for step in sop.steps]) or "无"
+    return (
+        "请从全流程视角评估用户的 SOP 执行情况。\n"
+        f"SOP 名称：{sop.name}\n"
+        f"适用场景：{sop.scene or '未提供'}\n"
+        f"期望步骤顺序：{step_order_text}\n"
+        "系统为了便于分析，把用户视频均匀切成了若干时间片段；这些片段只是辅助观察，不保证与真实步骤边界完全一致。\n"
+        "因此你必须主动考虑这些实际情况：步骤颠倒、后一步抢跑、当前步骤被拖到后面、漏做前置步骤、重复操作、额外风险动作，以及证据不足无法确认完成。\n"
+        "判断每一步时，请同时结合步骤说明、参考关键帧、可选的子步骤时间轴、用户对应片段关键帧，以及整个流程的全局顺序关系。\n"
+        "不要把“看到了动作”直接等同于“该步骤正确完成”；要重点判断动作意图、执行顺序、完成度和前后依赖关系。\n"
+        "只返回 JSON。"
+    )
+
+
+def build_content_blocks_legacy(sop: SopData, user_segments: List[dict]):
     blocks = [
         {
                 "type": "text",
@@ -486,6 +529,54 @@ def build_content_blocks(sop: SopData, user_segments: List[dict]):
     return blocks
 
 
+def build_content_blocks(sop: SopData, user_segments: List[dict]):
+    blocks = [{"type": "text", "text": build_evaluation_overview_text(sop)}]
+    segment_map = {item["stepNo"]: item for item in user_segments}
+
+    for step in sop.steps:
+        segment = segment_map.get(step.stepNo)
+        substeps_text = (
+            "; ".join([f"{item.title}@{item.timestampSec:.2f}s" for item in step.substeps])
+            if step.substeps
+            else "无"
+        )
+
+        blocks.append(
+            {
+                "type": "text",
+                "text": (
+                    f"步骤 {step.stepNo}\n"
+                    f"步骤说明：{step.description}\n"
+                    f"参考摘要：{step.referenceSummary or '无'}\n"
+                    f"关注区域提示：{step.roiHint or '无'}\n"
+                    f"参考子步骤时间点：{substeps_text}\n"
+                    f"参考特征：{json.dumps((step.referenceFeatures.model_dump() if step.referenceFeatures else {}), ensure_ascii=False)}\n"
+                    "请判断该步骤是否被正确执行、完整执行，并且出现在正确的流程顺序位置。"
+                ),
+            }
+        )
+
+        for frame in step.referenceFrames[:6]:
+            blocks.append({"type": "image_url", "image_url": {"url": frame}})
+
+        if segment:
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"下面是用户视频中与预期步骤 {step.stepNo} 对应的分析片段\n"
+                        f"片段时间范围：{segment['startSec']:.2f}s - {segment['endSec']:.2f}s\n"
+                        "注意：这个片段只是分析辅助，不代表真实步骤边界。"
+                        "如果该步骤动作明显出现得过早、过晚、跑到了别的顺序位置，或者当前片段证据不足，请在该步骤 evidence 和顶层 issues 中明确体现。"
+                    ),
+                }
+            )
+            for frame in segment["keyframes"][:3]:
+                blocks.append({"type": "image_url", "image_url": {"url": frame}})
+
+    return blocks
+
+
 def build_response_schema(step_count: int):
     return {
         "type": "json_schema",
@@ -500,6 +591,11 @@ def build_response_schema(step_count: int):
                     "score": {"type": "integer", "minimum": 0, "maximum": 100},
                     "feedback": {"type": "string"},
                     "issues": {"type": "array", "items": {"type": "string"}},
+                    "sequenceAssessment": {
+                        "type": "string",
+                        "enum": ["顺序正确", "轻微顺序偏差", "明显顺序错误", "无法判断顺序"],
+                    },
+                    "prerequisiteViolated": {"type": "boolean"},
                     "stepResults": {
                         "type": "array",
                         "minItems": step_count,
@@ -512,13 +608,42 @@ def build_response_schema(step_count: int):
                                 "passed": {"type": "boolean"},
                                 "score": {"type": "integer", "minimum": 0, "maximum": 100},
                                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                                "issueType": {
+                                    "type": "string",
+                                    "enum": ["正常", "缺失", "顺序颠倒", "过早执行", "延后执行", "重复操作", "动作错误", "部分完成", "证据不足", "前置条件缺失"],
+                                },
+                                "completionLevel": {
+                                    "type": "string",
+                                    "enum": ["完整", "部分完成", "未完成", "无法判断"],
+                                },
+                                "orderIssue": {"type": "boolean"},
+                                "prerequisiteViolated": {"type": "boolean"},
                                 "evidence": {"type": "string"},
                             },
-                            "required": ["stepNo", "description", "passed", "score", "confidence", "evidence"],
+                            "required": [
+                                "stepNo",
+                                "description",
+                                "passed",
+                                "score",
+                                "confidence",
+                                "issueType",
+                                "completionLevel",
+                                "orderIssue",
+                                "prerequisiteViolated",
+                                "evidence",
+                            ],
                         },
                     },
                 },
-                "required": ["passed", "score", "feedback", "issues", "stepResults"],
+                "required": [
+                    "passed",
+                    "score",
+                    "feedback",
+                    "issues",
+                    "sequenceAssessment",
+                    "prerequisiteViolated",
+                    "stepResults",
+                ],
             },
         },
     }
@@ -627,6 +752,7 @@ async def evaluate(req: EvaluateRequest):
             ],
             "response_format": build_response_schema(req.sop.stepCount),
         }
+        payload["messages"][0]["content"] = build_evaluation_system_prompt()
 
         raw_json = await call_chat_completion(req.apiConfig, payload)
         return {

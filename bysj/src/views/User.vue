@@ -180,6 +180,10 @@
                 {{ issue }}
               </span>
             </div>
+            <div v-if="evaluationResult.sequenceAssessment || evaluationResult.prerequisiteViolated" class="issues-list">
+              <span v-if="evaluationResult.sequenceAssessment" class="issue-chip">顺序评估：{{ evaluationResult.sequenceAssessment }}</span>
+              <span v-if="evaluationResult.prerequisiteViolated" class="issue-chip">存在前置条件问题</span>
+            </div>
 
             <div v-if="evaluationResult.stepResults?.length" class="step-result-list">
               <div v-for="item in evaluationResult.stepResults" :key="item.stepNo" class="step-result-item">
@@ -188,6 +192,12 @@
                   <div class="step-result-status">{{ item.passed ? '通过' : '异常' }} · {{ item.score }} 分</div>
                 </div>
                 <div class="step-result-meta">置信度：{{ formatConfidence(item.confidence) }}</div>
+                <div v-if="item.issueType || item.completionLevel || item.orderIssue || item.prerequisiteViolated" class="step-flag-list">
+                  <span v-if="item.issueType" class="issue-chip">{{ item.issueType }}</span>
+                  <span v-if="item.completionLevel" class="issue-chip">完成度：{{ item.completionLevel }}</span>
+                  <span v-if="item.orderIssue" class="issue-chip">顺序异常</span>
+                  <span v-if="item.prerequisiteViolated" class="issue-chip">前置条件缺失</span>
+                </div>
                 <div class="evidence-text">{{ item.evidence }}</div>
               </div>
             </div>
@@ -203,7 +213,6 @@
 
             <div class="result-actions">
               <el-button 
-                v-if="evaluationResult.passed" 
                 type="primary" 
                 class="action-btn-primary"
                 @click="finishSop"
@@ -211,7 +220,7 @@
                 完成整个流程
               </el-button>
               <el-button 
-                v-else 
+                v-if="!evaluationResult.passed" 
                 class="action-btn-secondary"
                 @click="retrySop"
               >
@@ -339,6 +348,14 @@
               </div>
             </div>
 
+            <div class="history-detail-section" v-if="selectedHistoryRecord.detail.sequenceAssessment || selectedHistoryRecord.detail.prerequisiteViolated">
+              <div class="history-detail-title">流程判断</div>
+              <div class="issues-list compact">
+                <span v-if="selectedHistoryRecord.detail.sequenceAssessment" class="issue-chip">顺序评估：{{ selectedHistoryRecord.detail.sequenceAssessment }}</span>
+                <span v-if="selectedHistoryRecord.detail.prerequisiteViolated" class="issue-chip">存在前置条件问题</span>
+              </div>
+            </div>
+
             <div class="history-detail-section" v-if="selectedHistoryRecord.detail.stepResults.length">
               <div class="history-detail-title">逐步分析</div>
               <div class="step-result-list compact">
@@ -348,6 +365,12 @@
                     <div class="step-result-status">{{ getStepResultText(item.passed) }} · {{ formatScore(item.score, '--') }}</div>
                   </div>
                   <div class="step-result-meta">置信度：{{ formatConfidence(item.confidence) }}</div>
+                  <div v-if="item.issueType || item.completionLevel || item.orderIssue || item.prerequisiteViolated" class="step-flag-list">
+                    <span v-if="item.issueType" class="issue-chip">{{ item.issueType }}</span>
+                    <span v-if="item.completionLevel" class="issue-chip">完成度：{{ item.completionLevel }}</span>
+                    <span v-if="item.orderIssue" class="issue-chip">顺序异常</span>
+                    <span v-if="item.prerequisiteViolated" class="issue-chip">前置条件缺失</span>
+                  </div>
                   <div class="evidence-text">{{ item.evidence || '未返回分析说明。' }}</div>
                 </div>
               </div>
@@ -775,7 +798,7 @@ async function evaluateByRealApi(sop, userVideoFile) {
   const rawModelResult = resultJson.data
   const parsed = parseJsonFromModel(rawModelResult?.choices?.[0]?.message?.content)
   return {
-    ...parsed,
+    ...normalizeEvaluationResult(parsed),
     rawModelResult,
     payloadPreview: resultJson.payloadPreview
   }
@@ -833,7 +856,7 @@ async function evaluateByStepAssets(sop, userVideoFile) {
   const rawModelResult = resultJson.data
   const parsed = parseJsonFromModel(rawModelResult?.choices?.[0]?.message?.content)
   return {
-    ...parsed,
+    ...normalizeEvaluationResult(parsed),
     rawModelResult,
     payloadPreview: resultJson.payloadPreview,
     segmentPreview: resultJson.segmentPreview
@@ -885,6 +908,32 @@ function normalizeManualReview(review) {
   }
 }
 
+function normalizeStepResult(item = {}) {
+  const passed = typeof item.passed === 'boolean' ? item.passed : null
+  return {
+    stepNo: item.stepNo ?? null,
+    description: item.description || '',
+    passed,
+    score: item.score ?? null,
+    confidence: item.confidence ?? null,
+    issueType: item.issueType || (passed === true ? '正常' : ''),
+    completionLevel: item.completionLevel || '',
+    orderIssue: Boolean(item.orderIssue),
+    prerequisiteViolated: Boolean(item.prerequisiteViolated),
+    evidence: item.evidence || ''
+  }
+}
+
+function normalizeEvaluationResult(result = {}) {
+  return {
+    ...result,
+    issues: Array.isArray(result.issues) ? result.issues : [],
+    sequenceAssessment: result.sequenceAssessment || '',
+    prerequisiteViolated: Boolean(result.prerequisiteViolated),
+    stepResults: Array.isArray(result.stepResults) ? result.stepResults.map(normalizeStepResult) : []
+  }
+}
+
 function normalizeHistoryRecord(record = {}) {
   const detail = record.detail || {}
   return {
@@ -893,7 +942,11 @@ function normalizeHistoryRecord(record = {}) {
     detail: {
       feedback: detail.feedback || record.feedback || '',
       issues: Array.isArray(detail.issues) ? detail.issues : (Array.isArray(record.issues) ? record.issues : []),
-      stepResults: Array.isArray(detail.stepResults) ? detail.stepResults : (Array.isArray(record.stepResults) ? record.stepResults : []),
+      sequenceAssessment: detail.sequenceAssessment || record.sequenceAssessment || '',
+      prerequisiteViolated: Boolean(detail.prerequisiteViolated || record.prerequisiteViolated),
+      stepResults: Array.isArray(detail.stepResults)
+        ? detail.stepResults.map(normalizeStepResult)
+        : (Array.isArray(record.stepResults) ? record.stepResults.map(normalizeStepResult) : []),
       sopSteps: Array.isArray(detail.sopSteps) ? detail.sopSteps : (Array.isArray(record.sopSteps) ? record.sopSteps : []),
       uploadedVideo: normalizeUploadedVideo(detail.uploadedVideo || record.uploadedVideo || null)
     }
@@ -917,6 +970,8 @@ function hasHistoryDetail(record) {
   return Boolean(
     detail.feedback ||
     detail.issues.length ||
+    detail.sequenceAssessment ||
+    detail.prerequisiteViolated ||
     detail.stepResults.length ||
     detail.sopSteps.length ||
     detail.uploadedVideo?.name ||
@@ -986,15 +1041,10 @@ const saveHistory = async () => {
     detail: {
       feedback: evaluationResult.value?.feedback || '',
       issues: Array.isArray(evaluationResult.value?.issues) ? [...evaluationResult.value.issues] : [],
+      sequenceAssessment: evaluationResult.value?.sequenceAssessment || '',
+      prerequisiteViolated: Boolean(evaluationResult.value?.prerequisiteViolated),
       stepResults: Array.isArray(evaluationResult.value?.stepResults)
-        ? evaluationResult.value.stepResults.map(item => ({
-          stepNo: item.stepNo ?? null,
-          description: item.description || '',
-          passed: typeof item.passed === 'boolean' ? item.passed : null,
-          score: item.score ?? null,
-          confidence: item.confidence ?? null,
-          evidence: item.evidence || ''
-        }))
+        ? evaluationResult.value.stepResults.map(normalizeStepResult)
         : [],
       sopSteps: Array.isArray(currentSop.value?.steps)
         ? currentSop.value.steps.map((step, index) => ({
@@ -1598,6 +1648,13 @@ const retrySop = () => {
   font-size: 13px;
   color: #86868b;
   margin-bottom: 6px;
+}
+
+.step-flag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .evidence-text {
