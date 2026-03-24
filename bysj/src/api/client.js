@@ -1,4 +1,5 @@
 const API_BASE_URL = process.env.VUE_APP_API_BASE_URL || 'http://localhost:8000'
+const AUTH_STORAGE_KEY = 'authSession'
 
 async function parseJsonSafe(response) {
   try {
@@ -8,9 +9,53 @@ async function parseJsonSafe(response) {
   }
 }
 
+export function getAuthSession() {
+  try {
+    const raw = sessionStorage.getItem(AUTH_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+export function getCurrentUser() {
+  return getAuthSession()?.user || null
+}
+
+export function getAccessToken() {
+  return getAuthSession()?.accessToken || ''
+}
+
+export function setAuthSession(payload) {
+  if (!payload) return
+  sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload))
+}
+
+export function clearAuthSession() {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY)
+  sessionStorage.removeItem('currentUser')
+}
+
 export async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, options)
+  const headers = new Headers(options.headers || {})
+  const token = getAccessToken()
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers
+  })
   const payload = await parseJsonSafe(response)
+
+  if (response.status === 401) {
+    clearAuthSession()
+    if (window.location.pathname !== '/login') {
+      window.location.replace('/login')
+    }
+  }
+
   if (!response.ok || payload?.success === false) {
     throw new Error(payload?.detail || payload?.message || `请求失败: ${response.status}`)
   }
@@ -36,6 +81,20 @@ export async function login(payload) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
+  })
+}
+
+export async function register(payload) {
+  return apiRequest('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+}
+
+export async function logout() {
+  return apiRequest('/api/auth/logout', {
+    method: 'POST'
   })
 }
 
@@ -121,4 +180,16 @@ export async function reviewHistory(recordId, payload) {
 
 export async function getStats() {
   return apiRequest('/api/stats')
+}
+
+export async function listUsers() {
+  return apiRequest('/api/users')
+}
+
+export async function updateUserStatus(userId, payload) {
+  return apiRequest(`/api/users/${userId}/status`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
 }

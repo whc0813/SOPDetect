@@ -1,13 +1,16 @@
 import base64
+import hashlib
+import hmac
 import json
 import os
 import tempfile
 import time
+import uuid
 from typing import List, Optional
 
 import cv2
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -16,6 +19,8 @@ try:
         add_history,
         add_sop,
         authenticate_user,
+        create_user,
+        create_user_session,
         attach_media,
         build_stats,
         delete_sop,
@@ -23,7 +28,12 @@ try:
         get_history,
         get_media,
         get_sop,
+        get_user_by_id,
+        get_user_by_username,
+        has_active_session,
+        is_user_session_active,
         list_history,
+        list_users,
         list_sops,
         load_db,
         now_display,
@@ -32,7 +42,9 @@ try:
         serialize_sop_detail,
         serialize_sop_summary,
         set_config,
+        revoke_user_session,
         update_sop,
+        update_user_status,
         update_manual_review,
     )
 except ModuleNotFoundError:
@@ -40,6 +52,8 @@ except ModuleNotFoundError:
         add_history,
         add_sop,
         authenticate_user,
+        create_user,
+        create_user_session,
         attach_media,
         build_stats,
         delete_sop,
@@ -47,7 +61,12 @@ except ModuleNotFoundError:
         get_history,
         get_media,
         get_sop,
+        get_user_by_id,
+        get_user_by_username,
+        has_active_session,
+        is_user_session_active,
         list_history,
+        list_users,
         list_sops,
         load_db,
         now_display,
@@ -56,11 +75,16 @@ except ModuleNotFoundError:
         serialize_sop_detail,
         serialize_sop_summary,
         set_config,
+        revoke_user_session,
         update_sop,
+        update_user_status,
         update_manual_review,
     )
 
 app = FastAPI(title="SOP Video Evaluation API")
+
+TOKEN_SECRET = os.getenv("AUTH_TOKEN_SECRET", "sop-eval-dev-secret")
+TOKEN_EXPIRES_IN = int(os.getenv("AUTH_TOKEN_EXPIRES_IN", "28800"))
 
 app.add_middleware(
     CORSMiddleware,
@@ -121,9 +145,24 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
+    accessToken: str
+    tokenType: str
+    expiresIn: int
+    user: dict
+
+
+class RegisterRequest(BaseModel):
     username: str
-    role: str
-    displayName: str
+    password: str
+    displayName: str = ""
+
+
+class UpdateUserStatusRequest(BaseModel):
+    status: str
+
+
+class LogoutResponse(BaseModel):
+    success: bool = True
 
 
 class PrepareStepVideoRequest(BaseModel):
@@ -208,6 +247,75 @@ class AIReferencePlan(BaseModel):
     stepSummary: str
     roiHint: str
     keyMoments: List[KeyMoment] = Field(default_factory=list)
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _b64url_decode(raw: str) -> bytes:
+    padding = "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode((raw + padding).encode("utf-8"))
+
+
+def create_access_token(user: dict) -> str:
+    payload = {
+        "sub": user["id"],
+        "username": user["username"],
+        "role": user["role"],
+        "sid": user["sessionId"],
+        "exp": int(time.time()) + TOKEN_EXPIRES_IN,
+    }
+    payload_raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    payload_part = _b64url_encode(payload_raw)
+    signature = hmac.new(TOKEN_SECRET.encode("utf-8"), payload_part.encode("utf-8"), hashlib.sha256).digest()
+    return f"{payload_part}.{_b64url_encode(signature)}"
+
+
+def parse_access_token(token: str) -> Optional[dict]:
+    if not token or "." not in token:
+        return None
+    payload_part, signature_part = token.split(".", 1)
+    expected_signature = hmac.new(
+        TOKEN_SECRET.encode("utf-8"),
+        payload_part.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    try:
+        actual_signature = _b64url_decode(signature_part)
+    except Exception:
+        return None
+    if not hmac.compare_digest(expected_signature, actual_signature):
+        return None
+    try:
+        payload = json.loads(_b64url_decode(payload_part).decode("utf-8"))
+    except Exception:
+        return None
+    if int(payload.get("exp") or 0) < int(time.time()):
+        return None
+    return payload
+
+
+def get_current_user(authorization: Optional[str] = Header(default=None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    token = authorization.split(" ", 1)[1].strip()
+    payload = parse_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="登录凭证无效或已过期")
+    user = get_user_by_id(payload.get("sub"))
+    if not user:
+        raise HTTPException(status_code=401, detail="当前用户不存在或已被禁用")
+    if not is_user_session_active(user["id"], payload.get("sid")):
+        raise HTTPException(status_code=401, detail="当前登录已失效，请重新登录")
+    user["sessionId"] = payload.get("sid")
+    return user
+
+
+def require_admin(current_user=Depends(get_current_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="无权限访问该资源")
+    return current_user
 
 
 def split_data_url(data_url: str):
@@ -538,6 +646,7 @@ async def store_demo_video_and_prepare_bundle(
     description: str,
     video_data_url: str,
     video_meta: Optional[StepVideoMeta],
+    uploaded_by=None,
 ):
     mime_type, binary = split_data_url(video_data_url)
     demo_video = attach_media(
@@ -551,7 +660,7 @@ async def store_demo_video_and_prepare_bundle(
         business_type="sop_step_demo",
         related_sop_id=sop_id,
         related_step_no=step_no,
-        uploaded_by="admin",
+        uploaded_by=uploaded_by or "admin",
     )
     bundle = await prepare_reference_bundle(
         step_no=step_no,
@@ -1034,35 +1143,102 @@ async def login(req: LoginRequest):
 
     user = authenticate_user(username, password)
     if not user:
+        existing_user = get_user_by_username(username)
+        if existing_user and existing_user.get("status") == "disabled":
+            raise HTTPException(status_code=403, detail="该账号已被禁用，请联系管理员")
         raise HTTPException(status_code=401, detail="账号或密码错误")
 
+    if has_active_session(user["id"]):
+        raise HTTPException(status_code=409, detail="该账号已在其他页面登录，请先退出当前会话")
+
+    session_id = uuid.uuid4().hex
+    user["sessionId"] = session_id
+    access_token = create_access_token(user)
+    create_user_session(user["id"], session_id)
     return {
         "success": True,
         "data": LoginResponse(
-            username=user["username"],
-            role=user["role"],
-            displayName=user["displayName"],
+            accessToken=access_token,
+            tokenType="Bearer",
+            expiresIn=TOKEN_EXPIRES_IN,
+            user={
+                "id": user["id"],
+                "username": user["username"],
+                "role": user["role"],
+                "displayName": user["displayName"],
+            },
         ).model_dump(),
     }
 
 
+@app.post("/api/auth/register")
+async def register(req: RegisterRequest):
+    try:
+        user = create_user(
+            username=req.username,
+            password=req.password,
+            display_name=req.displayName,
+            role="user",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "success": True,
+        "data": {
+            "id": user["id"],
+            "username": user["username"],
+            "displayName": user["displayName"],
+            "role": user["role"],
+        },
+        "message": "注册成功",
+    }
+
+
+@app.post("/api/auth/logout")
+async def logout(current_user=Depends(get_current_user)):
+    revoke_user_session(current_user.get("id"), current_user.get("sessionId"))
+    return LogoutResponse().model_dump()
+
+
+@app.get("/api/users")
+async def fetch_users(_current_user=Depends(require_admin)):
+    return {"success": True, "data": list_users()}
+
+
+@app.put("/api/users/{user_id}/status")
+async def change_user_status(user_id: int, req: UpdateUserStatusRequest, current_user=Depends(require_admin)):
+    if current_user.get("id") == user_id and (req.status or "").strip() == "disabled":
+        raise HTTPException(status_code=400, detail="不能禁用当前登录管理员")
+
+    try:
+        user = update_user_status(user_id, req.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    return {"success": True, "data": user}
+
+
 @app.get("/api/config")
-async def fetch_config():
+async def fetch_config(_current_user=Depends(require_admin)):
     return {"success": True, "data": get_config()}
 
 
 @app.put("/api/config")
-async def update_config(config: ApiConfig):
+async def update_config(config: ApiConfig, _current_user=Depends(require_admin)):
     return {"success": True, "data": set_config(config.model_dump())}
 
 
 @app.get("/api/sops")
-async def fetch_sops():
+async def fetch_sops(_current_user=Depends(get_current_user)):
     return {"success": True, "data": [serialize_sop_summary(item) for item in list_sops()]}
 
 
 @app.get("/api/sops/{sop_id}")
-async def fetch_sop_detail(sop_id: str):
+async def fetch_sop_detail(sop_id: str, _current_user=Depends(get_current_user)):
     sop = get_sop(sop_id)
     if not sop:
         raise HTTPException(status_code=404, detail="SOP 不存在")
@@ -1070,7 +1246,7 @@ async def fetch_sop_detail(sop_id: str):
 
 
 @app.put("/api/sops/{sop_id}/steps/{step_no}/demo-video")
-async def update_step_demo_video(sop_id: str, step_no: int, req: UpdateStepDemoVideoRequest):
+async def update_step_demo_video(sop_id: str, step_no: int, req: UpdateStepDemoVideoRequest, current_user=Depends(require_admin)):
     if not (req.videoDataUrl or "").strip():
         raise HTTPException(status_code=400, detail="请上传示范视频")
 
@@ -1092,6 +1268,7 @@ async def update_step_demo_video(sop_id: str, step_no: int, req: UpdateStepDemoV
         description=step_record.get("description") or "",
         video_data_url=req.videoDataUrl,
         video_meta=req.videoMeta,
+        uploaded_by=current_user,
     )
     save_db(data)
 
@@ -1130,7 +1307,7 @@ async def update_step_demo_video(sop_id: str, step_no: int, req: UpdateStepDemoV
 
 
 @app.put("/api/sops/{sop_id}/steps/{step_no}/manual-segmentation")
-async def update_step_segmentation(sop_id: str, step_no: int, req: ManualSegmentationRequest):
+async def update_step_segmentation(sop_id: str, step_no: int, req: ManualSegmentationRequest, _current_user=Depends(require_admin)):
     if not req.timestamps:
         raise HTTPException(status_code=400, detail="请至少提供一个时间点")
 
@@ -1149,7 +1326,7 @@ async def update_step_segmentation(sop_id: str, step_no: int, req: ManualSegment
             raise HTTPException(status_code=400, detail="该步骤已有参考帧，但原始示范视频引用缺失，请重新上传示范视频后再手动切帧")
         raise HTTPException(status_code=400, detail="该步骤没有示范视频，无法手动切帧")
 
-    media = get_media(media_id)
+    media = get_media(media_id, current_user=_current_user)
     if not media:
         raise HTTPException(status_code=404, detail="示范视频文件不存在")
 
@@ -1188,7 +1365,7 @@ async def update_step_segmentation(sop_id: str, step_no: int, req: ManualSegment
 
 
 @app.post("/api/sops")
-async def create_sop(req: CreateSopRequest):
+async def create_sop(req: CreateSopRequest, current_user=Depends(require_admin)):
     name = (req.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="请输入 SOP 名称")
@@ -1221,6 +1398,7 @@ async def create_sop(req: CreateSopRequest):
                 description=description,
                 video_data_url=step.videoDataUrl,
                 video_meta=step.videoMeta,
+                uploaded_by=current_user,
             )
         else:
             bundle = build_text_only_reference_bundle(step_no, description)
@@ -1255,7 +1433,7 @@ async def create_sop(req: CreateSopRequest):
         "createdAtMs": int(time.time() * 1000),
         "steps": step_items,
     }
-    add_sop(sop)
+    add_sop(sop, created_by=current_user)
     return {
         "success": True,
         "data": serialize_sop_summary(sop),
@@ -1264,14 +1442,14 @@ async def create_sop(req: CreateSopRequest):
 
 
 @app.delete("/api/sops/{sop_id}")
-async def remove_sop(sop_id: str):
+async def remove_sop(sop_id: str, _current_user=Depends(require_admin)):
     if not delete_sop(sop_id):
         raise HTTPException(status_code=404, detail="SOP 不存在")
     return {"success": True}
 
 
 @app.post("/api/sops/{sop_id}/evaluate")
-async def evaluate_sop(sop_id: str, req: StoredSopEvaluateRequest):
+async def evaluate_sop(sop_id: str, req: StoredSopEvaluateRequest, _current_user=Depends(get_current_user)):
     sop_record = get_sop(sop_id)
     if not sop_record:
         raise HTTPException(status_code=404, detail="SOP 不存在")
@@ -1285,20 +1463,20 @@ async def evaluate_sop(sop_id: str, req: StoredSopEvaluateRequest):
 
 
 @app.get("/api/history")
-async def fetch_history():
-    return {"success": True, "data": [serialize_history(item) for item in list_history()]}
+async def fetch_history(current_user=Depends(get_current_user)):
+    return {"success": True, "data": [serialize_history(item) for item in list_history(current_user=current_user)]}
 
 
 @app.get("/api/history/{record_id}")
-async def fetch_history_detail(record_id: str):
-    record = get_history(record_id)
+async def fetch_history_detail(record_id: str, current_user=Depends(get_current_user)):
+    record = get_history(record_id, current_user=current_user)
     if not record:
         raise HTTPException(status_code=404, detail="记录不存在")
     return {"success": True, "data": serialize_history(record)}
 
 
 @app.post("/api/history")
-async def create_history(req: CreateHistoryRequest):
+async def create_history(req: CreateHistoryRequest, current_user=Depends(get_current_user)):
     sop = get_sop(req.taskId)
     if not sop:
         raise HTTPException(status_code=404, detail="SOP 不存在")
@@ -1319,7 +1497,7 @@ async def create_history(req: CreateHistoryRequest):
             business_type="execution_upload",
             related_sop_id=sop.get("id"),
             related_execution_id=record_id,
-            uploaded_by="user",
+            uploaded_by=current_user,
         )
         save_db(data)
 
@@ -1351,39 +1529,39 @@ async def create_history(req: CreateHistoryRequest):
             "uploadedVideo": uploaded_video,
         },
     }
-    add_history(record)
+    add_history(record, current_user=current_user)
     return {"success": True, "data": serialize_history(record)}
 
 
 @app.put("/api/history/{record_id}/review")
-async def review_history(record_id: str, req: ManualReviewRequest):
+async def review_history(record_id: str, req: ManualReviewRequest, current_user=Depends(require_admin)):
     review = {
         "status": req.status,
         "note": (req.note or "").strip(),
         "reviewer": (req.reviewer or "").strip() or "管理员",
         "reviewTime": now_display(),
     }
-    updated = update_manual_review(record_id, review)
+    updated = update_manual_review(record_id, review, current_user=current_user)
     if not updated:
         raise HTTPException(status_code=404, detail="记录不存在")
     return {"success": True, "data": serialize_history(updated)}
 
 
 @app.get("/api/stats")
-async def fetch_stats():
+async def fetch_stats(_current_user=Depends(require_admin)):
     return {"success": True, "data": build_stats()}
 
 
 @app.get("/api/media/{media_id}")
-async def fetch_media(media_id: str):
-    media = get_media(media_id)
+async def fetch_media(media_id: str, current_user=Depends(get_current_user)):
+    media = get_media(media_id, current_user=current_user)
     if not media:
         raise HTTPException(status_code=404, detail="媒体文件不存在")
     return FileResponse(path=media["path"], media_type=media.get("type") or "application/octet-stream", filename=media.get("name") or None)
 
 
 @app.post("/api/prepare-step-video")
-async def prepare_step_video(req: PrepareStepVideoRequest):
+async def prepare_step_video(req: PrepareStepVideoRequest, _current_user=Depends(require_admin)):
     try:
         bundle = await prepare_reference_bundle(
             step_no=req.stepNo,
@@ -1403,7 +1581,7 @@ async def prepare_step_video(req: PrepareStepVideoRequest):
 
 
 @app.post("/api/evaluate")
-async def evaluate(req: EvaluateRequest):
+async def evaluate(req: EvaluateRequest, _current_user=Depends(get_current_user)):
     try:
         result = await run_sop_evaluation(req.apiConfig, req.sop, req.userVideoDataUrl)
         return {"success": True, "data": result}

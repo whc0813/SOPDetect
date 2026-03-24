@@ -70,6 +70,21 @@ SCHEMA_STATEMENTS = [
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
     """
+    CREATE TABLE IF NOT EXISTS user_login_sessions (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      user_id BIGINT UNSIGNED NOT NULL,
+      session_token VARCHAR(128) NOT NULL,
+      status ENUM('active', 'revoked') NOT NULL DEFAULT 'active',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      revoked_at DATETIME NULL,
+      UNIQUE KEY uk_user_login_sessions_token (session_token),
+      KEY idx_user_login_sessions_user_status (user_id, status),
+      CONSTRAINT fk_user_login_sessions_user
+        FOREIGN KEY (user_id) REFERENCES users (id)
+        ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
+    """
     CREATE TABLE IF NOT EXISTS ai_configs (
       id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
       config_name VARCHAR(100) NOT NULL DEFAULT 'default',
@@ -328,6 +343,17 @@ def _parse_datetime(value):
     return str(value)
 
 
+def _safe_dir_name(value, fallback):
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    invalid_chars = '<>:"/\\|?*'
+    for char in invalid_chars:
+        text = text.replace(char, "_")
+    text = text.strip().rstrip(".")
+    return text or fallback
+
+
 def _mysql_connection(database=None, autocommit=False):
     settings = dict(MYSQL_SETTINGS)
     if database is not None:
@@ -469,6 +495,20 @@ def _fetch_user_by_name(connection, username):
         return cursor.fetchone()
 
 
+def _fetch_user_by_id(connection, user_id):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, username, password_hash, display_name, role, status
+            FROM users
+            WHERE id = %s
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        return cursor.fetchone()
+
+
 def _password_matches(password, stored_hash):
     if not stored_hash:
         return False
@@ -496,6 +536,202 @@ def authenticate_user(username, password):
             "role": user["role"],
             "displayName": user["display_name"],
         }
+
+
+def get_user_by_username(username):
+    if not username:
+        return None
+    with _get_connection() as connection:
+        user = _fetch_user_by_name(connection, username)
+        if not user:
+            return None
+        return {
+            "id": user["id"],
+            "username": user["username"],
+            "role": user["role"],
+            "displayName": user["display_name"],
+            "status": user["status"],
+        }
+
+
+def get_user_by_id(user_id):
+    if not user_id:
+        return None
+    with _get_connection() as connection:
+        user = _fetch_user_by_id(connection, user_id)
+        if not user or user.get("status") != "active":
+            return None
+        return {
+            "id": user["id"],
+            "username": user["username"],
+            "role": user["role"],
+            "displayName": user["display_name"],
+            "status": user["status"],
+        }
+
+
+def has_active_session(user_id):
+    with _get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id
+                FROM user_login_sessions
+                WHERE user_id = %s AND status = 'active'
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            return cursor.fetchone() is not None
+
+
+def create_user_session(user_id, session_token):
+    with _get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO user_login_sessions (user_id, session_token, status)
+                VALUES (%s, %s, 'active')
+                """,
+                (user_id, session_token),
+            )
+        connection.commit()
+
+
+def is_user_session_active(user_id, session_token):
+    if not user_id or not session_token:
+        return False
+    with _get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id
+                FROM user_login_sessions
+                WHERE user_id = %s AND session_token = %s AND status = 'active'
+                LIMIT 1
+                """,
+                (user_id, session_token),
+            )
+            return cursor.fetchone() is not None
+
+
+def revoke_user_session(user_id, session_token):
+    if not user_id or not session_token:
+        return
+    with _get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE user_login_sessions
+                SET status = 'revoked',
+                    revoked_at = NOW()
+                WHERE user_id = %s AND session_token = %s AND status = 'active'
+                """,
+                (user_id, session_token),
+            )
+        connection.commit()
+
+
+def create_user(username, password, display_name, role="user"):
+    username = (username or "").strip()
+    password = (password or "").strip()
+    display_name = (display_name or "").strip()
+    role = (role or "user").strip() or "user"
+
+    if not username:
+        raise ValueError("用户名不能为空")
+    if not password:
+        raise ValueError("密码不能为空")
+    if len(username) < 3 or len(username) > 50:
+        raise ValueError("用户名长度需在 3 到 50 个字符之间")
+    if len(password) < 6:
+        raise ValueError("密码长度不能少于 6 位")
+    if role not in ("admin", "user"):
+        raise ValueError("用户角色不合法")
+
+    final_display_name = display_name or username
+    password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+    with _get_connection() as connection:
+        existing = _fetch_user_by_name(connection, username)
+        if existing:
+            raise ValueError("用户名已存在")
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO users (username, password_hash, display_name, role, status)
+                VALUES (%s, %s, %s, %s, 'active')
+                """,
+                (username, password_hash, final_display_name, role),
+            )
+            user_id = cursor.lastrowid
+        connection.commit()
+
+    return {
+        "id": user_id,
+        "username": username,
+        "role": role,
+        "displayName": final_display_name,
+        "status": "active",
+    }
+
+
+def list_users():
+    with _get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, username, display_name, role, status, last_login_at, created_at, updated_at
+                FROM users
+                ORDER BY role ASC, created_at ASC, id ASC
+                """
+            )
+            rows = cursor.fetchall()
+
+    return [
+        {
+            "id": row["id"],
+            "username": row["username"],
+            "displayName": row["display_name"],
+            "role": row["role"],
+            "status": row["status"],
+            "lastLoginAt": _parse_datetime(row.get("last_login_at")),
+            "createdAt": _parse_datetime(row.get("created_at")),
+            "updatedAt": _parse_datetime(row.get("updated_at")),
+        }
+        for row in rows
+    ]
+
+
+def update_user_status(user_id, status):
+    status = (status or "").strip()
+    if status not in ("active", "disabled"):
+        raise ValueError("用户状态不合法")
+
+    with _get_connection() as connection:
+        user = _fetch_user_by_id(connection, user_id)
+        if not user:
+            return None
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE users
+                SET status = %s
+                WHERE id = %s
+                """,
+                (status, user_id),
+            )
+        connection.commit()
+
+    return get_user_by_id(user_id) or {
+        "id": user["id"],
+        "username": user["username"],
+        "role": user["role"],
+        "displayName": user["display_name"],
+        "status": status,
+    }
 
 
 def load_db():
@@ -843,7 +1079,7 @@ def _insert_step_children(connection, step_id, step):
             )
 
 
-def _upsert_sop_content(connection, sop_data):
+def _upsert_sop_content(connection, sop_data, created_by_id=None):
     sop_row = _fetch_sop_row_by_code(connection, sop_data["id"])
     steps = sop_data.get("steps") or []
     demo_video_count = sum(1 for item in steps if item.get("demoVideo"))
@@ -858,7 +1094,8 @@ def _upsert_sop_content(connection, sop_data):
                     description = %s,
                     step_count = %s,
                     demo_video_count = %s,
-                    status = %s
+                    status = %s,
+                    created_by = COALESCE(created_by, %s)
                 WHERE id = %s
                 """,
                 (
@@ -868,6 +1105,7 @@ def _upsert_sop_content(connection, sop_data):
                     sop_data.get("stepCount") or len(steps),
                     demo_video_count,
                     sop_data.get("status") or "published",
+                    created_by_id,
                     sop_row["id"],
                 ),
             )
@@ -876,8 +1114,8 @@ def _upsert_sop_content(connection, sop_data):
         else:
             cursor.execute(
                 """
-                INSERT INTO sops (sop_code, name, scene, description, step_count, demo_video_count, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO sops (sop_code, name, scene, description, step_count, demo_video_count, status, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     sop_data["id"],
@@ -887,6 +1125,7 @@ def _upsert_sop_content(connection, sop_data):
                     sop_data.get("stepCount") or len(steps),
                     demo_video_count,
                     sop_data.get("status") or "published",
+                    created_by_id,
                 ),
             )
             sop_id = cursor.lastrowid
@@ -935,9 +1174,9 @@ def _upsert_sop_content(connection, sop_data):
                 )
 
 
-def add_sop(sop):
+def add_sop(sop, created_by=None):
     with _get_connection() as connection:
-        _upsert_sop_content(connection, sop)
+        _upsert_sop_content(connection, sop, created_by_id=(created_by or {}).get("id"))
         connection.commit()
     return get_sop(sop.get("id"))
 
@@ -1026,6 +1265,11 @@ def attach_media(
     fallback_suffix = mimetypes.guess_extension(mime_type or "") or ".bin"
     suffix = guessed_suffix or fallback_suffix
     stored_name = f"{media_code}{suffix}"
+    uploaded_by_name = ""
+    if isinstance(uploaded_by, dict):
+        uploaded_by_name = uploaded_by.get("username") or uploaded_by.get("displayName") or ""
+    elif isinstance(uploaded_by, str):
+        uploaded_by_name = uploaded_by
 
     base_dir = ADMIN_MEDIA_DIR if owner_role == "admin" else USER_MEDIA_DIR
     if owner_role == "admin" and business_type == "sop_step_demo":
@@ -1033,7 +1277,9 @@ def attach_media(
             f"step_{related_step_no}" if related_step_no else "step_unknown"
         )
     elif owner_role == "user" and business_type == "execution_upload":
-        sub_dir = base_dir / "execution_upload" / (related_execution_id or "pending")
+        user_dir = _safe_dir_name(uploaded_by_name, "unknown_user")
+        sop_dir = _safe_dir_name(related_sop_id, "unknown_sop")
+        sub_dir = base_dir / user_dir / sop_dir
     else:
         sub_dir = base_dir / "other"
 
@@ -1058,7 +1304,12 @@ def attach_media(
                 row = cursor.fetchone()
                 execution_db_id = row["id"] if row else None
 
-        uploaded_by_id = _resolve_user_id(connection, uploaded_by)
+        if isinstance(uploaded_by, dict):
+            uploaded_by_id = uploaded_by.get("id")
+        elif isinstance(uploaded_by, int):
+            uploaded_by_id = uploaded_by
+        else:
+            uploaded_by_id = _resolve_user_id(connection, uploaded_by)
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -1099,7 +1350,7 @@ def attach_media(
     }
 
 
-def get_media(media_id):
+def get_media(media_id, current_user=None):
     with _get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -1114,6 +1365,29 @@ def get_media(media_id):
             row = cursor.fetchone()
     if not row:
         return None
+
+    if current_user and current_user.get("role") != "admin":
+        allow_access = False
+        if row.get("owner_role") == "admin" and row.get("business_type") == "sop_step_demo":
+            allow_access = True
+        elif row.get("uploaded_by") == current_user.get("id"):
+            allow_access = True
+        elif row.get("related_execution_id"):
+            with _get_connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT user_id
+                        FROM sop_executions
+                        WHERE id = %s
+                        LIMIT 1
+                        """,
+                        (row.get("related_execution_id"),),
+                    )
+                    execution_row = cursor.fetchone()
+            allow_access = execution_row and execution_row.get("user_id") == current_user.get("id")
+        if not allow_access:
+            return None
 
     path = row.get("storage_path")
     if not path or not os.path.exists(path):
@@ -1146,20 +1420,28 @@ def serialize_uploaded_video(uploaded_video):
     return serialize_media_reference(uploaded_video)
 
 
-def _fetch_history_rows(connection, execution_codes=None):
+def _fetch_history_rows(connection, execution_codes=None, current_user=None):
     sql = """
         SELECT e.id, e.execution_code, e.sop_id, e.user_id, e.uploaded_video_media_id, e.finish_time,
                e.score, e.ai_status, e.feedback, e.sequence_assessment, e.prerequisite_violated,
                e.payload_preview, e.raw_model_result, e.created_at,
-               s.sop_code, s.name AS task_name, s.scene
+               s.sop_code, s.name AS task_name, s.scene,
+               u.username AS user_name, u.display_name AS user_display_name
         FROM sop_executions e
         JOIN sops s ON s.id = e.sop_id
+        LEFT JOIN users u ON u.id = e.user_id
     """
     params = []
+    conditions = []
     if execution_codes:
         placeholders = ", ".join(["%s"] * len(execution_codes))
-        sql += f" WHERE e.execution_code IN ({placeholders})"
+        conditions.append(f"e.execution_code IN ({placeholders})")
         params.extend(execution_codes)
+    if current_user and current_user.get("role") != "admin":
+        conditions.append("e.user_id = %s")
+        params.append(current_user.get("id"))
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
     sql += " ORDER BY e.created_at DESC"
 
     with connection.cursor() as cursor:
@@ -1167,8 +1449,8 @@ def _fetch_history_rows(connection, execution_codes=None):
         return cursor.fetchall()
 
 
-def _build_history_records(connection, execution_codes=None):
-    rows = _fetch_history_rows(connection, execution_codes)
+def _build_history_records(connection, execution_codes=None, current_user=None):
+    rows = _fetch_history_rows(connection, execution_codes, current_user=current_user)
     if not rows:
         return []
 
@@ -1289,6 +1571,9 @@ def _build_history_records(connection, execution_codes=None):
                 "taskId": row.get("sop_code") or "",
                 "taskName": row.get("task_name") or "",
                 "scene": row.get("scene") or "",
+                "userId": row.get("user_id"),
+                "userName": row.get("user_name") or "",
+                "userDisplayName": row.get("user_display_name") or row.get("user_name") or "",
                 "finishTime": _parse_datetime(row.get("finish_time")),
                 "score": float(row.get("score")) if row.get("score") is not None else None,
                 "status": row.get("ai_status") or "failed",
@@ -1309,18 +1594,18 @@ def _build_history_records(connection, execution_codes=None):
     return records
 
 
-def list_history():
+def list_history(current_user=None):
     with _get_connection() as connection:
-        return _build_history_records(connection)
+        return _build_history_records(connection, current_user=current_user)
 
 
-def get_history(record_id):
+def get_history(record_id, current_user=None):
     with _get_connection() as connection:
-        records = _build_history_records(connection, [record_id])
+        records = _build_history_records(connection, [record_id], current_user=current_user)
         return records[0] if records else None
 
 
-def add_history(record):
+def add_history(record, current_user=None):
     with _get_connection() as connection:
         sop_row = _fetch_sop_row_by_code(connection, record.get("taskId"))
         if not sop_row:
@@ -1345,7 +1630,7 @@ def add_history(record):
                 (
                     record.get("id"),
                     sop_row["id"],
-                    None,
+                    current_user.get("id") if current_user else None,
                     uploaded_video_db_id,
                     datetime.now(),
                     record.get("score"),
@@ -1415,10 +1700,10 @@ def add_history(record):
                 )
 
         connection.commit()
-    return get_history(record.get("id"))
+    return get_history(record.get("id"), current_user=current_user)
 
 
-def update_manual_review(record_id, review):
+def update_manual_review(record_id, review, current_user=None):
     with _get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT id FROM sop_executions WHERE execution_code = %s LIMIT 1", (record_id,))
@@ -1426,7 +1711,7 @@ def update_manual_review(record_id, review):
             if not execution_row:
                 return None
 
-        reviewer_id = _resolve_user_id(connection, review.get("reviewer"))
+        reviewer_id = (current_user or {}).get("id") or _resolve_user_id(connection, review.get("reviewer"))
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -1447,7 +1732,7 @@ def update_manual_review(record_id, review):
                 ),
             )
         connection.commit()
-    return get_history(record_id)
+    return get_history(record_id, current_user=current_user)
 
 
 def serialize_history(record):

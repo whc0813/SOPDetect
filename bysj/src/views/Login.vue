@@ -6,11 +6,34 @@
         <p class="subtitle">标准操作流程管理系统</p>
       </div>
 
-      <el-form ref="loginFormRef" :model="loginForm" :rules="rules" class="login-form">
+      <div class="switch-row">
+        <el-button
+          :type="mode === 'login' ? 'primary' : 'default'"
+          class="switch-btn"
+          @click="switchMode('login')"
+        >
+          登录
+        </el-button>
+        <el-button
+          :type="mode === 'register' ? 'primary' : 'default'"
+          class="switch-btn"
+          @click="switchMode('register')"
+        >
+          注册
+        </el-button>
+      </div>
+
+      <el-form
+        v-if="mode === 'login'"
+        ref="loginFormRef"
+        :model="loginForm"
+        :rules="loginRules"
+        class="login-form"
+      >
         <el-form-item prop="username">
           <el-input
             v-model="loginForm.username"
-            placeholder="账号 (admin / user)"
+            placeholder="账号"
             class="minimal-input"
             :prefix-icon="User"
           />
@@ -33,8 +56,59 @@
         </el-form-item>
       </el-form>
 
+      <el-form
+        v-else
+        ref="registerFormRef"
+        :model="registerForm"
+        :rules="registerRules"
+        class="login-form"
+      >
+        <el-form-item prop="displayName">
+          <el-input
+            v-model="registerForm.displayName"
+            placeholder="昵称"
+            class="minimal-input"
+            :prefix-icon="User"
+          />
+        </el-form-item>
+        <el-form-item prop="username">
+          <el-input
+            v-model="registerForm.username"
+            placeholder="账号"
+            class="minimal-input"
+            :prefix-icon="User"
+          />
+        </el-form-item>
+        <el-form-item prop="password">
+          <el-input
+            v-model="registerForm.password"
+            type="password"
+            placeholder="密码（至少 6 位）"
+            class="minimal-input"
+            :prefix-icon="Lock"
+            show-password
+          />
+        </el-form-item>
+        <el-form-item prop="confirmPassword">
+          <el-input
+            v-model="registerForm.confirmPassword"
+            type="password"
+            placeholder="确认密码"
+            class="minimal-input"
+            :prefix-icon="Lock"
+            show-password
+            @keyup.enter="handleRegister"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" class="login-btn" :loading="loading" @click="handleRegister">
+            注册账号
+          </el-button>
+        </el-form-item>
+      </el-form>
+
       <div class="tip">
-        <span>管理员: admin</span> | <span>用户: user</span>
+        <span>默认管理员：admin</span> | <span>新注册账号默认为普通用户</span>
       </div>
     </div>
   </div>
@@ -44,19 +118,40 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Lock } from '@element-plus/icons-vue'
-import { login } from '../api/client'
+import { Lock, User } from '@element-plus/icons-vue'
+import { login, register, setAuthSession } from '../api/client'
 
 const router = useRouter()
-const loginFormRef = ref(null)
 const loading = ref(false)
+const mode = ref('login')
+const loginFormRef = ref(null)
+const registerFormRef = ref(null)
 
 const loginForm = reactive({
   username: '',
   password: ''
 })
 
-const rules = reactive({
+const registerForm = reactive({
+  displayName: '',
+  username: '',
+  password: '',
+  confirmPassword: ''
+})
+
+const validateConfirmPassword = (_rule, value, callback) => {
+  if (!value) {
+    callback(new Error('请再次输入密码'))
+    return
+  }
+  if (value !== registerForm.password) {
+    callback(new Error('两次输入的密码不一致'))
+    return
+  }
+  callback()
+}
+
+const loginRules = reactive({
   username: [
     { required: true, message: '请输入账号', trigger: 'blur' }
   ],
@@ -65,7 +160,28 @@ const rules = reactive({
   ]
 })
 
-const handleLogin = async () => {
+const registerRules = reactive({
+  displayName: [
+    { required: true, message: '请输入昵称', trigger: 'blur' }
+  ],
+  username: [
+    { required: true, message: '请输入账号', trigger: 'blur' },
+    { min: 3, max: 50, message: '账号长度需在 3 到 50 个字符之间', trigger: 'blur' }
+  ],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 6, message: '密码长度不能少于 6 位', trigger: 'blur' }
+  ],
+  confirmPassword: [
+    { validator: validateConfirmPassword, trigger: 'blur' }
+  ]
+})
+
+function switchMode(nextMode) {
+  mode.value = nextMode
+}
+
+async function handleLogin() {
   const valid = await loginFormRef.value.validate().catch(() => false)
   if (!valid) return
 
@@ -75,12 +191,38 @@ const handleLogin = async () => {
       username: loginForm.username.trim(),
       password: loginForm.password
     })
-    const user = result.data
-    sessionStorage.setItem('currentUser', JSON.stringify(user))
-    ElMessage.success(`欢迎回来，${user.displayName}`)
-    router.push(user.role === 'admin' ? '/admin' : '/user')
+    const auth = result.data
+    setAuthSession(auth)
+    ElMessage.success(`欢迎回来，${auth.user.displayName}`)
+    router.push(auth.user.role === 'admin' ? '/admin' : '/user')
   } catch (error) {
     ElMessage.error(error.message || '登录失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleRegister() {
+  const valid = await registerFormRef.value.validate().catch(() => false)
+  if (!valid) return
+
+  loading.value = true
+  try {
+    await register({
+      displayName: registerForm.displayName.trim(),
+      username: registerForm.username.trim(),
+      password: registerForm.password
+    })
+    ElMessage.success('注册成功，请使用新账号登录')
+    loginForm.username = registerForm.username.trim()
+    loginForm.password = ''
+    registerForm.displayName = ''
+    registerForm.username = ''
+    registerForm.password = ''
+    registerForm.confirmPassword = ''
+    mode.value = 'login'
+  } catch (error) {
+    ElMessage.error(error.message || '注册失败')
   } finally {
     loading.value = false
   }
@@ -92,7 +234,7 @@ const handleLogin = async () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100vh;
+  min-height: 100vh;
   background-color: #ffffff;
   color: #1a1a1a;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -100,13 +242,13 @@ const handleLogin = async () => {
 
 .login-content {
   width: 100%;
-  max-width: 360px;
+  max-width: 380px;
   padding: 40px;
 }
 
 .title-section {
   text-align: center;
-  margin-bottom: 48px;
+  margin-bottom: 32px;
 }
 
 .title-section h1 {
@@ -122,6 +264,16 @@ const handleLogin = async () => {
   color: #86868b;
   margin: 0;
   letter-spacing: 0.5px;
+}
+
+.switch-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.switch-btn {
+  flex: 1;
 }
 
 .login-form {
@@ -178,6 +330,7 @@ const handleLogin = async () => {
   font-size: 13px;
   color: #86868b;
   text-align: center;
+  line-height: 1.8;
 }
 
 .tip span {

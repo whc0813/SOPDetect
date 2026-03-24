@@ -13,6 +13,10 @@
           <el-icon><Document /></el-icon>
           <span>SOP 管理</span>
         </el-menu-item>
+        <el-menu-item index="users">
+          <el-icon><SwitchButton /></el-icon>
+          <span>用户管理</span>
+        </el-menu-item>
         <el-menu-item index="stats">
           <el-icon><DataLine /></el-icon>
           <span>数据统计</span>
@@ -22,7 +26,7 @@
       <div class="sidebar-bottom">
         <div class="user-info">
           <el-avatar :size="32" src="https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png" />
-          <span class="username">管理员</span>
+          <span class="username">{{ currentUserName }}</span>
         </div>
         <el-button text class="logout-btn" @click="handleLogout">
           <el-icon><SwitchButton /></el-icon>
@@ -34,11 +38,11 @@
     <el-container class="main-container">
       <el-header class="top-header">
         <div class="header-left">
-          <h2>{{ headerTitle }}</h2>
-          <p class="header-subtitle">{{ headerSubtitle }}</p>
+          <h2>{{ panelHeaderTitle }}</h2>
+          <p class="header-subtitle">{{ panelHeaderSubtitle }}</p>
         </div>
         <div class="header-right">
-          <el-button v-if="activeMenu === 'stats'" class="refresh-btn" @click="reloadCurrentView">
+          <el-button v-if="activeMenu === 'stats' || activeMenu === 'users'" class="refresh-btn" @click="reloadCurrentView">
             刷新数据
           </el-button>
           <el-button v-if="activeMenu === 'manage'" type="primary" class="create-btn" @click="openCreateDialog">
@@ -63,6 +67,40 @@
               <template #default="{ row }">
                 <el-button text class="action-btn" @click="openDebugSop(row)">查看</el-button>
                 <el-button text type="danger" class="action-btn" @click="deleteCurrentSop(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <div v-else-if="activeMenu === 'users'" class="table-card">
+          <el-table :data="userList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无用户">
+            <el-table-column prop="displayName" label="昵称" min-width="140" />
+            <el-table-column prop="username" label="账号" min-width="140" />
+            <el-table-column label="角色" width="110" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.role === 'admin' ? 'danger' : 'info'">
+                  {{ row.role === 'admin' ? '管理员' : '普通用户' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="110" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.status === 'active' ? 'success' : 'warning'">
+                  {{ row.status === 'active' ? '启用' : '禁用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="lastLoginAt" label="最近登录" width="180" />
+            <el-table-column prop="createdAt" label="创建时间" width="180" />
+            <el-table-column label="操作" width="160" align="center">
+              <template #default="{ row }">
+                <el-button
+                  text
+                  :disabled="row.role === 'admin' && row.id === currentUser?.id"
+                  @click="toggleUserStatus(row)"
+                >
+                  {{ row.status === 'active' ? '禁用' : '启用' }}
+                </el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -121,6 +159,11 @@
             <div class="table-card">
               <el-table :data="historyList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无执行记录">
                 <el-table-column prop="taskName" label="SOP 名称" min-width="180" />
+                <el-table-column label="所属用户" min-width="140">
+                  <template #default="{ row }">
+                    {{ row.userDisplayName || row.userName || '未知用户' }}
+                  </template>
+                </el-table-column>
                 <el-table-column prop="finishTime" label="完成时间" width="180" />
                 <el-table-column label="AI 结论" width="110" align="center">
                   <template #default="{ row }">
@@ -220,7 +263,7 @@
 
     <el-dialog v-model="historyDetailVisible" title="执行记录详情" width="820px" class="minimal-dialog">
       <div v-if="selectedHistoryRecord" class="detail-wrap">
-        <div class="summary">{{ selectedHistoryRecord.taskName }} / {{ selectedHistoryRecord.finishTime }}</div>
+        <div class="summary">{{ selectedHistoryRecord.taskName }} / {{ selectedHistoryRecord.userDisplayName || selectedHistoryRecord.userName || '未知用户' }} / {{ selectedHistoryRecord.finishTime }}</div>
         <div class="detail-box">
           <div class="detail-title">综合反馈</div>
           <div class="detail-text">{{ selectedHistoryRecord.detail.feedback || '暂无反馈' }}</div>
@@ -241,7 +284,7 @@
 
     <el-dialog v-model="reviewDialogVisible" title="人工复核" width="560px" class="minimal-dialog">
       <div v-if="reviewTarget" class="detail-wrap">
-        <div class="summary">{{ reviewTarget.taskName }} / {{ reviewTarget.finishTime }}</div>
+        <div class="summary">{{ reviewTarget.taskName }} / {{ reviewTarget.userDisplayName || reviewTarget.userName || '未知用户' }} / {{ reviewTarget.finishTime }}</div>
         <video v-if="reviewVideoUrl" :src="reviewVideoUrl" controls class="video" />
         <el-form :model="reviewForm" label-position="top" class="minimal-form">
           <el-form-item label="复核结论">
@@ -271,11 +314,12 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataLine, Document, Monitor, Plus, SwitchButton } from '@element-plus/icons-vue'
-import { createSop, fileToDataUrl, getHistoryDetail, getSopDetail, getStats, listHistory, listSops, removeSop, reviewHistory, toAbsoluteApiUrl, updateSopStepDemoVideo, updateSopStepSegmentation } from '../api/client'
+import { clearAuthSession, createSop, fileToDataUrl, getCurrentUser, getHistoryDetail, getSopDetail, getStats, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, toAbsoluteApiUrl, updateSopStepDemoVideo, updateSopStepSegmentation, updateUserStatus } from '../api/client'
 
 const router = useRouter()
 const activeMenu = ref('manage')
 const sopList = ref([])
+const userList = ref([])
 const historyList = ref([])
 const summaryStats = ref({ totalSops: 0, totalExecutions: 0, pendingReviewCount: 0, passRate: 0 })
 const sopStatsList = ref([])
@@ -290,11 +334,23 @@ const reviewDialogVisible = ref(false)
 const reviewTarget = ref(null)
 const reviewForm = reactive({ status: 'approved', note: '' })
 const sopForm = reactive({ name: '', scene: '', stepCount: 1, steps: [{ description: '', video: null }] })
+const currentUser = ref(getCurrentUser())
 
 const headerTitle = computed(() => activeMenu.value === 'manage' ? 'SOP 管理' : '数据统计')
 const headerSubtitle = computed(() => activeMenu.value === 'manage' ? '统一管理 SOP 内容、步骤说明和示范视频' : '查看整体执行情况，并处理需要人工确认的记录')
 const historyVideoUrl = computed(() => toAbsoluteApiUrl(selectedHistoryRecord.value?.detail?.uploadedVideo?.url || ''))
 const reviewVideoUrl = computed(() => toAbsoluteApiUrl(reviewTarget.value?.detail?.uploadedVideo?.url || ''))
+const currentUserName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '管理员')
+const panelHeaderTitle = computed(() => {
+  if (activeMenu.value === 'manage') return 'SOP 管理'
+  if (activeMenu.value === 'users') return '用户管理'
+  return '数据统计'
+})
+const panelHeaderSubtitle = computed(() => {
+  if (activeMenu.value === 'manage') return '统一管理 SOP 内容、步骤说明和示范视频'
+  if (activeMenu.value === 'users') return '查看已注册账号，并启用或禁用普通用户'
+  return '查看整体执行情况，并处理需要人工确认的记录'
+})
 
 function createEmptyStep() {
   return { description: '', video: null }
@@ -320,6 +376,10 @@ async function loadHistoryList() {
   historyList.value = ((await listHistory()).data || []).map(normalizeHistory)
 }
 
+async function loadUserList() {
+  userList.value = (await listUsers()).data || []
+}
+
 async function loadStats() {
   const result = await getStats()
   summaryStats.value = result.data?.summaryStats || summaryStats.value
@@ -328,7 +388,9 @@ async function loadStats() {
 
 async function reloadCurrentView() {
   await loadSopList()
-  if (activeMenu.value === 'stats') {
+  if (activeMenu.value === 'users') {
+    await loadUserList()
+  } else if (activeMenu.value === 'stats') {
     await Promise.all([loadHistoryList(), loadStats()])
   }
 }
@@ -338,9 +400,15 @@ function handleMenuSelect(index) {
   reloadCurrentView().catch((error) => ElMessage.error(error.message || '加载失败'))
 }
 
-function handleLogout() {
-  sessionStorage.removeItem('currentUser')
-  router.push('/login')
+async function handleLogout() {
+  try {
+    await logout()
+  } catch (_error) {
+    // 即使后端会话已失效，也允许前端本地退出
+  } finally {
+    clearAuthSession()
+    router.push('/login')
+  }
 }
 
 function openCreateDialog() {
@@ -435,12 +503,24 @@ async function openReviewDialog(row) {
 async function saveManualReview() {
   if (!reviewTarget.value) return
   try {
-    await reviewHistory(reviewTarget.value.id, { status: reviewForm.status, note: reviewForm.note.trim(), reviewer: '管理员' })
+    await reviewHistory(reviewTarget.value.id, { status: reviewForm.status, note: reviewForm.note.trim() })
     reviewDialogVisible.value = false
     await Promise.all([loadHistoryList(), loadStats()])
     ElMessage.success('复核已保存')
   } catch (error) {
     ElMessage.error(error.message || '保存复核失败')
+  }
+}
+
+async function toggleUserStatus(row) {
+  if (!row?.id) return
+  const nextStatus = row.status === 'active' ? 'disabled' : 'active'
+  try {
+    await updateUserStatus(row.id, { status: nextStatus })
+    await loadUserList()
+    ElMessage.success(nextStatus === 'active' ? '用户已启用' : '用户已禁用')
+  } catch (error) {
+    ElMessage.error(error.message || '更新用户状态失败')
   }
 }
 

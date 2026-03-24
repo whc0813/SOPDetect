@@ -247,7 +247,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, CircleCheckFilled, List, Location, Monitor, VideoCamera, VideoPlay, WarningFilled } from '@element-plus/icons-vue'
-import { createHistory, evaluateSop, fileToDataUrl, getConfig, getHistoryDetail, listHistory, listSops, toAbsoluteApiUrl, updateConfig } from '../api/client'
+import { clearAuthSession, createHistory, evaluateSop, fileToDataUrl, getCurrentUser, getHistoryDetail, listHistory, listSops, logout, toAbsoluteApiUrl } from '../api/client'
 
 const router = useRouter()
 const DEFAULT_API_CONFIG = {
@@ -270,12 +270,14 @@ const configVisible = ref(false)
 const historyDetailVisible = ref(false)
 const selectedHistoryRecord = ref(null)
 const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
+const currentUser = ref(getCurrentUser())
 
 const selectedHistoryVideoUrl = computed(() => toAbsoluteApiUrl(selectedHistoryRecord.value?.detail?.uploadedVideo?.url || ''))
 const currentSopHasNoDemoVideo = computed(() => {
   const steps = currentSop.value?.steps || []
   return steps.length > 0 && steps.every((step) => step.referenceMode === 'text')
 })
+const currentUserName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '当前用户')
 
 function normalizeHistory(record = {}) {
   return {
@@ -298,31 +300,27 @@ async function loadHistory() {
   historyList.value = ((await listHistory()).data || []).map(normalizeHistory)
 }
 
-async function loadApiConfig() {
-  Object.assign(apiConfig, DEFAULT_API_CONFIG, (await getConfig()).data || {})
-}
-
 function openConfigDialog() {
-  configVisible.value = true
+  ElMessage.warning('普通用户无权修改系统配置')
 }
 
-async function saveApiConfig() {
-  try {
-    await updateConfig({ ...apiConfig })
-    configVisible.value = false
-    ElMessage.success('配置已保存到后端')
-  } catch (error) {
-    ElMessage.error(error.message || '保存配置失败')
-  }
+function saveApiConfig() {
+  ElMessage.warning('普通用户无权修改系统配置')
 }
 
 function resetApiConfig() {
   Object.assign(apiConfig, DEFAULT_API_CONFIG)
 }
 
-function handleLogout() {
-  sessionStorage.removeItem('currentUser')
-  router.push('/login')
+async function handleLogout() {
+  try {
+    await logout()
+  } catch (_error) {
+    // 即使后端会话已失效，也允许前端本地退出
+  } finally {
+    clearAuthSession()
+    router.push('/login')
+  }
 }
 
 function startSop(sop) {
@@ -343,8 +341,6 @@ function handleVideoChange(file) {
 
 async function submitVideo() {
   if (!currentVideo.value) return ElMessage.warning('请先上传视频')
-  if (!apiConfig.apiKey?.trim()) return ElMessage.warning('请先配置 API Key')
-
   isEvaluating.value = true
   try {
     const result = await evaluateSop(currentSop.value.id, await fileToDataUrl(currentVideo.value))
@@ -419,7 +415,7 @@ function getManualReviewText(status) {
 }
 
 onMounted(() => {
-  Promise.all([loadSops(), loadHistory(), loadApiConfig()]).catch((error) => {
+  Promise.all([loadSops(), loadHistory()]).catch((error) => {
     ElMessage.error(error.message || '初始化失败')
   })
 })
