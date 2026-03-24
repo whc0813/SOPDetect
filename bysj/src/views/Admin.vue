@@ -229,11 +229,12 @@
 
     <el-dialog v-model="debugVisible" title="SOP 预处理详情" width="900px" class="minimal-dialog">
       <div v-loading="debugLoading" class="detail-wrap">
-        <div v-if="selectedSopDebug">
+          <div v-if="selectedSopDebug">
           <div class="summary">{{ selectedSopDebug.name }} / {{ selectedSopDebug.scene }}</div>
           <div v-for="step in selectedSopDebug.steps" :key="step.stepNo" class="detail-box">
             <div class="detail-title">步骤 {{ step.stepNo }}: {{ step.description }}</div>
             <div class="detail-text">摘要：{{ step.referenceSummary || '暂无' }}</div>
+            <div class="detail-text">预处理 Token：{{ formatTokenUsage(step.tokenUsage) }}</div>
             <div class="detail-text">ROI：{{ step.roiHint || '暂无' }}</div>
             <div class="detail-text">关键时刻：{{ formatSubsteps(step.substeps) }}</div>
             <div class="detail-text">参考模式：{{ step.referenceMode === 'text' ? '仅文字 SOP' : '示范视频关键帧' }}</div>
@@ -310,11 +311,11 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataLine, Document, Monitor, Plus, SwitchButton } from '@element-plus/icons-vue'
-import { clearAuthSession, createSop, fileToDataUrl, getCurrentUser, getHistoryDetail, getSopDetail, getStats, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, toAbsoluteApiUrl, updateSopStepDemoVideo, updateSopStepSegmentation, updateUserStatus } from '../api/client'
+import { clearAuthSession, createSop, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getCurrentUser, getHistoryDetail, getSopDetail, getStats, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateSopStepDemoVideo, updateSopStepSegmentation, updateUserStatus } from '../api/client'
 
 const router = useRouter()
 const activeMenu = ref('manage')
@@ -330,16 +331,16 @@ const debugLoading = ref(false)
 const selectedSopDebug = ref(null)
 const historyDetailVisible = ref(false)
 const selectedHistoryRecord = ref(null)
+const historyVideoUrl = ref('')
 const reviewDialogVisible = ref(false)
 const reviewTarget = ref(null)
+const reviewVideoUrl = ref('')
 const reviewForm = reactive({ status: 'approved', note: '' })
 const sopForm = reactive({ name: '', scene: '', stepCount: 1, steps: [{ description: '', video: null }] })
 const currentUser = ref(getCurrentUser())
 
 const headerTitle = computed(() => activeMenu.value === 'manage' ? 'SOP 管理' : '数据统计')
 const headerSubtitle = computed(() => activeMenu.value === 'manage' ? '统一管理 SOP 内容、步骤说明和示范视频' : '查看整体执行情况，并处理需要人工确认的记录')
-const historyVideoUrl = computed(() => toAbsoluteApiUrl(selectedHistoryRecord.value?.detail?.uploadedVideo?.url || ''))
-const reviewVideoUrl = computed(() => toAbsoluteApiUrl(reviewTarget.value?.detail?.uploadedVideo?.url || ''))
 const currentUserName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '管理员')
 const panelHeaderTitle = computed(() => {
   if (activeMenu.value === 'manage') return 'SOP 管理'
@@ -354,6 +355,13 @@ const panelHeaderSubtitle = computed(() => {
 
 function createEmptyStep() {
   return { description: '', video: null }
+}
+
+function revokeVideoUrl(targetRef) {
+  if (targetRef.value) {
+    URL.revokeObjectURL(targetRef.value)
+    targetRef.value = ''
+  }
 }
 
 function normalizeHistory(record = {}) {
@@ -483,6 +491,11 @@ async function deleteCurrentSop(row) {
 async function openHistoryDetail(row) {
   try {
     selectedHistoryRecord.value = normalizeHistory((await getHistoryDetail(row.id)).data)
+    revokeVideoUrl(historyVideoUrl)
+    const mediaPath = selectedHistoryRecord.value?.detail?.uploadedVideo?.url || ''
+    if (mediaPath) {
+      historyVideoUrl.value = await fetchAuthorizedMediaBlobUrl(mediaPath)
+    }
     historyDetailVisible.value = true
   } catch (error) {
     ElMessage.error(error.message || '加载详情失败')
@@ -492,6 +505,11 @@ async function openHistoryDetail(row) {
 async function openReviewDialog(row) {
   try {
     reviewTarget.value = normalizeHistory((await getHistoryDetail(row.id)).data)
+    revokeVideoUrl(reviewVideoUrl)
+    const mediaPath = reviewTarget.value?.detail?.uploadedVideo?.url || ''
+    if (mediaPath) {
+      reviewVideoUrl.value = await fetchAuthorizedMediaBlobUrl(mediaPath)
+    }
     reviewForm.status = reviewTarget.value.manualReview?.status || (reviewTarget.value.status === 'passed' ? 'approved' : 'needs_attention')
     reviewForm.note = reviewTarget.value.manualReview?.note || ''
     reviewDialogVisible.value = true
@@ -546,6 +564,14 @@ function parseTimestampInput(value) {
     .split(/[\s,，、;；]+/)
     .map((item) => Number(item))
     .filter((item) => Number.isFinite(item) && item >= 0)
+}
+
+function formatTokenUsage(usage) {
+  if (!usage) return '暂无'
+  const input = Number.isFinite(Number(usage.inputTokens)) ? Number(usage.inputTokens) : '-'
+  const output = Number.isFinite(Number(usage.outputTokens)) ? Number(usage.outputTokens) : '-'
+  const total = Number.isFinite(Number(usage.totalTokens)) ? Number(usage.totalTokens) : '-'
+  return `输入 ${input} / 输出 ${output} / 总计 ${total}`
 }
 
 async function applyManualSegmentation(step) {
@@ -626,6 +652,11 @@ function formatSubsteps(list) {
 
 onMounted(() => {
   reloadCurrentView().catch((error) => ElMessage.error(error.message || '初始化失败'))
+})
+
+onUnmounted(() => {
+  revokeVideoUrl(historyVideoUrl)
+  revokeVideoUrl(reviewVideoUrl)
 })
 </script>
 

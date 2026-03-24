@@ -24,6 +24,7 @@
         <div class="user-tabs" v-if="!currentSop">
           <el-radio-group v-model="activeTab" class="minimal-radio-group">
             <el-radio-button label="tasks">待执行任务</el-radio-button>
+            <el-radio-button label="jobs">评测任务</el-radio-button>
             <el-radio-button label="history">历史记录</el-radio-button>
           </el-radio-group>
         </div>
@@ -51,6 +52,38 @@
           </div>
 
           <el-empty v-if="sopList.length === 0" description="暂无可用流程，请联系管理员创建" class="minimal-empty" />
+        </div>
+
+        <div v-if="!currentSop && activeTab === 'jobs'" class="view-transition">
+          <div class="page-header">
+            <h2>评测任务</h2>
+            <p class="subtitle">查看排队、处理中、失败和已完成的评测任务状态</p>
+          </div>
+
+          <div class="table-card">
+            <el-table :data="jobList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无评测任务">
+              <el-table-column prop="taskName" label="SOP 名称" min-width="180" />
+              <el-table-column prop="createdAt" label="提交时间" width="180" />
+              <el-table-column label="状态" width="120" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="getJobStatusTagType(row.status)" effect="plain">{{ getJobStatusText(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="进度" width="180">
+                <template #default="{ row }">
+                  <div class="job-progress-cell">
+                    <span>{{ row.progressPercent }}%</span>
+                    <span class="muted-text">{{ getJobStageText(row.stage) }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="140" align="center">
+                <template #default="{ row }">
+                  <el-button text @click="openJobDetail(row)">查看详情</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
         </div>
 
         <div v-if="!currentSop && activeTab === 'history'" class="view-transition">
@@ -97,7 +130,7 @@
 
           <div class="progress-section">
             <div class="progress-text">共 {{ currentSop.stepCount }} 个步骤</div>
-            <el-progress :percentage="evaluationResult ? 100 : 45" :show-text="false" color="#000000" class="minimal-progress" />
+            <el-progress :percentage="currentJob ? currentJob.progressPercent : (evaluationResult ? 100 : 45)" :show-text="false" color="#000000" class="minimal-progress" />
           </div>
 
           <div class="step-container">
@@ -111,7 +144,7 @@
               </div>
             </div>
 
-            <div class="upload-section" v-if="!evaluationResult || !evaluationResult.passed">
+            <div class="upload-section" v-if="!currentJob || currentJob.status === 'failed'">
               <el-upload
                 class="minimal-upload"
                 drag
@@ -136,9 +169,44 @@
                   <span>{{ currentVideo.name }}</span>
                 </div>
                 <el-button type="primary" class="submit-action-btn" @click="submitVideo" :loading="isEvaluating">
-                  解析与验证
+                  提交评测任务
                 </el-button>
               </div>
+            </div>
+          </div>
+
+          <div v-if="currentJob" class="job-status-card">
+            <div class="result-header">
+              <el-icon class="result-icon" v-if="currentJob.status === 'succeeded'"><CircleCheckFilled /></el-icon>
+              <el-icon class="result-icon" v-else><WarningFilled /></el-icon>
+              <h3>任务状态：{{ getJobStatusText(currentJob.status) }}</h3>
+            </div>
+            <div class="job-status-meta">
+              <el-tag :type="getJobStatusTagType(currentJob.status)" effect="plain">{{ getJobStageText(currentJob.stage) }}</el-tag>
+              <span>任务编号：{{ currentJob.id }}</span>
+              <span>进度：{{ currentJob.progressPercent }}%</span>
+            </div>
+            <div v-if="currentJob.failureReason" class="job-failure-box">
+              <div class="detail-title">失败原因</div>
+              <div class="detail-text">{{ currentJob.failureReason }}</div>
+            </div>
+            <div class="detail-box">
+              <div class="detail-title">评测日志</div>
+              <div v-if="currentJob.logs?.length" class="job-log-list">
+                <div v-for="(log, index) in currentJob.logs" :key="`${currentJob.id}-${index}`" class="job-log-item">
+                  <span class="job-log-time">{{ log.time }}</span>
+                  <span class="job-log-text">{{ log.message }}</span>
+                </div>
+              </div>
+              <div v-else class="detail-text">暂无任务日志</div>
+            </div>
+            <div class="result-actions">
+              <el-button v-if="currentJob.status === 'succeeded' && currentJob.resultRecordId" type="primary" class="action-btn-primary" @click="openHistoryDetailById(currentJob.resultRecordId)">
+                查看评测详情
+              </el-button>
+              <el-button v-if="currentJob.status === 'failed'" class="action-btn-secondary" @click="retryCurrentJob" :loading="isRetryingJob">
+                重试任务
+              </el-button>
             </div>
           </div>
 
@@ -170,8 +238,9 @@
             </div>
 
             <div class="result-actions">
-              <el-button type="primary" class="action-btn-primary" @click="finishSop">完成并保存记录</el-button>
-              <el-button v-if="!evaluationResult.passed" class="action-btn-secondary" @click="retrySop">重新上传</el-button>
+              <el-button v-if="currentJob?.resultRecordId" type="primary" class="action-btn-primary" @click="openHistoryDetailById(currentJob.resultRecordId)">查看历史详情</el-button>
+              <el-button v-if="currentJob?.status === 'failed'" class="action-btn-secondary" @click="retryCurrentJob" :loading="isRetryingJob">重试任务</el-button>
+              <el-button v-if="currentJob?.status === 'failed'" class="action-btn-secondary" @click="retrySop">重新上传</el-button>
             </div>
           </div>
         </div>
@@ -217,6 +286,10 @@
           <div class="detail-title">综合反馈</div>
           <div class="detail-text">{{ selectedHistoryRecord.detail.feedback || '暂无反馈' }}</div>
         </div>
+        <div class="detail-box" v-if="selectedHistoryRecord.detail.tokenUsage">
+          <div class="detail-title">评测 Token 消耗</div>
+          <div class="detail-text">{{ formatTokenUsage(selectedHistoryRecord.detail.tokenUsage) }}</div>
+        </div>
         <div class="detail-box" v-if="selectedHistoryVideoUrl">
           <div class="detail-title">上传视频</div>
           <video :src="selectedHistoryVideoUrl" controls class="video" />
@@ -243,11 +316,24 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, CircleCheckFilled, List, Location, Monitor, VideoCamera, VideoPlay, WarningFilled } from '@element-plus/icons-vue'
-import { clearAuthSession, createHistory, evaluateSop, fileToDataUrl, getCurrentUser, getHistoryDetail, listHistory, listSops, logout, toAbsoluteApiUrl } from '../api/client'
+import {
+  clearAuthSession,
+  createEvaluationJob,
+  fileToDataUrl,
+  getCurrentUser,
+  getEvaluationJobDetail,
+  getHistoryDetail,
+  listEvaluationJobs,
+  listHistory,
+  listSops,
+  logout,
+  retryEvaluationJob,
+  fetchAuthorizedMediaBlobUrl
+} from '../api/client'
 
 const router = useRouter()
 const DEFAULT_API_CONFIG = {
@@ -260,24 +346,27 @@ const DEFAULT_API_CONFIG = {
 }
 
 const sopList = ref([])
+const jobList = ref([])
 const historyList = ref([])
 const activeTab = ref('tasks')
 const currentSop = ref(null)
 const currentVideo = ref(null)
 const isEvaluating = ref(false)
+const isRetryingJob = ref(false)
+const currentJob = ref(null)
 const evaluationResult = ref(null)
 const configVisible = ref(false)
 const historyDetailVisible = ref(false)
 const selectedHistoryRecord = ref(null)
+const selectedHistoryVideoUrl = ref('')
 const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 const currentUser = ref(getCurrentUser())
+let jobPollingTimer = null
 
-const selectedHistoryVideoUrl = computed(() => toAbsoluteApiUrl(selectedHistoryRecord.value?.detail?.uploadedVideo?.url || ''))
 const currentSopHasNoDemoVideo = computed(() => {
   const steps = currentSop.value?.steps || []
   return steps.length > 0 && steps.every((step) => step.referenceMode === 'text')
 })
-const currentUserName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '当前用户')
 
 function normalizeHistory(record = {}) {
   return {
@@ -286,9 +375,37 @@ function normalizeHistory(record = {}) {
       feedback: record.detail?.feedback || '',
       issues: Array.isArray(record.detail?.issues) ? record.detail.issues : [],
       stepResults: Array.isArray(record.detail?.stepResults) ? record.detail.stepResults : [],
-      uploadedVideo: record.detail?.uploadedVideo || null
+      uploadedVideo: record.detail?.uploadedVideo || null,
+      tokenUsage: record.detail?.tokenUsage || null,
+      payloadPreview: record.detail?.payloadPreview || null,
+      rawModelResult: record.detail?.rawModelResult || null,
+      sequenceAssessment: record.detail?.sequenceAssessment || '',
+      prerequisiteViolated: !!record.detail?.prerequisiteViolated
     },
     manualReview: record.manualReview || null
+  }
+}
+
+function normalizeJob(record = {}) {
+  return {
+    ...record,
+    progressPercent: Number(record.progressPercent || 0),
+    logs: Array.isArray(record.logs) ? record.logs : [],
+    uploadedVideo: record.uploadedVideo || null
+  }
+}
+
+function buildEvaluationResultFromHistory(record = {}) {
+  return {
+    passed: record.status === 'passed',
+    score: record.score,
+    feedback: record.detail?.feedback || '',
+    issues: Array.isArray(record.detail?.issues) ? record.detail.issues : [],
+    sequenceAssessment: record.detail?.sequenceAssessment || '',
+    prerequisiteViolated: !!record.detail?.prerequisiteViolated,
+    stepResults: Array.isArray(record.detail?.stepResults) ? record.detail.stepResults : [],
+    payloadPreview: record.detail?.payloadPreview || null,
+    rawModelResult: record.detail?.rawModelResult || null
   }
 }
 
@@ -296,8 +413,62 @@ async function loadSops() {
   sopList.value = (await listSops()).data || []
 }
 
+async function loadJobs() {
+  jobList.value = ((await listEvaluationJobs()).data || []).map(normalizeJob)
+}
+
 async function loadHistory() {
   historyList.value = ((await listHistory()).data || []).map(normalizeHistory)
+}
+
+function stopJobPolling() {
+  if (jobPollingTimer) {
+    clearInterval(jobPollingTimer)
+    jobPollingTimer = null
+  }
+}
+
+function revokeSelectedHistoryVideoUrl() {
+  if (selectedHistoryVideoUrl.value) {
+    URL.revokeObjectURL(selectedHistoryVideoUrl.value)
+    selectedHistoryVideoUrl.value = ''
+  }
+}
+
+async function refreshCurrentJob(jobId, silent = false) {
+  if (!jobId) return
+  try {
+    const job = normalizeJob((await getEvaluationJobDetail(jobId)).data)
+    currentJob.value = job
+    jobList.value = jobList.value.some((item) => item.id === job.id)
+      ? jobList.value.map((item) => (item.id === job.id ? job : item))
+      : [job, ...jobList.value]
+
+    if (job.status === 'succeeded') {
+      stopJobPolling()
+      await loadHistory()
+      if (job.resultRecordId) {
+        const historyRecord = normalizeHistory((await getHistoryDetail(job.resultRecordId)).data)
+        evaluationResult.value = buildEvaluationResultFromHistory(historyRecord)
+      }
+    } else if (job.status === 'failed') {
+      stopJobPolling()
+      evaluationResult.value = null
+    }
+  } catch (error) {
+    if (!silent) {
+      ElMessage.error(error.message || '任务状态刷新失败')
+    }
+    stopJobPolling()
+  }
+}
+
+function startJobPolling(jobId) {
+  stopJobPolling()
+  if (!jobId) return
+  jobPollingTimer = setInterval(() => {
+    refreshCurrentJob(jobId, true)
+  }, 3000)
 }
 
 function openConfigDialog() {
@@ -327,12 +498,16 @@ function startSop(sop) {
   currentSop.value = sop
   currentVideo.value = null
   evaluationResult.value = null
+  currentJob.value = null
+  stopJobPolling()
 }
 
 function backToList() {
+  stopJobPolling()
   currentSop.value = null
   currentVideo.value = null
   evaluationResult.value = null
+  currentJob.value = null
 }
 
 function handleVideoChange(file) {
@@ -343,50 +518,85 @@ async function submitVideo() {
   if (!currentVideo.value) return ElMessage.warning('请先上传视频')
   isEvaluating.value = true
   try {
-    const result = await evaluateSop(currentSop.value.id, await fileToDataUrl(currentVideo.value))
-    evaluationResult.value = result.data
-    ElMessage.success('评估完成')
-  } catch (error) {
-    ElMessage.error(error.message || '评估失败')
-  } finally {
-    isEvaluating.value = false
-  }
-}
-
-async function finishSop() {
-  if (!currentSop.value || !evaluationResult.value || !currentVideo.value) return
-  try {
-    await createHistory({
-      taskId: currentSop.value.id,
+    const job = normalizeJob((await createEvaluationJob(currentSop.value.id, {
       userVideoDataUrl: await fileToDataUrl(currentVideo.value),
       uploadedVideo: {
         name: currentVideo.value.name || '',
         type: currentVideo.value.type || '',
         size: currentVideo.value.size ?? null,
         lastModified: currentVideo.value.lastModified ?? null
-      },
-      evaluationResult: evaluationResult.value
-    })
-    await loadHistory()
-    ElMessage.success('记录已保存')
-    backToList()
+      }
+    })).data)
+    currentJob.value = job
+    evaluationResult.value = null
+    await loadJobs()
+    startJobPolling(job.id)
+    ElMessage.success('评测任务已提交，系统正在后台处理')
   } catch (error) {
-    ElMessage.error(error.message || '保存记录失败')
+    ElMessage.error(error.message || '提交评测任务失败')
+  } finally {
+    isEvaluating.value = false
+  }
+}
+
+async function openHistoryDetailById(recordId) {
+  if (!recordId) return
+  try {
+    selectedHistoryRecord.value = normalizeHistory((await getHistoryDetail(recordId)).data)
+    revokeSelectedHistoryVideoUrl()
+    const mediaPath = selectedHistoryRecord.value?.detail?.uploadedVideo?.url || ''
+    if (mediaPath) {
+      selectedHistoryVideoUrl.value = await fetchAuthorizedMediaBlobUrl(mediaPath)
+    }
+    historyDetailVisible.value = true
+  } catch (error) {
+    ElMessage.error(error.message || '加载详情失败')
   }
 }
 
 function retrySop() {
   currentVideo.value = null
   evaluationResult.value = null
+  currentJob.value = null
+  stopJobPolling()
+}
+
+async function retryCurrentJob() {
+  if (!currentJob.value?.id) return
+  isRetryingJob.value = true
+  try {
+    const job = normalizeJob((await retryEvaluationJob(currentJob.value.id)).data)
+    currentJob.value = job
+    currentVideo.value = null
+    evaluationResult.value = null
+    await loadJobs()
+    startJobPolling(job.id)
+    ElMessage.success('已重新提交评测任务')
+  } catch (error) {
+    ElMessage.error(error.message || '重试任务失败')
+  } finally {
+    isRetryingJob.value = false
+  }
+}
+
+async function openJobDetail(row) {
+  const job = normalizeJob(row)
+  currentJob.value = job
+  currentSop.value = sopList.value.find((item) => item.id === job.taskId) || null
+  currentVideo.value = null
+  evaluationResult.value = null
+  if (job.status === 'queued' || job.status === 'processing') {
+    startJobPolling(job.id)
+    await refreshCurrentJob(job.id, true)
+  } else if (job.resultRecordId) {
+    stopJobPolling()
+    const historyRecord = normalizeHistory((await getHistoryDetail(job.resultRecordId)).data)
+    evaluationResult.value = buildEvaluationResultFromHistory(historyRecord)
+  }
 }
 
 async function openHistoryDetail(row) {
-  try {
-    selectedHistoryRecord.value = normalizeHistory((await getHistoryDetail(row.id)).data)
-    historyDetailVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载详情失败')
-  }
+  return openHistoryDetailById(row.id)
 }
 
 function formatConfidence(value) {
@@ -397,6 +607,14 @@ function formatConfidence(value) {
 function formatScore(value, fallback = '-') {
   const num = Number(value)
   return Number.isFinite(num) ? `${num} / 100` : fallback
+}
+
+function formatTokenUsage(usage) {
+  if (!usage) return '暂无'
+  const input = Number.isFinite(Number(usage.inputTokens)) ? Number(usage.inputTokens) : '-'
+  const output = Number.isFinite(Number(usage.outputTokens)) ? Number(usage.outputTokens) : '-'
+  const total = Number.isFinite(Number(usage.totalTokens)) ? Number(usage.totalTokens) : '-'
+  return `输入 ${input} / 输出 ${output} / 总计 ${total}`
 }
 
 function getStatusText(status) {
@@ -414,10 +632,45 @@ function getManualReviewText(status) {
   return '待复核'
 }
 
+function getJobStatusText(status) {
+  if (status === 'queued') return '排队中'
+  if (status === 'processing') return '处理中'
+  if (status === 'succeeded') return '已完成'
+  if (status === 'failed') return '失败'
+  return '未知'
+}
+
+function getJobStatusTagType(status) {
+  if (status === 'succeeded') return 'success'
+  if (status === 'failed') return 'danger'
+  if (status === 'processing') return 'warning'
+  return 'info'
+}
+
+function getJobStageText(stage) {
+  const stageMap = {
+    submitted: '任务已提交',
+    waiting: '队列等待中',
+    preparing_video: '准备视频资源',
+    building_prompt: '构建评测上下文',
+    calling_model: '调用多模态模型',
+    parsing_result: '解析评测结果',
+    saving_result: '保存评测结果',
+    done: '任务已完成',
+    error: '任务处理失败'
+  }
+  return stageMap[stage] || '处理中'
+}
+
 onMounted(() => {
-  Promise.all([loadSops(), loadHistory()]).catch((error) => {
+  Promise.all([loadSops(), loadJobs(), loadHistory()]).catch((error) => {
     ElMessage.error(error.message || '初始化失败')
   })
+})
+
+onUnmounted(() => {
+  stopJobPolling()
+  revokeSelectedHistoryVideoUrl()
 })
 </script>
 
@@ -851,6 +1104,66 @@ onMounted(() => {
   border-radius: 16px;
   padding: 32px;
   border: 1px solid;
+}
+
+.job-status-card {
+  margin-top: 24px;
+  border-radius: 16px;
+  padding: 24px;
+  border: 1px solid #e5e5ea;
+  background: #ffffff;
+}
+
+.job-status-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
+  color: #86868b;
+  margin-bottom: 16px;
+}
+
+.job-failure-box {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #fff4f4;
+  border: 1px solid #f3d6d6;
+}
+
+.job-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.job-log-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #515154;
+}
+
+.job-log-time {
+  min-width: 140px;
+  color: #86868b;
+}
+
+.job-log-text {
+  flex: 1;
+}
+
+.job-progress-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.muted-text {
+  color: #86868b;
+  font-size: 12px;
 }
 
 .result-card.success {

@@ -62,6 +62,34 @@ export async function apiRequest(path, options = {}) {
   return payload
 }
 
+export async function fetchAuthorizedMediaBlobUrl(path) {
+  const headers = new Headers()
+  const token = getAccessToken()
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+
+  const response = await fetch(toAbsoluteApiUrl(path), {
+    method: 'GET',
+    headers
+  })
+
+  if (response.status === 401) {
+    clearAuthSession()
+    if (window.location.pathname !== '/login') {
+      window.location.replace('/login')
+    }
+    throw new Error('登录已失效，请重新登录')
+  }
+
+  if (!response.ok) {
+    throw new Error(`媒体加载失败: ${response.status}`)
+  }
+
+  const blob = await response.blob()
+  return URL.createObjectURL(blob)
+}
+
 export function toAbsoluteApiUrl(path) {
   if (!path) return ''
   return path.startsWith('http') ? path : `${API_BASE_URL}${path}`
@@ -151,6 +179,29 @@ export async function evaluateSop(sopId, userVideoDataUrl) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userVideoDataUrl })
+  })
+}
+
+export async function createEvaluationJob(sopId, payload) {
+  return apiRequest(`/api/sops/${sopId}/evaluation-jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+}
+
+export async function listEvaluationJobs(status = '') {
+  const query = status ? `?status=${encodeURIComponent(status)}` : ''
+  return apiRequest(`/api/evaluation-jobs${query}`)
+}
+
+export async function getEvaluationJobDetail(jobId) {
+  return apiRequest(`/api/evaluation-jobs/${jobId}`)
+}
+
+export async function retryEvaluationJob(jobId) {
+  return apiRequest(`/api/evaluation-jobs/${jobId}/retry`, {
+    method: 'POST'
   })
 }
 

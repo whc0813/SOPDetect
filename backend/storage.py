@@ -2,6 +2,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import shutil
 import threading
 import uuid
 from datetime import datetime
@@ -154,7 +155,7 @@ SCHEMA_STATEMENTS = [
       id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
       media_code VARCHAR(64) NOT NULL,
       owner_role ENUM('admin', 'user') NOT NULL,
-      business_type ENUM('sop_step_demo', 'execution_upload', 'other') NOT NULL,
+      business_type ENUM('sop_step_demo', 'execution_upload', 'evaluation_job_upload', 'other') NOT NULL,
       related_sop_id BIGINT UNSIGNED NULL,
       related_step_id BIGINT UNSIGNED NULL,
       related_execution_id BIGINT UNSIGNED NULL,
@@ -306,6 +307,57 @@ SCHEMA_STATEMENTS = [
         ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """,
+    """
+    CREATE TABLE IF NOT EXISTS evaluation_jobs (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      job_code VARCHAR(64) NOT NULL,
+      sop_id BIGINT UNSIGNED NOT NULL,
+      user_id BIGINT UNSIGNED NULL,
+      uploaded_video_media_id BIGINT UNSIGNED NULL,
+      status ENUM('queued', 'processing', 'succeeded', 'failed') NOT NULL DEFAULT 'queued',
+      stage VARCHAR(50) NOT NULL DEFAULT 'submitted',
+      progress_percent INT NOT NULL DEFAULT 0,
+      retry_count INT NOT NULL DEFAULT 0,
+      max_retry_count INT NOT NULL DEFAULT 3,
+      failure_reason VARCHAR(255) NULL,
+      failure_detail TEXT NULL,
+      result_execution_id BIGINT UNSIGNED NULL,
+      queue_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      start_at DATETIME NULL,
+      finish_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_evaluation_jobs_code (job_code),
+      KEY idx_evaluation_jobs_user_status (user_id, status, created_at),
+      KEY idx_evaluation_jobs_status_created (status, created_at),
+      CONSTRAINT fk_evaluation_jobs_sop
+        FOREIGN KEY (sop_id) REFERENCES sops (id)
+        ON DELETE RESTRICT,
+      CONSTRAINT fk_evaluation_jobs_user
+        FOREIGN KEY (user_id) REFERENCES users (id)
+        ON DELETE SET NULL,
+      CONSTRAINT fk_evaluation_jobs_video
+        FOREIGN KEY (uploaded_video_media_id) REFERENCES media_files (id)
+        ON DELETE SET NULL,
+      CONSTRAINT fk_evaluation_jobs_execution
+        FOREIGN KEY (result_execution_id) REFERENCES sop_executions (id)
+        ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS evaluation_job_logs (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      job_id BIGINT UNSIGNED NOT NULL,
+      level ENUM('info', 'warning', 'error') NOT NULL DEFAULT 'info',
+      stage VARCHAR(50) NOT NULL DEFAULT 'submitted',
+      message VARCHAR(255) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_evaluation_job_logs_job (job_id, created_at),
+      CONSTRAINT fk_evaluation_job_logs_job
+        FOREIGN KEY (job_id) REFERENCES evaluation_jobs (id)
+        ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """,
 ]
 
 
@@ -341,6 +393,42 @@ def _parse_datetime(value):
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M:%S")
     return str(value)
+
+
+def _extract_token_usage(raw_result):
+    payload = _json_loads(raw_result, None)
+    if not isinstance(payload, dict):
+        return None
+
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+
+    def pick_number(*keys):
+        for key in keys:
+            value = usage.get(key)
+            if value is None:
+                continue
+            try:
+                return int(value)
+            except Exception:
+                continue
+        return None
+
+    input_tokens = pick_number("prompt_tokens", "input_tokens", "promptTokens", "inputTokens")
+    output_tokens = pick_number("completion_tokens", "output_tokens", "completionTokens", "outputTokens")
+    total_tokens = pick_number("total_tokens", "totalTokens")
+    if total_tokens is None and (input_tokens is not None or output_tokens is not None):
+        total_tokens = (input_tokens or 0) + (output_tokens or 0)
+
+    if input_tokens is None and output_tokens is None and total_tokens is None:
+        return None
+
+    return {
+        "inputTokens": input_tokens,
+        "outputTokens": output_tokens,
+        "totalTokens": total_tokens,
+    }
 
 
 def _safe_dir_name(value, fallback):
@@ -450,6 +538,32 @@ def _ensure_seed_data(connection):
             )
 
 
+def _ensure_media_files_business_type(connection):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT COLUMN_TYPE
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = %s
+              AND TABLE_NAME = 'media_files'
+              AND COLUMN_NAME = 'business_type'
+            LIMIT 1
+            """,
+            (MYSQL_SETTINGS["database"],),
+        )
+        row = cursor.fetchone()
+        column_type = (row or {}).get("COLUMN_TYPE") or ""
+        if "evaluation_job_upload" in column_type:
+            return
+        cursor.execute(
+            """
+            ALTER TABLE media_files
+            MODIFY COLUMN business_type
+            ENUM('sop_step_demo', 'execution_upload', 'evaluation_job_upload', 'other') NOT NULL
+            """
+        )
+
+
 def ensure_schema():
     global SCHEMA_READY
     if SCHEMA_READY:
@@ -466,6 +580,7 @@ def ensure_schema():
             with connection.cursor() as cursor:
                 for statement in SCHEMA_STATEMENTS:
                     cursor.execute(statement)
+            _ensure_media_files_business_type(connection)
             _ensure_seed_data(connection)
             connection.commit()
             SCHEMA_READY = True
@@ -1201,11 +1316,42 @@ def _delete_files(paths):
             pass
 
 
+def _delete_dirs(paths):
+    unique_dirs = []
+    seen = set()
+    for path in paths:
+        text = str(path or "").strip()
+        if not text:
+            continue
+        normalized = os.path.normcase(os.path.normpath(text))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_dirs.append(text)
+
+    unique_dirs.sort(key=lambda item: len(Path(item).parts), reverse=True)
+    for path in unique_dirs:
+        try:
+            if path and os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
+
 def delete_sop(sop_id):
     with _get_connection() as connection:
         sop_row = _fetch_sop_row_by_code(connection, sop_id)
         if not sop_row:
             return False
+
+        media_paths = []
+        cleanup_dirs = [
+            str(ADMIN_MEDIA_DIR / "sop_step_demo" / sop_id),
+        ]
+        if USER_MEDIA_DIR.exists():
+            for user_dir in USER_MEDIA_DIR.iterdir():
+                if user_dir.is_dir():
+                    cleanup_dirs.append(str(user_dir / sop_id))
 
         with connection.cursor() as cursor:
             cursor.execute("SELECT id FROM sop_executions WHERE sop_id = %s", (sop_row["id"],))
@@ -1238,10 +1384,23 @@ def delete_sop(sop_id):
             else:
                 cursor.execute("DELETE FROM media_files WHERE related_sop_id = %s", (sop_row["id"],))
 
+            cursor.execute("DELETE FROM evaluation_jobs WHERE sop_id = %s", (sop_row["id"],))
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'evaluation_tasks'
+                """,
+                (MYSQL_SETTINGS["database"],),
+            )
+            legacy_tasks_exists = int((cursor.fetchone() or {}).get("count") or 0) > 0
+            if legacy_tasks_exists:
+                cursor.execute("DELETE FROM evaluation_tasks WHERE sop_id = %s", (sop_row["id"],))
             cursor.execute("DELETE FROM sops WHERE id = %s", (sop_row["id"],))
 
         connection.commit()
         _delete_files(media_paths)
+        _delete_dirs(cleanup_dirs)
         return True
 
 
@@ -1276,7 +1435,7 @@ def attach_media(
         sub_dir = base_dir / "sop_step_demo" / (related_sop_id or "unassigned") / (
             f"step_{related_step_no}" if related_step_no else "step_unknown"
         )
-    elif owner_role == "user" and business_type == "execution_upload":
+    elif owner_role == "user" and business_type in {"execution_upload", "evaluation_job_upload"}:
         user_dir = _safe_dir_name(uploaded_by_name, "unknown_user")
         sop_dir = _safe_dir_name(related_sop_id, "unknown_sop")
         sub_dir = base_dir / user_dir / sop_dir
@@ -1418,6 +1577,318 @@ def serialize_media_reference(media_ref):
 
 def serialize_uploaded_video(uploaded_video):
     return serialize_media_reference(uploaded_video)
+
+
+def _parse_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _fetch_evaluation_job_rows(connection, job_codes=None, current_user=None, status=None, limit=None):
+    sql = """
+        SELECT j.id, j.job_code, j.sop_id, j.user_id, j.uploaded_video_media_id, j.status, j.stage,
+               j.progress_percent, j.retry_count, j.max_retry_count, j.failure_reason, j.failure_detail,
+               j.result_execution_id, j.queue_at, j.start_at, j.finish_at, j.created_at, j.updated_at,
+               s.sop_code, s.name AS task_name, s.scene,
+               u.username AS user_name, u.display_name AS user_display_name,
+               mf.media_code AS uploaded_video_code, mf.original_name AS uploaded_video_name,
+               mf.mime_type AS uploaded_video_type, mf.file_size AS uploaded_video_size,
+               mf.last_modified_ms AS uploaded_video_last_modified,
+               e.execution_code AS result_record_code
+        FROM evaluation_jobs j
+        JOIN sops s ON s.id = j.sop_id
+        LEFT JOIN users u ON u.id = j.user_id
+        LEFT JOIN media_files mf ON mf.id = j.uploaded_video_media_id
+        LEFT JOIN sop_executions e ON e.id = j.result_execution_id
+    """
+    params = []
+    conditions = []
+    if job_codes:
+        placeholders = ", ".join(["%s"] * len(job_codes))
+        conditions.append(f"j.job_code IN ({placeholders})")
+        params.extend(job_codes)
+    if status:
+        conditions.append("j.status = %s")
+        params.append(status)
+    if current_user and current_user.get("role") != "admin":
+        conditions.append("j.user_id = %s")
+        params.append(current_user.get("id"))
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
+    sql += " ORDER BY j.created_at DESC"
+    if limit:
+        sql += " LIMIT %s"
+        params.append(int(limit))
+
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        return cursor.fetchall()
+
+
+def _build_evaluation_job_records(connection, job_codes=None, current_user=None, status=None, limit=None):
+    rows = _fetch_evaluation_job_rows(
+        connection,
+        job_codes=job_codes,
+        current_user=current_user,
+        status=status,
+        limit=limit,
+    )
+    if not rows:
+        return []
+
+    job_ids = [row["id"] for row in rows]
+    placeholders = ", ".join(["%s"] * len(job_ids))
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT job_id, level, stage, message, created_at
+            FROM evaluation_job_logs
+            WHERE job_id IN ({placeholders})
+            ORDER BY created_at ASC, id ASC
+            """,
+            job_ids,
+        )
+        log_rows = cursor.fetchall()
+
+    logs_map = {}
+    for row in log_rows:
+        logs_map.setdefault(row["job_id"], []).append(
+            {
+                "time": _parse_datetime(row.get("created_at")),
+                "level": row.get("level") or "info",
+                "stage": row.get("stage") or "",
+                "message": row.get("message") or "",
+            }
+        )
+
+    records = []
+    for row in rows:
+        uploaded_video = None
+        if row.get("uploaded_video_code"):
+            uploaded_video = {
+                "mediaId": row.get("uploaded_video_code") or "",
+                "name": row.get("uploaded_video_name") or "",
+                "type": row.get("uploaded_video_type") or "",
+                "size": row.get("uploaded_video_size"),
+                "lastModified": row.get("uploaded_video_last_modified"),
+            }
+
+        records.append(
+            {
+                "id": row.get("job_code") or "",
+                "taskId": row.get("sop_code") or "",
+                "taskName": row.get("task_name") or "",
+                "scene": row.get("scene") or "",
+                "userId": row.get("user_id"),
+                "userName": row.get("user_name") or "",
+                "userDisplayName": row.get("user_display_name") or row.get("user_name") or "",
+                "status": row.get("status") or "queued",
+                "stage": row.get("stage") or "submitted",
+                "progressPercent": _parse_int(row.get("progress_percent"), 0),
+                "retryCount": _parse_int(row.get("retry_count"), 0),
+                "maxRetryCount": _parse_int(row.get("max_retry_count"), 3),
+                "failureReason": row.get("failure_reason") or "",
+                "failureDetail": row.get("failure_detail") or "",
+                "resultRecordId": row.get("result_record_code") or "",
+                "queueTime": _parse_datetime(row.get("queue_at")),
+                "startTime": _parse_datetime(row.get("start_at")),
+                "finishTime": _parse_datetime(row.get("finish_at")),
+                "createdAt": _parse_datetime(row.get("created_at")),
+                "updatedAt": _parse_datetime(row.get("updated_at")),
+                "uploadedVideo": serialize_uploaded_video(uploaded_video),
+                "logs": logs_map.get(row["id"], []),
+            }
+        )
+    return records
+
+
+def _append_job_log(connection, job_db_id, level, stage, message):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO evaluation_job_logs (job_id, level, stage, message)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (job_db_id, level or "info", stage or "submitted", (message or "").strip() or "系统已记录任务状态"),
+        )
+
+
+def list_evaluation_jobs(current_user=None, status=None, limit=100):
+    with _get_connection() as connection:
+        return _build_evaluation_job_records(connection, current_user=current_user, status=status, limit=limit)
+
+
+def get_evaluation_job(job_id, current_user=None):
+    with _get_connection() as connection:
+        records = _build_evaluation_job_records(connection, [job_id], current_user=current_user)
+        return records[0] if records else None
+
+
+def create_evaluation_job(sop_id, uploaded_video, current_user=None, retry_count=0):
+    with _get_connection() as connection:
+        sop_row = _fetch_sop_row_by_code(connection, sop_id)
+        if not sop_row:
+            raise ValueError("SOP not found")
+
+        uploaded_video_db_id = None
+        uploaded_video_code = (uploaded_video or {}).get("mediaId")
+        if uploaded_video_code:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT id FROM media_files WHERE media_code = %s LIMIT 1", (uploaded_video_code,))
+                media_row = cursor.fetchone()
+                uploaded_video_db_id = media_row["id"] if media_row else None
+
+        job_code = f"job-{uuid.uuid4().hex}"
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO evaluation_jobs (
+                  job_code, sop_id, user_id, uploaded_video_media_id, status, stage, progress_percent,
+                  retry_count, max_retry_count, queue_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    job_code,
+                    sop_row["id"],
+                    current_user.get("id") if current_user else None,
+                    uploaded_video_db_id,
+                    "queued",
+                    "submitted",
+                    0,
+                    max(0, int(retry_count or 0)),
+                    3,
+                    datetime.now(),
+                ),
+            )
+            job_db_id = cursor.lastrowid
+        _append_job_log(connection, job_db_id, "info", "submitted", "评测任务已创建")
+        _append_job_log(connection, job_db_id, "info", "waiting", "任务已进入评测队列，等待处理")
+        connection.commit()
+    return get_evaluation_job(job_code, current_user=current_user)
+
+
+def append_evaluation_job_log(job_id, level="info", stage="submitted", message=""):
+    with _get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id FROM evaluation_jobs WHERE job_code = %s LIMIT 1", (job_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+        _append_job_log(connection, row["id"], level, stage, message)
+        connection.commit()
+    return True
+
+
+def update_evaluation_job(
+    job_id,
+    *,
+    status=None,
+    stage=None,
+    progress_percent=None,
+    failure_reason=None,
+    failure_detail=None,
+    result_record_id=None,
+    start_time=None,
+    finish_time=None,
+):
+    fields = []
+    params = []
+    if status is not None:
+        fields.append("status = %s")
+        params.append(status)
+    if stage is not None:
+        fields.append("stage = %s")
+        params.append(stage)
+    if progress_percent is not None:
+        fields.append("progress_percent = %s")
+        params.append(max(0, min(100, int(progress_percent))))
+    if failure_reason is not None:
+        fields.append("failure_reason = %s")
+        params.append(failure_reason)
+    if failure_detail is not None:
+        fields.append("failure_detail = %s")
+        params.append(failure_detail)
+    if start_time is not None:
+        fields.append("start_at = %s")
+        params.append(start_time)
+    if finish_time is not None:
+        fields.append("finish_at = %s")
+        params.append(finish_time)
+    if result_record_id is not None:
+        fields.append(
+            "result_execution_id = (SELECT id FROM sop_executions WHERE execution_code = %s LIMIT 1)"
+        )
+        params.append(result_record_id)
+
+    if not fields:
+        return get_evaluation_job(job_id)
+
+    with _get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                UPDATE evaluation_jobs
+                SET {", ".join(fields)}
+                WHERE job_code = %s
+                """,
+                [*params, job_id],
+            )
+        connection.commit()
+    return get_evaluation_job(job_id)
+
+
+def claim_next_evaluation_job():
+    with _get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, job_code
+                FROM evaluation_jobs
+                WHERE status = 'queued'
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1
+                """
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            cursor.execute(
+                """
+                UPDATE evaluation_jobs
+                SET status = 'processing',
+                    stage = 'preparing_video',
+                    progress_percent = 10,
+                    start_at = %s
+                WHERE id = %s AND status = 'queued'
+                """,
+                (datetime.now(), row["id"]),
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                return None
+        _append_job_log(connection, row["id"], "info", "preparing_video", "任务已开始处理")
+        connection.commit()
+        return _build_evaluation_job_records(connection, [row["job_code"]])[0]
+
+
+def retry_evaluation_job(job_id, current_user=None):
+    with _get_connection() as connection:
+        records = _build_evaluation_job_records(connection, [job_id], current_user=current_user)
+        if not records:
+            return None
+        source = records[0]
+        if source.get("status") != "failed":
+            raise ValueError("Only failed jobs can be retried")
+    source_video = source.get("uploadedVideo") or {}
+    return create_evaluation_job(
+        source.get("taskId"),
+        {"mediaId": source_video.get("mediaId")},
+        current_user=current_user,
+        retry_count=(source.get("retryCount") or 0) + 1,
+    )
 
 
 def _fetch_history_rows(connection, execution_codes=None, current_user=None):
@@ -1586,6 +2057,7 @@ def _build_history_records(connection, execution_codes=None, current_user=None):
                     "stepResults": step_results_map.get(row["id"], []),
                     "sopSteps": sop_steps_map.get(row["sop_id"], []),
                     "uploadedVideo": media_map.get(row["id"]),
+                    "tokenUsage": _extract_token_usage(row.get("raw_model_result")),
                     "payloadPreview": _json_loads(row.get("payload_preview"), None),
                     "rawModelResult": _json_loads(row.get("raw_model_result"), None),
                 },
@@ -1766,6 +2238,7 @@ def serialize_sop_summary(sop):
                 "substeps": step.get("substeps") or [],
                 "roiHint": step.get("roiHint") or "",
                 "aiUsed": bool(step.get("aiUsed")),
+                "tokenUsage": _extract_token_usage(step.get("rawAIResult")),
             }
             for step in (sop.get("steps") or [])
         ],
@@ -1779,6 +2252,7 @@ def serialize_sop_detail(sop):
             **step,
             "videoMeta": serialize_media_reference(step.get("demoVideo")),
             "demoVideo": serialize_media_reference(step.get("demoVideo")),
+            "tokenUsage": _extract_token_usage(step.get("rawAIResult")),
             "referenceFrames": step.get("referenceFrames") or [],
             "analysisFrames": step.get("analysisFrames") or [],
             "rawAIResult": step.get("rawAIResult"),

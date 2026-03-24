@@ -1,11 +1,15 @@
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
 import os
 import tempfile
+import threading
 import time
+import traceback
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
 import cv2
@@ -22,9 +26,13 @@ try:
         create_user,
         create_user_session,
         attach_media,
+        append_evaluation_job_log,
         build_stats,
+        claim_next_evaluation_job,
+        create_evaluation_job,
         delete_sop,
         get_config,
+        get_evaluation_job,
         get_history,
         get_media,
         get_sop,
@@ -32,17 +40,21 @@ try:
         get_user_by_username,
         has_active_session,
         is_user_session_active,
+        list_evaluation_jobs,
         list_history,
         list_users,
         list_sops,
         load_db,
         now_display,
+        retry_evaluation_job,
         save_db,
         serialize_history,
+        serialize_uploaded_video,
         serialize_sop_detail,
         serialize_sop_summary,
         set_config,
         revoke_user_session,
+        update_evaluation_job,
         update_sop,
         update_user_status,
         update_manual_review,
@@ -55,9 +67,13 @@ except ModuleNotFoundError:
         create_user,
         create_user_session,
         attach_media,
+        append_evaluation_job_log,
         build_stats,
+        claim_next_evaluation_job,
+        create_evaluation_job,
         delete_sop,
         get_config,
+        get_evaluation_job,
         get_history,
         get_media,
         get_sop,
@@ -65,17 +81,21 @@ except ModuleNotFoundError:
         get_user_by_username,
         has_active_session,
         is_user_session_active,
+        list_evaluation_jobs,
         list_history,
         list_users,
         list_sops,
         load_db,
         now_display,
+        retry_evaluation_job,
         save_db,
         serialize_history,
+        serialize_uploaded_video,
         serialize_sop_detail,
         serialize_sop_summary,
         set_config,
         revoke_user_session,
+        update_evaluation_job,
         update_sop,
         update_user_status,
         update_manual_review,
@@ -85,6 +105,9 @@ app = FastAPI(title="SOP Video Evaluation API")
 
 TOKEN_SECRET = os.getenv("AUTH_TOKEN_SECRET", "sop-eval-dev-secret")
 TOKEN_EXPIRES_IN = int(os.getenv("AUTH_TOKEN_EXPIRES_IN", "28800"))
+JOB_POLL_INTERVAL_SEC = float(os.getenv("EVALUATION_JOB_POLL_INTERVAL_SEC", "2"))
+JOB_WORKER_STOP_EVENT = threading.Event()
+JOB_WORKER_THREAD = None
 
 app.add_middleware(
     CORSMiddleware,
@@ -235,6 +258,11 @@ class CreateHistoryRequest(BaseModel):
     userVideoDataUrl: Optional[str] = None
     uploadedVideo: Optional[StepVideoMeta] = None
     evaluationResult: EvaluationResultPayload
+
+
+class CreateEvaluationJobRequest(BaseModel):
+    userVideoDataUrl: str
+    uploadedVideo: Optional[StepVideoMeta] = None
 
 
 class ManualReviewRequest(BaseModel):
@@ -1128,6 +1156,159 @@ async def run_sop_evaluation(api_config: ApiConfig, sop: SopData, user_video_dat
         cleanup_file(temp_user_video)
 
 
+def build_history_record_from_result(sop_record: dict, uploaded_video: dict, evaluation: dict):
+    record_id = f"history-{int(time.time() * 1000)}"
+    return {
+        "id": record_id,
+        "createdAtMs": int(time.time() * 1000),
+        "taskId": sop_record.get("id"),
+        "taskName": sop_record.get("name"),
+        "scene": sop_record.get("scene"),
+        "finishTime": now_display(),
+        "score": evaluation.get("score"),
+        "status": "passed" if evaluation.get("passed") else "failed",
+        "manualReview": None,
+        "detail": {
+            "feedback": evaluation.get("feedback") or "",
+            "issues": evaluation.get("issues") or [],
+            "sequenceAssessment": evaluation.get("sequenceAssessment") or "",
+            "prerequisiteViolated": bool(evaluation.get("prerequisiteViolated")),
+            "stepResults": evaluation.get("stepResults") or [],
+            "sopSteps": [
+                {
+                    "stepNo": step.get("stepNo"),
+                    "description": step.get("description") or "",
+                    "videoName": (step.get("videoMeta") or {}).get("name") if isinstance(step.get("videoMeta"), dict) else "",
+                }
+                for step in (sop_record.get("steps") or [])
+            ],
+            "uploadedVideo": uploaded_video,
+            "payloadPreview": evaluation.get("payloadPreview"),
+            "rawModelResult": evaluation.get("rawModelResult"),
+        },
+    }
+
+
+def map_job_failure(error: Exception):
+    detail = ""
+    if isinstance(error, HTTPException):
+        detail = str(error.detail or "").strip()
+        status_code = int(error.status_code or 500)
+        if "API Key" in detail:
+            return "模型配置缺失，请联系管理员检查 API Key", detail
+        if "decode" in detail.lower() or "data url" in detail.lower():
+            return "上传视频无法解析，请重新上传有效视频文件", detail
+        if "Cannot open the uploaded video" in detail or "Unable to extract keyframes" in detail:
+            return "上传视频无法解析，请重新上传清晰有效的视频文件", detail
+        if status_code == 408 or "timeout" in detail.lower():
+            return "评测超时，请稍后重试", detail
+        if status_code >= 500:
+            return "模型服务异常，请稍后重试", detail
+        return detail or "评测任务处理失败", detail
+    detail = str(error).strip()
+    if "timeout" in detail.lower():
+        return "评测超时，请稍后重试", detail
+    return "系统处理异常，请稍后重试", detail or traceback.format_exc(limit=3)
+
+
+def process_evaluation_job(job_id: str):
+    job = get_evaluation_job(job_id)
+    if not job:
+        return
+
+    try:
+        update_evaluation_job(job_id, stage="preparing_video", progress_percent=18, start_time=datetime.now())
+        append_evaluation_job_log(job_id, "info", "preparing_video", "已读取任务信息，准备加载视频与 SOP")
+
+        sop_record = get_sop(job.get("taskId"))
+        if not sop_record:
+            raise HTTPException(status_code=404, detail="SOP 不存在或已被删除")
+
+        uploaded_video = job.get("uploadedVideo") or {}
+        media_id = uploaded_video.get("mediaId")
+        if not media_id:
+            raise HTTPException(status_code=400, detail="任务缺少上传视频")
+
+        media = get_media(media_id, current_user={"role": "admin"})
+        if not media or not media.get("path"):
+            raise HTTPException(status_code=404, detail="上传视频文件不存在")
+
+        with open(media["path"], "rb") as file_obj:
+            encoded = base64.b64encode(file_obj.read()).decode("utf-8")
+        user_video_data_url = f"data:{media.get('type') or 'video/mp4'};base64,{encoded}"
+
+        update_evaluation_job(job_id, stage="building_prompt", progress_percent=35)
+        append_evaluation_job_log(job_id, "info", "building_prompt", "已完成资源装载，正在构建评测上下文")
+
+        update_evaluation_job(job_id, stage="calling_model", progress_percent=68)
+        append_evaluation_job_log(job_id, "info", "calling_model", "正在调用多模态模型，请稍候")
+        evaluation = asyncio.run(
+            run_sop_evaluation(
+                build_runtime_api_config(),
+                build_sop_model_from_record(sop_record),
+                user_video_data_url,
+            )
+        )
+
+        update_evaluation_job(job_id, stage="parsing_result", progress_percent=86)
+        append_evaluation_job_log(job_id, "info", "parsing_result", "模型响应已返回，正在整理结构化结果")
+
+        history_record = build_history_record_from_result(sop_record, serialize_uploaded_video(media), evaluation)
+        saved_record = add_history(history_record, current_user={"id": job.get("userId")})
+
+        update_evaluation_job(
+            job_id,
+            status="succeeded",
+            stage="done",
+            progress_percent=100,
+            failure_reason="",
+            failure_detail="",
+            result_record_id=saved_record.get("id"),
+            finish_time=datetime.now(),
+        )
+        append_evaluation_job_log(job_id, "info", "done", "评测完成，结果已写入历史记录")
+    except Exception as exc:
+        failure_reason, failure_detail = map_job_failure(exc)
+        update_evaluation_job(
+            job_id,
+            status="failed",
+            stage="error",
+            failure_reason=failure_reason,
+            failure_detail=failure_detail,
+            finish_time=datetime.now(),
+        )
+        append_evaluation_job_log(job_id, "error", "error", f"任务失败：{failure_reason}")
+
+
+def evaluation_job_worker_loop():
+    while not JOB_WORKER_STOP_EVENT.is_set():
+        try:
+            job = claim_next_evaluation_job()
+            if not job:
+                JOB_WORKER_STOP_EVENT.wait(JOB_POLL_INTERVAL_SEC)
+                continue
+            process_evaluation_job(job.get("id"))
+        except Exception:
+            JOB_WORKER_STOP_EVENT.wait(JOB_POLL_INTERVAL_SEC)
+
+
+@app.on_event("startup")
+async def start_evaluation_job_worker():
+    global JOB_WORKER_THREAD
+    if JOB_WORKER_THREAD and JOB_WORKER_THREAD.is_alive():
+        return
+    JOB_WORKER_STOP_EVENT.clear()
+    JOB_WORKER_THREAD = threading.Thread(target=evaluation_job_worker_loop, name="evaluation-job-worker", daemon=True)
+    JOB_WORKER_THREAD.start()
+
+
+@app.on_event("shutdown")
+async def stop_evaluation_job_worker():
+    JOB_WORKER_STOP_EVENT.set()
+    if JOB_WORKER_THREAD and JOB_WORKER_THREAD.is_alive():
+        JOB_WORKER_THREAD.join(timeout=2)
+
+
 @app.get("/api/health")
 async def health_check():
     return {"success": True}
@@ -1460,6 +1641,64 @@ async def evaluate_sop(sop_id: str, req: StoredSopEvaluateRequest, _current_user
         req.userVideoDataUrl,
     )
     return {"success": True, "data": result}
+
+
+@app.post("/api/sops/{sop_id}/evaluation-jobs")
+async def create_sop_evaluation_job(sop_id: str, req: CreateEvaluationJobRequest, current_user=Depends(get_current_user)):
+    sop = get_sop(sop_id)
+    if not sop:
+        raise HTTPException(status_code=404, detail="SOP 不存在")
+    if not (req.userVideoDataUrl or "").strip():
+        raise HTTPException(status_code=400, detail="请先上传待评测视频")
+
+    mime_type, binary = split_data_url(req.userVideoDataUrl)
+    data = load_db()
+    uploaded_video = attach_media(
+        data,
+        binary=binary,
+        mime_type=mime_type,
+        original_name=(req.uploadedVideo.name if req.uploadedVideo else "") or "uploaded-video",
+        size=req.uploadedVideo.size if req.uploadedVideo else None,
+        last_modified=req.uploadedVideo.lastModified if req.uploadedVideo else None,
+        owner_role="user",
+        business_type="evaluation_job_upload",
+        related_sop_id=sop.get("id"),
+        uploaded_by=current_user,
+    )
+    save_db(data)
+
+    try:
+        job = create_evaluation_job(sop.get("id"), uploaded_video, current_user=current_user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "data": job}
+
+
+@app.get("/api/evaluation-jobs")
+async def fetch_evaluation_jobs(status: Optional[str] = None, current_user=Depends(get_current_user)):
+    return {
+        "success": True,
+        "data": list_evaluation_jobs(current_user=current_user, status=(status or "").strip() or None),
+    }
+
+
+@app.get("/api/evaluation-jobs/{job_id}")
+async def fetch_evaluation_job_detail(job_id: str, current_user=Depends(get_current_user)):
+    job = get_evaluation_job(job_id, current_user=current_user)
+    if not job:
+        raise HTTPException(status_code=404, detail="评测任务不存在")
+    return {"success": True, "data": job}
+
+
+@app.post("/api/evaluation-jobs/{job_id}/retry")
+async def retry_sop_evaluation_job(job_id: str, current_user=Depends(get_current_user)):
+    try:
+        job = retry_evaluation_job(job_id, current_user=current_user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not job:
+        raise HTTPException(status_code=404, detail="评测任务不存在")
+    return {"success": True, "data": job}
 
 
 @app.get("/api/history")
