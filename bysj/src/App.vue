@@ -58,31 +58,6 @@ export default {
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --apple-label: #ffffff;
-    --apple-secondary-label: rgba(235, 235, 245, 0.6);
-    --apple-tertiary-label: rgba(235, 235, 245, 0.38);
-    --apple-bg: #000000;
-    --apple-grouped-bg: #1c1c1e;
-    --apple-secondary-bg: #2c2c2e;
-    --apple-tertiary-bg: #242426;
-    --apple-separator: rgba(84, 84, 88, 0.65);
-    --apple-fill: rgba(120, 120, 128, 0.36);
-    --apple-fill-strong: rgba(120, 120, 128, 0.48);
-    --bg-base: var(--apple-bg);
-    --bg-elevated: rgba(28, 28, 30, 0.8);
-    --bg-soft: rgba(28, 28, 30, 0.64);
-    --surface: var(--apple-grouped-bg);
-    --surface-strong: var(--apple-secondary-bg);
-    --surface-secondary: var(--apple-tertiary-bg);
-    --line-soft: var(--apple-separator);
-    --line-strong: rgba(84, 84, 88, 0.8);
-    --text-main: var(--apple-label);
-    --text-soft: var(--apple-secondary-label);
-    --text-faint: var(--apple-tertiary-label);
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
   :root {
@@ -206,11 +181,4 @@ select {
   background: var(--surface) !important;
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background-image:
-      radial-gradient(circle at top, rgba(255, 255, 255, 0.12) 0%, transparent 24%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 20%);
-  }
-}
 </style>

@@ -510,37 +510,6 @@ async function handleRegister() {
   line-height: 1.8;
 }
 
-/* ─── Dark Mode ──────────────────────────────────────────── */
-@media (prefers-color-scheme: dark) {
-  .login-card {
-    background: rgba(26, 26, 28, 0.82);
-    border-color: rgba(255, 255, 255, 0.10);
-    box-shadow:
-      0 0 0 0.5px rgba(255, 255, 255, 0.06),
-      0 4px 16px rgba(0, 0, 0, 0.24),
-      0 20px 56px rgba(0, 0, 0, 0.32),
-      0 56px 96px rgba(0, 0, 0, 0.20);
-  }
-
-  .field-input {
-    background: rgba(255, 255, 255, 0.09);
-    color: #fff;
-  }
-
-  .field-input:focus {
-    background: rgba(255, 255, 255, 0.06);
-  }
-
-  .seg-btn.active {
-    background: rgba(255, 255, 255, 0.14);
-    color: #fff;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-  }
-
-  .blob-blue { opacity: 0.7; }
-  .blob-purple { opacity: 0.6; }
-  .blob-green { opacity: 0.5; }
-}
 
 /* ─── Reduced Motion ────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {

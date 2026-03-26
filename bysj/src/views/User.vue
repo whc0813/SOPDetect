@@ -1798,62 +1798,6 @@ onUnmounted(() => {
 :deep(.el-dialog__body) { padding: 22px 28px; }
 :deep(.el-dialog__footer) { padding: 0 28px 24px; }
 
-/* ─── Dark Mode ─────────────────────────────────────────────── */
-@media (prefers-color-scheme: dark) {
-  .top-nav {
-    background: rgba(26, 26, 28, 0.78);
-    border-bottom-color: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 2px 12px rgba(0, 0, 0, 0.15);
-  }
-
-  .task-card,
-  .step-container,
-  .job-status-card,
-  .table-card {
-    background: rgba(30, 30, 32, 0.82);
-    border-color: rgba(255, 255, 255, 0.10);
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.20), 0 8px 32px rgba(0, 0, 0, 0.16);
-  }
-
-  .result-card.success {
-    background: linear-gradient(135deg, rgba(52, 199, 89, 0.10) 0%, rgba(0, 122, 255, 0.07) 100%);
-    border-color: rgba(52, 199, 89, 0.25);
-  }
-
-  .result-card.error {
-    background: linear-gradient(135deg, rgba(255, 59, 48, 0.09) 0%, rgba(255, 159, 10, 0.06) 100%);
-    border-color: rgba(255, 59, 48, 0.22);
-  }
-
-  :deep(.el-dialog) {
-    background: rgba(28, 28, 30, 0.95) !important;
-    border-color: rgba(255, 255, 255, 0.10) !important;
-    box-shadow:
-      0 0 0 0.5px rgba(255, 255, 255, 0.06),
-      0 8px 32px rgba(0, 0, 0, 0.30),
-      0 32px 80px rgba(0, 0, 0, 0.24) !important;
-  }
-
-  :deep(.el-dialog__header) {
-    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
-  }
-
-  .step-result-item,
-  .detail-box {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.08);
-  }
-
-  .summary {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.10);
-    color: rgba(255, 255, 255, 0.55);
-  }
-
-  .blob-blue { opacity: 0.65; }
-  .blob-purple { opacity: 0.55; }
-  .blob-green { opacity: 0.45; }
-}
 
 /* ─── Reduced Motion blob override ─────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
