@@ -1,6 +1,8 @@
 <template>
-  <el-container class="admin-layout">
-    <el-aside width="240px" class="sidebar">
+  <div class="admin-layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
       <div class="brand">
         <div class="brand-logo">
           <el-icon><Monitor /></el-icon>
@@ -8,107 +10,130 @@
         <span>标准行为识别</span>
       </div>
 
-      <el-menu :default-active="activeMenu" class="menu" :border="false" @select="handleMenuSelect">
-        <el-menu-item index="manage">
-          <el-icon><Document /></el-icon>
+      <nav class="nav-menu">
+        <button :class="['nav-item', { active: activeMenu === 'manage' }]" @click="handleMenuSelect('manage')">
+          <el-icon class="nav-icon"><Document /></el-icon>
           <span>SOP 管理</span>
-        </el-menu-item>
-        <el-menu-item index="users">
-          <el-icon><SwitchButton /></el-icon>
+        </button>
+        <button :class="['nav-item', { active: activeMenu === 'users' }]" @click="handleMenuSelect('users')">
+          <el-icon class="nav-icon"><SwitchButton /></el-icon>
           <span>用户管理</span>
-        </el-menu-item>
-        <el-menu-item index="stats">
-          <el-icon><DataLine /></el-icon>
+        </button>
+        <button :class="['nav-item', { active: activeMenu === 'stats' }]" @click="handleMenuSelect('stats')">
+          <el-icon class="nav-icon"><DataLine /></el-icon>
           <span>数据统计</span>
-        </el-menu-item>
-      </el-menu>
+        </button>
+      </nav>
 
       <div class="sidebar-bottom">
-        <div class="user-info">
-          <el-avatar :size="32" src="https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png" />
+        <div class="user-card">
+          <div class="avatar">{{ userInitials }}</div>
           <span class="username">{{ currentUserName }}</span>
         </div>
-        <el-button text class="logout-btn" @click="handleLogout">
+        <button class="logout-btn" @click="handleLogout">
           <el-icon><SwitchButton /></el-icon>
           退出登录
-        </el-button>
+        </button>
       </div>
-    </el-aside>
+    </aside>
 
-    <el-container class="main-container">
-      <el-header class="top-header">
+    <!-- Main Area -->
+    <div class="main-container">
+      <header class="top-header">
         <div class="header-left">
           <h2>{{ panelHeaderTitle }}</h2>
           <p class="header-subtitle">{{ panelHeaderSubtitle }}</p>
         </div>
         <div class="header-right">
-          <el-button class="refresh-btn" @click="openConfigDialog">
-            API 配置
-          </el-button>
-          <el-button v-if="activeMenu === 'stats' || activeMenu === 'users'" class="refresh-btn" @click="reloadCurrentView">
-            刷新数据
-          </el-button>
-          <el-button v-if="activeMenu === 'manage'" type="primary" class="create-btn" @click="openCreateDialog">
+          <button class="pill-btn" @click="openConfigDialog">API 配置</button>
+          <button v-if="activeMenu === 'stats' || activeMenu === 'users'" class="pill-btn" @click="reloadCurrentView">刷新数据</button>
+          <button v-if="activeMenu === 'manage'" class="pill-btn primary-pill" @click="openCreateDialog">
             <el-icon><Plus /></el-icon>
             新建 SOP
-          </el-button>
+          </button>
         </div>
-      </el-header>
+      </header>
 
-      <el-main class="content-area">
+      <main class="content-area">
+
+        <!-- SOP 管理 -->
         <div v-if="activeMenu === 'manage'" class="table-card">
-          <el-table :data="sopList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无 SOP">
-            <el-table-column prop="name" label="SOP 名称" min-width="180" />
-            <el-table-column prop="scene" label="适用场景" min-width="140" />
-            <el-table-column prop="stepCount" label="步骤数" width="120" align="center">
-              <template #default="{ row }">
-                <el-tag size="small" class="minimal-tag">{{ row.stepCount }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="createTime" label="创建时间" width="180" />
-            <el-table-column label="操作" width="180" align="right">
-              <template #default="{ row }">
-                <el-button text class="action-btn" @click="openDebugSop(row)">查看</el-button>
-                <el-button text type="danger" class="action-btn" @click="deleteCurrentSop(row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>SOP 名称</th>
+                <th>适用场景</th>
+                <th style="text-align:center">步骤数</th>
+                <th>创建时间</th>
+                <th style="text-align:right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in sopList" :key="row.id">
+                <td>{{ row.name }}</td>
+                <td>{{ row.scene }}</td>
+                <td style="text-align:center">
+                  <span class="badge badge-default">{{ row.stepCount }}</span>
+                </td>
+                <td>{{ row.createTime }}</td>
+                <td style="text-align:right">
+                  <button class="text-btn" @click="openDebugSop(row)">查看</button>
+                  <button class="text-btn danger" @click="deleteCurrentSop(row)">删除</button>
+                </td>
+              </tr>
+              <tr v-if="sopList.length === 0">
+                <td colspan="5" class="empty-row">暂无 SOP</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
+        <!-- 用户管理 -->
         <div v-else-if="activeMenu === 'users'" class="table-card">
-          <el-table :data="userList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无用户">
-            <el-table-column prop="displayName" label="昵称" min-width="140" />
-            <el-table-column prop="username" label="账号" min-width="140" />
-            <el-table-column label="角色" width="110" align="center">
-              <template #default="{ row }">
-                <el-tag size="small" :class="['minimal-tag', row.role === 'admin' ? 'is-admin-tag' : 'is-user-tag']">
-                  {{ row.role === 'admin' ? '管理员' : '普通用户' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="状态" width="110" align="center">
-              <template #default="{ row }">
-                <el-tag size="small" :class="['minimal-tag', row.status === 'active' ? 'is-enabled-tag' : 'is-disabled-tag']">
-                  {{ row.status === 'active' ? '启用' : '禁用' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="lastLoginAt" label="最近登录" width="180" />
-            <el-table-column prop="createdAt" label="创建时间" width="180" />
-            <el-table-column label="操作" width="160" align="center">
-              <template #default="{ row }">
-                <el-button
-                  text
-                  :disabled="row.role === 'admin' && row.id === currentUser?.id"
-                  @click="toggleUserStatus(row)"
-                >
-                  {{ row.status === 'active' ? '禁用' : '启用' }}
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>昵称</th>
+                <th>账号</th>
+                <th style="text-align:center">角色</th>
+                <th style="text-align:center">状态</th>
+                <th>最近登录</th>
+                <th>创建时间</th>
+                <th style="text-align:center">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in userList" :key="row.id">
+                <td>{{ row.displayName }}</td>
+                <td>{{ row.username }}</td>
+                <td style="text-align:center">
+                  <span :class="['badge', row.role === 'admin' ? 'badge-danger' : 'badge-default']">
+                    {{ row.role === 'admin' ? '管理员' : '普通用户' }}
+                  </span>
+                </td>
+                <td style="text-align:center">
+                  <span :class="['badge', row.status === 'active' ? 'badge-success' : 'badge-warning']">
+                    {{ row.status === 'active' ? '启用' : '禁用' }}
+                  </span>
+                </td>
+                <td>{{ row.lastLoginAt }}</td>
+                <td>{{ row.createdAt }}</td>
+                <td style="text-align:center">
+                  <button
+                    class="text-btn"
+                    :disabled="row.role === 'admin' && row.id === currentUser?.id"
+                    @click="toggleUserStatus(row)"
+                  >{{ row.status === 'active' ? '禁用' : '启用' }}</button>
+                </td>
+              </tr>
+              <tr v-if="userList.length === 0">
+                <td colspan="7" class="empty-row">暂无用户</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
+        <!-- 数据统计 -->
         <div v-else class="stats-view">
           <div class="stats-grid">
             <div class="stat-card">
@@ -139,18 +164,31 @@
               <div class="section-subtitle">按流程查看执行次数、通过率和平均得分</div>
             </div>
             <div class="table-card">
-              <el-table :data="sopStatsList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无统计数据">
-                <el-table-column prop="taskName" label="SOP 名称" min-width="180" />
-                <el-table-column prop="scene" label="适用场景" min-width="140" />
-                <el-table-column prop="totalCount" label="执行次数" width="100" align="center" />
-                <el-table-column prop="passedCount" label="通过次数" width="100" align="center" />
-                <el-table-column label="通过率" width="110" align="center">
-                  <template #default="{ row }">{{ formatRate(row.passRate) }}</template>
-                </el-table-column>
-                <el-table-column label="平均得分" width="120" align="center">
-                  <template #default="{ row }">{{ formatAverageScore(row.averageScore) }}</template>
-                </el-table-column>
-              </el-table>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>SOP 名称</th>
+                    <th>适用场景</th>
+                    <th style="text-align:center">执行次数</th>
+                    <th style="text-align:center">通过次数</th>
+                    <th style="text-align:center">通过率</th>
+                    <th style="text-align:center">平均得分</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in sopStatsList" :key="row.taskId || row.taskName">
+                    <td>{{ row.taskName }}</td>
+                    <td>{{ row.scene }}</td>
+                    <td style="text-align:center">{{ row.totalCount }}</td>
+                    <td style="text-align:center">{{ row.passedCount }}</td>
+                    <td style="text-align:center">{{ formatRate(row.passRate) }}</td>
+                    <td style="text-align:center">{{ formatAverageScore(row.averageScore) }}</td>
+                  </tr>
+                  <tr v-if="sopStatsList.length === 0">
+                    <td colspan="6" class="empty-row">暂无统计数据</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
 
@@ -160,41 +198,50 @@
               <div class="section-subtitle">从这里查看明细并处理人工复核</div>
             </div>
             <div class="table-card">
-              <el-table :data="historyList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无执行记录">
-                <el-table-column prop="taskName" label="SOP 名称" min-width="180" />
-                <el-table-column label="所属用户" min-width="140">
-                  <template #default="{ row }">
-                    {{ row.userDisplayName || row.userName || '未知用户' }}
-                  </template>
-                </el-table-column>
-                <el-table-column prop="finishTime" label="完成时间" width="180" />
-                <el-table-column label="AI 结论" width="110" align="center">
-                  <template #default="{ row }">
-                    <el-tag :class="['minimal-status-tag', row.status === 'passed' ? 'is-passed' : 'is-failed']">
-                      {{ getStatusText(row.status) }}
-                    </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="人工复核" width="140" align="center">
-                  <template #default="{ row }">
-                    <el-tag :class="['minimal-status-tag', getReviewTagClass(row.manualReview?.status)]">
-                      {{ getReviewStatusText(row.manualReview?.status) }}
-                    </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="操作" width="190" align="right">
-                  <template #default="{ row }">
-                    <el-button text class="action-btn" @click="openHistoryDetail(row)">详情</el-button>
-                    <el-button text class="action-btn" @click="openReviewDialog(row)">复核</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>SOP 名称</th>
+                    <th>所属用户</th>
+                    <th>完成时间</th>
+                    <th style="text-align:center">AI 结论</th>
+                    <th style="text-align:center">人工复核</th>
+                    <th style="text-align:right">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in historyList" :key="row.id">
+                    <td>{{ row.taskName }}</td>
+                    <td>{{ row.userDisplayName || row.userName || '未知用户' }}</td>
+                    <td>{{ row.finishTime }}</td>
+                    <td style="text-align:center">
+                      <span :class="['badge', row.status === 'passed' ? 'badge-success' : 'badge-danger']">
+                        {{ getStatusText(row.status) }}
+                      </span>
+                    </td>
+                    <td style="text-align:center">
+                      <span :class="['badge', getReviewBadgeClass(row.manualReview?.status)]">
+                        {{ getReviewStatusText(row.manualReview?.status) }}
+                      </span>
+                    </td>
+                    <td style="text-align:right">
+                      <button class="text-btn" @click="openHistoryDetail(row)">详情</button>
+                      <button class="text-btn" @click="openReviewDialog(row)">复核</button>
+                    </td>
+                  </tr>
+                  <tr v-if="historyList.length === 0">
+                    <td colspan="6" class="empty-row">暂无执行记录</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
-      </el-main>
-    </el-container>
 
+      </main>
+    </div>
+
+    <!-- ─── 新建 SOP 对话框 ─────────────────────────────────── -->
     <el-dialog v-model="dialogVisible" title="新建标准操作流程 (SOP)" width="640px" class="minimal-dialog" destroy-on-close>
       <el-form :model="sopForm" label-position="top" class="minimal-form">
         <div class="form-row">
@@ -230,6 +277,7 @@
       </template>
     </el-dialog>
 
+    <!-- ─── API 配置对话框 ────────────────────────────────────── -->
     <el-dialog v-model="configVisible" title="后端 API 配置" width="640px" class="minimal-dialog">
       <el-alert type="info" :closable="false" show-icon title="当前配置保存到后端，管理员创建 SOP 和用户执行评估都会共用这份配置。" />
       <el-form label-position="top" class="minimal-form config-form">
@@ -264,9 +312,10 @@
       </template>
     </el-dialog>
 
+    <!-- ─── SOP 预处理详情对话框 ─────────────────────────────── -->
     <el-dialog v-model="debugVisible" title="SOP 预处理详情" width="900px" class="minimal-dialog">
       <div v-loading="debugLoading" class="detail-wrap">
-          <div v-if="selectedSopDebug">
+        <div v-if="selectedSopDebug">
           <div class="summary debug-summary">{{ selectedSopDebug.name }} / {{ selectedSopDebug.scene }}</div>
           <div v-for="step in selectedSopDebug.steps" :key="step.stepNo" class="detail-box debug-step-box">
             <div class="detail-title">步骤 {{ step.stepNo }}: {{ step.description }}</div>
@@ -299,6 +348,7 @@
       </div>
     </el-dialog>
 
+    <!-- ─── 执行记录详情对话框 ────────────────────────────────── -->
     <el-dialog v-model="historyDetailVisible" title="执行记录详情" width="820px" class="minimal-dialog">
       <div v-if="selectedHistoryRecord" class="detail-wrap">
         <div class="summary">{{ selectedHistoryRecord.taskName }} / {{ selectedHistoryRecord.userDisplayName || selectedHistoryRecord.userName || '未知用户' }} / {{ selectedHistoryRecord.finishTime }}</div>
@@ -320,6 +370,7 @@
       </div>
     </el-dialog>
 
+    <!-- ─── 人工复核对话框 ─────────────────────────────────────── -->
     <el-dialog v-model="reviewDialogVisible" title="人工复核" width="560px" class="minimal-dialog">
       <div v-if="reviewTarget" class="detail-wrap">
         <div class="summary">{{ reviewTarget.taskName }} / {{ reviewTarget.userDisplayName || reviewTarget.userName || '未知用户' }} / {{ reviewTarget.finishTime }}</div>
@@ -344,7 +395,8 @@
         </div>
       </template>
     </el-dialog>
-  </el-container>
+
+  </div>
 </template>
 
 <script setup>
@@ -389,6 +441,10 @@ const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 const headerTitle = computed(() => activeMenu.value === 'manage' ? 'SOP 管理' : '数据统计')
 const headerSubtitle = computed(() => activeMenu.value === 'manage' ? '统一管理 SOP 内容、步骤说明和示范视频' : '查看整体执行情况，并处理需要人工确认的记录')
 const currentUserName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '管理员')
+const userInitials = computed(() => {
+  const name = currentUser.value?.displayName || currentUser.value?.username || 'A'
+  return name.charAt(0).toUpperCase()
+})
 const panelHeaderTitle = computed(() => {
   if (activeMenu.value === 'manage') return 'SOP 管理'
   if (activeMenu.value === 'users') return '用户管理'
@@ -721,6 +777,13 @@ function getReviewTagClass(status) {
   return 'is-review-pending'
 }
 
+function getReviewBadgeClass(status) {
+  if (status === 'approved') return 'badge-success'
+  if (status === 'rejected') return 'badge-danger'
+  if (status === 'needs_attention') return 'badge-warning'
+  return 'badge-default'
+}
+
 function formatSubsteps(list) {
   return Array.isArray(list) && list.length ? list.map((item) => `${item.title}@${Number(item.timestampSec).toFixed(2)}s`).join(' / ') : '暂无'
 }
@@ -736,174 +799,211 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ─── Layout Shell ───────────────────────────────────────── */
 .admin-layout {
+  display: flex;
   height: 100vh;
-  background-color: var(--bg-base);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
   overflow: hidden;
+  background: var(--bg-base);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
 }
 
+/* ─── Sidebar ─────────────────────────────────────────────── */
 .sidebar {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0.08)),
-    var(--bg-elevated);
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--bg-elevated);
   border-right: 1px solid var(--line-soft);
   backdrop-filter: blur(var(--blur-md));
   -webkit-backdrop-filter: blur(var(--blur-md));
   display: flex;
   flex-direction: column;
-  width: var(--sidebar-width) !important;
-  padding: 12px 0 16px;
+  padding: 16px 0 20px;
+  overflow-y: auto;
 }
 
 .brand {
-  min-height: 72px;
   display: flex;
   align-items: center;
-  margin: 0 16px 12px;
-  padding: 0 12px;
-  font-size: 20px;
-  font-weight: 600;
+  gap: 10px;
+  margin: 4px 16px 20px;
+  padding: 10px 12px;
+  font-size: 17px;
+  font-weight: 700;
   color: var(--text-main);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.18);
+  border-radius: 14px;
+  background: rgba(120, 120, 128, 0.08);
 }
 
 .brand-logo {
-  width: 32px;
-  height: 32px;
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-deep) 100%);
+  width: 30px;
+  height: 30px;
+  background: linear-gradient(150deg, var(--accent), var(--accent-deep));
   border-radius: 8px;
-  margin-right: 12px;
   display: flex;
   justify-content: center;
   align-items: center;
-  color: #ffffff;
-  font-size: 16px;
+  color: #fff;
+  font-size: 15px;
+  flex-shrink: 0;
 }
 
-.menu {
+/* ─── Nav Menu ────────────────────────────────────────────── */
+.nav-menu {
   flex: 1;
-  border-right: none;
-  padding: 4px 0;
-  background: transparent;
+  padding: 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-:deep(.el-menu-item) {
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
   height: 44px;
-  line-height: 44px;
-  margin: 4px 16px;
-  padding: 0 14px !important;
-  border-radius: 14px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
   color: var(--text-soft);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
   transition:
-    transform var(--duration-micro) var(--ease-standard),
     background-color var(--duration-short) var(--ease-standard),
-    color var(--duration-short) var(--ease-standard);
+    color var(--duration-short) var(--ease-standard),
+    transform var(--duration-micro) var(--ease-standard);
 }
 
-:deep(.el-menu-item .el-icon) {
-  margin-right: 12px;
-  font-size: 17px;
+.nav-item:hover {
+  background: rgba(120, 120, 128, 0.1);
+  color: var(--text-main);
 }
 
-:deep(.el-menu-item.is-active) {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.16)),
-    rgba(120, 120, 128, 0.16);
+.nav-item.active {
+  background: rgba(120, 120, 128, 0.14);
   color: var(--text-main);
   font-weight: 600;
 }
 
-:deep(.el-menu-item:hover) {
-  background-color: rgba(120, 120, 128, 0.1);
-}
-
-:deep(.el-menu-item:active) {
+.nav-item:active {
   transform: scale(0.98);
 }
 
-.sidebar-bottom {
-  margin: 12px 16px 0;
-  padding: 16px 12px 8px;
-  border-top: 1px solid rgba(60, 60, 67, 0.16);
+.nav-icon {
+  font-size: 16px;
+  flex-shrink: 0;
 }
 
-.user-info {
+/* ─── Sidebar Bottom ──────────────────────────────────────── */
+.sidebar-bottom {
+  margin: 16px 10px 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.user-card {
   display: flex;
   align-items: center;
-  min-height: 52px;
-  margin-bottom: 12px;
-  padding: 0 4px;
+  gap: 10px;
+  padding: 8px 8px 14px;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
 .username {
-  margin-left: 12px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  justify-content: flex-start;
+  height: 44px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
   color: var(--text-soft);
-  min-height: 44px;
-  padding: 8px 12px;
-  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
   transition:
-    transform var(--duration-micro) var(--ease-standard),
     background-color var(--duration-short) var(--ease-standard),
     color var(--duration-short) var(--ease-standard);
 }
 
 .logout-btn:hover {
-  background-color: var(--apple-fill);
+  background: var(--apple-fill);
   color: var(--text-main);
 }
 
 .logout-btn:active {
-  transform: scale(0.96);
+  transform: scale(0.97);
 }
 
+/* ─── Main Container ──────────────────────────────────────── */
 .main-container {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
+/* ─── Top Header ──────────────────────────────────────────── */
 .top-header {
-  min-height: 96px;
+  min-height: 88px;
   background: var(--bg-elevated);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 32px 16px;
+  padding: 16px 32px;
   border-bottom: 1px solid var(--line-soft);
   backdrop-filter: blur(var(--blur-md));
   -webkit-backdrop-filter: blur(var(--blur-md));
-  position: sticky;
-  top: 0;
-  z-index: 20;
+  flex-shrink: 0;
 }
 
 .header-left {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  min-height: 60px;
+  gap: 4px;
 }
 
 .header-left h2 {
   margin: 0;
-  font-size: 28px;
-  font-weight: 600;
+  font-size: 26px;
+  font-weight: 700;
   color: var(--text-main);
   letter-spacing: -0.03em;
   line-height: 1.1;
 }
 
 .header-subtitle {
-  margin: 6px 0 0;
+  margin: 0;
   font-size: 14px;
   color: var(--text-soft);
   line-height: 1.4;
@@ -912,144 +1012,148 @@ onUnmounted(() => {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
-  align-self: flex-start;
-  padding-top: 4px;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
-.create-btn,
-.refresh-btn {
+/* ─── Pill Buttons ────────────────────────────────────────── */
+.pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
   min-height: 44px;
   border-radius: 9999px;
-  font-weight: 600;
-  border-color: var(--line-soft);
+  border: 1px solid var(--line-soft);
   background: var(--apple-fill);
   color: var(--text-main);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
   transition:
-    transform var(--duration-micro) var(--ease-standard),
     background-color var(--duration-short) var(--ease-standard),
     border-color var(--duration-short) var(--ease-standard),
-    color var(--duration-short) var(--ease-standard);
+    transform var(--duration-micro) var(--ease-standard);
 }
 
-.create-btn {
-  background-color: var(--accent);
+.pill-btn:hover {
+  background: rgba(120, 120, 128, 0.18);
+  border-color: var(--line-strong);
+}
+
+.pill-btn:active {
+  transform: scale(0.97);
+}
+
+.primary-pill {
+  background: var(--accent);
   border-color: var(--accent);
-  color: #ffffff;
-  padding: 8px 20px;
+  color: #fff;
+  font-weight: 600;
 }
 
-.create-btn:hover {
-  background-color: var(--accent-deep);
+.primary-pill:hover {
+  background: var(--accent-deep);
   border-color: var(--accent-deep);
 }
 
-.create-btn:active,
-.refresh-btn:active,
-.action-btn:active,
-.submit-btn:active,
-.upload-btn:active,
-.manual-btn:active {
-  transform: scale(0.96);
-}
-
+/* ─── Content Area ────────────────────────────────────────── */
 .content-area {
+  flex: 1;
   padding: 24px;
-  overflow: auto;
+  overflow-y: auto;
 }
 
+/* ─── Data Table ──────────────────────────────────────────── */
 .table-card {
   background: var(--surface);
   border-radius: 16px;
   border: 1px solid var(--line-soft);
-  backdrop-filter: blur(var(--blur-md));
-  -webkit-backdrop-filter: blur(var(--blur-md));
-  padding: 0 8px 8px;
   overflow: hidden;
 }
 
-:deep(.el-table) {
-  --el-table-border-color: var(--line-soft);
-  --el-table-header-bg-color: transparent;
-  --el-table-tr-bg-color: transparent;
-  --el-table-row-hover-bg-color: rgba(120, 120, 128, 0.06);
-  --el-fill-color-blank: transparent;
-  color: var(--text-main);
-  background: transparent;
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
 }
 
-:deep(.el-table__inner-wrapper::before) {
-  display: none;
-}
-
-:deep(.el-table th.el-table__cell) {
-  font-weight: 600;
+.data-table thead th {
+  text-align: left;
+  padding: 13px 16px;
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-faint);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: transparent !important;
-  border-bottom: 1px solid rgba(60, 60, 67, 0.16) !important;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  white-space: nowrap;
 }
 
-:deep(.el-table td.el-table__cell) {
-  padding: 16px 0;
-  font-size: 15px;
-  background: transparent !important;
+.data-table tbody td {
+  padding: 14px 16px;
+  font-size: 14px;
   color: var(--text-main);
-  border-bottom: 1px solid rgba(60, 60, 67, 0.12) !important;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: middle;
 }
 
-:deep(.el-table tr:last-child td.el-table__cell) {
-  border-bottom: none !important;
+.data-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
-.action-btn {
-  min-height: 44px;
-  font-weight: 600;
-  padding: 4px 12px;
-  color: var(--accent);
+.data-table tbody tr:hover td {
+  background: rgba(120, 120, 128, 0.04);
+}
+
+.empty-row {
+  text-align: center;
+  color: var(--text-faint) !important;
+  padding: 48px 16px !important;
+  font-size: 14px;
+}
+
+/* ─── Badges ──────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
   border-radius: 9999px;
-  transition:
-    transform var(--duration-micro) var(--ease-standard),
-    background-color var(--duration-short) var(--ease-standard),
-    color var(--duration-short) var(--ease-standard);
-}
-
-.action-btn:hover {
-  background: rgba(0, 122, 255, 0.08);
-}
-
-:deep(.minimal-tag) {
-  min-height: 24px;
-  background-color: rgba(120, 120, 128, 0.12);
-  color: var(--text-soft);
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 0 10px;
+  font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
-:deep(.minimal-tag.is-admin-tag) {
-  background: rgba(255, 59, 48, 0.1);
-  color: #d9342b;
+.badge-success { background: rgba(52, 199, 89, 0.12); color: #2f9b47; }
+.badge-danger  { background: rgba(255, 59, 48, 0.10); color: #d9342b; }
+.badge-warning { background: rgba(255, 159, 10, 0.12); color: #b26a00; }
+.badge-info    { background: rgba(0, 122, 255, 0.10); color: #0066cc; }
+.badge-default { background: rgba(120, 120, 128, 0.12); color: var(--text-soft); }
+
+/* ─── Text Button ─────────────────────────────────────────── */
+.text-btn {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  min-height: 44px;
+  font-family: inherit;
+  transition: background-color var(--duration-short) var(--ease-standard);
 }
 
-:deep(.minimal-tag.is-user-tag) {
-  background: rgba(120, 120, 128, 0.12);
-  color: var(--text-soft);
-}
+.text-btn:hover { background: rgba(0, 122, 255, 0.08); }
+.text-btn:active { background: rgba(0, 122, 255, 0.14); }
+.text-btn.danger { color: var(--danger); }
+.text-btn.danger:hover { background: rgba(255, 59, 48, 0.08); }
+.text-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
-:deep(.minimal-tag.is-enabled-tag) {
-  background: rgba(52, 199, 89, 0.12);
-  color: #2f9b47;
-}
-
-:deep(.minimal-tag.is-disabled-tag) {
-  background: rgba(255, 159, 10, 0.12);
-  color: #b26a00;
-}
-
+/* ─── Stats ───────────────────────────────────────────────── */
 .stats-view {
   display: flex;
   flex-direction: column;
@@ -1059,50 +1163,45 @@ onUnmounted(() => {
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 20px;
+  gap: 16px;
 }
 
 .stat-card {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.08)),
-    var(--surface);
+  background: var(--surface);
   border: 1px solid var(--line-soft);
   border-radius: 16px;
   padding: 24px;
-  min-height: 160px;
+  min-height: 148px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
 }
 
 .highlight-card {
-  border-color: rgba(0, 122, 255, 0.32);
-  background:
-    linear-gradient(180deg, rgba(0, 122, 255, 0.12), rgba(0, 122, 255, 0.02)),
-    var(--surface);
+  border-color: rgba(0, 122, 255, 0.28);
+  background: linear-gradient(160deg, rgba(0, 122, 255, 0.06) 0%, transparent 60%), var(--surface);
 }
 
 .stat-label {
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-faint);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 }
 
 .stat-value {
-  margin-top: 12px;
-  font-size: 34px;
-  line-height: 1;
-  font-weight: 600;
+  font-size: 36px;
+  font-weight: 700;
   color: var(--text-main);
-  letter-spacing: -0.03em;
+  letter-spacing: -0.04em;
+  line-height: 1;
 }
 
 .stat-desc {
-  margin-top: 14px;
   font-size: 13px;
-  line-height: 1.6;
   color: var(--text-soft);
+  line-height: 1.5;
 }
 
 .section-block {
@@ -1114,110 +1213,114 @@ onUnmounted(() => {
 .section-head {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .section-title {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--text-main);
+  letter-spacing: -0.02em;
 }
 
 .section-subtitle {
-  font-size: 15px;
+  font-size: 14px;
   color: var(--text-soft);
 }
 
-:deep(.minimal-status-tag) {
-  min-height: 24px;
-  border-radius: 999px;
-  padding: 0 10px;
-  font-weight: 600;
-  border: 1px solid transparent;
-}
-
-:deep(.minimal-status-tag.is-passed),
-:deep(.minimal-status-tag.is-review-approved) {
-  background: rgba(52, 199, 89, 0.12);
-  color: #2f9b47;
-}
-
-:deep(.minimal-status-tag.is-failed),
-:deep(.minimal-status-tag.is-review-rejected) {
-  background: rgba(255, 59, 48, 0.1);
-  color: #d9342b;
-}
-
-:deep(.minimal-status-tag.is-review-attention),
-:deep(.minimal-status-tag.is-review-pending) {
-  background-color: rgba(255, 159, 10, 0.12);
-  color: #b26a00;
-}
-
+/* ─── Dialogs ─────────────────────────────────────────────── */
 :deep(.minimal-dialog) {
-  border-radius: 20px;
+  border-radius: 20px !important;
   overflow: hidden;
+  border: 1px solid var(--line-soft) !important;
+  background: var(--surface-strong) !important;
 }
 
 :deep(.minimal-dialog .el-dialog__header) {
-  padding: 24px 24px 16px;
+  padding: 22px 24px 16px;
   margin-right: 0;
   border-bottom: 1px solid var(--line-soft);
+  background: transparent;
 }
 
 :deep(.minimal-dialog .el-dialog__title) {
-  font-weight: 600;
-  font-size: 20px;
+  font-weight: 700;
+  font-size: 19px;
   color: var(--text-main);
+  letter-spacing: -0.02em;
 }
 
 :deep(.minimal-dialog .el-dialog__body) {
-  padding: 24px;
+  padding: 20px 24px;
+  background: transparent;
 }
 
+:deep(.minimal-dialog .el-dialog__footer) {
+  background: transparent;
+}
+
+/* ─── Dialog Form Styles ──────────────────────────────────── */
 .form-row {
   display: flex;
   gap: 16px;
 }
 
-.flex-1 {
-  flex: 1;
-}
+.flex-1 { flex: 1; }
 
 :deep(.minimal-form .el-form-item__label) {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-soft);
   padding-bottom: 4px;
 }
 
 :deep(.minimal-form .el-input__wrapper) {
-  border: 1px solid var(--line-soft);
+  border: 1.5px solid var(--line-soft);
   border-radius: 12px;
   padding: 4px 12px;
   background: var(--surface-strong);
+  box-shadow: none !important;
   transition:
-    transform var(--duration-micro) var(--ease-standard),
     border-color var(--duration-short) var(--ease-standard),
-    outline-color var(--duration-short) var(--ease-standard),
-    background-color var(--duration-short) var(--ease-standard);
+    box-shadow var(--duration-short) var(--ease-standard);
 }
 
 :deep(.minimal-form .el-input__wrapper.is-focus) {
-  border-color: var(--apple-blue);
-  outline: 4px solid rgba(0, 122, 255, 0.16);
-  outline-offset: 0;
+  border-color: var(--apple-blue) !important;
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.12) !important;
 }
 
+:deep(.minimal-form .el-input__inner) {
+  color: var(--text-main);
+}
+
+:deep(.minimal-form .el-textarea__inner) {
+  background: var(--surface-strong);
+  border: 1.5px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-family: inherit;
+  color: var(--text-main);
+  box-shadow: none !important;
+  resize: none;
+}
+
+:deep(.minimal-form .el-textarea__inner:focus) {
+  border-color: var(--apple-blue);
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.12) !important;
+  outline: none;
+}
+
+/* Steps Section in Create Dialog */
 .steps-section {
-  margin-top: 24px;
+  margin-top: 20px;
 }
 
 .step-card {
   background: var(--surface-secondary);
   border-radius: 12px;
   padding: 16px;
-  margin-bottom: 12px;
+  margin-top: 10px;
   border: 1px solid var(--line-soft);
 }
 
@@ -1226,35 +1329,18 @@ onUnmounted(() => {
   font-weight: 600;
   color: var(--text-faint);
   text-transform: uppercase;
-  margin-bottom: 8px;
-}
-
-:deep(.minimal-textarea .el-textarea__inner) {
-  background: var(--surface-strong);
-  border: 1px solid var(--line-soft);
-  border-radius: 12px;
-  padding: 8px 12px;
-  font-family: inherit;
-  color: var(--text-main);
-}
-
-:deep(.minimal-textarea .el-textarea__inner:focus) {
-  border-color: var(--apple-blue);
-  outline: 4px solid rgba(0, 122, 255, 0.16);
-  outline-offset: 0;
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
 }
 
 .upload-btn {
-  margin-top: 12px;
-  min-height: 44px;
-  border-radius: 12px;
-  border-color: var(--line-soft);
-  background: var(--surface-strong);
-  color: var(--text-main);
-  transition:
-    transform var(--duration-micro) var(--ease-standard),
-    background-color var(--duration-short) var(--ease-standard),
-    border-color var(--duration-short) var(--ease-standard);
+  margin-top: 10px;
+  min-height: 40px;
+  border-radius: 10px !important;
+  border-color: var(--line-soft) !important;
+  background: var(--surface-strong) !important;
+  color: var(--text-main) !important;
+  font-size: 13px !important;
 }
 
 .step-hint {
@@ -1264,15 +1350,91 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 
+/* Config Form */
+.config-form {
+  margin-top: 16px;
+}
+
+:deep(.minimal-dialog .el-input-number) { width: 100%; }
+
+:deep(.minimal-dialog .el-input-number .el-input__wrapper) {
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+}
+
+:deep(.minimal-dialog .el-input-number__decrease) {
+  width: 38px;
+  border-color: var(--line-soft);
+  background: rgba(120, 120, 128, 0.08);
+  color: var(--text-soft);
+  border-top-left-radius: 12px;
+  border-bottom-left-radius: 12px;
+}
+
+:deep(.minimal-dialog .el-input-number__increase) {
+  width: 38px;
+  border-color: var(--line-soft);
+  background: rgba(120, 120, 128, 0.08);
+  color: var(--text-soft);
+  border-top-right-radius: 12px;
+  border-bottom-right-radius: 12px;
+}
+
+/* Alert in config dialog */
+:deep(.minimal-dialog .el-alert) {
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: rgba(0, 122, 255, 0.07);
+  color: var(--text-soft);
+}
+
+/* Dialog Footer */
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 24px 22px;
+}
+
+.submit-btn {
+  background-color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  border-radius: 9999px !important;
+  min-height: 44px !important;
+  font-weight: 600 !important;
+}
+
+.submit-btn:hover {
+  background-color: var(--accent-deep) !important;
+  border-color: var(--accent-deep) !important;
+}
+
+.dialog-footer :deep(.el-button:not(.submit-btn)) {
+  min-height: 44px;
+  border-radius: 9999px;
+  border-color: var(--line-soft);
+  background: var(--apple-fill);
+  color: var(--text-soft);
+  padding: 8px 18px;
+}
+
+.dialog-footer :deep(.el-button:not(.submit-btn):hover) {
+  background: rgba(120, 120, 128, 0.18);
+  color: var(--text-main);
+}
+
+/* ─── Debug Dialog ────────────────────────────────────────── */
 .detail-wrap {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .summary {
   font-weight: 600;
   color: var(--text-main);
+  font-size: 14px;
 }
 
 .debug-summary {
@@ -1283,14 +1445,14 @@ onUnmounted(() => {
 
 .detail-box {
   background: var(--surface-strong);
-  border-radius: 12px;
-  padding: 18px;
+  border-radius: 14px;
+  padding: 16px 18px;
   border: 1px solid var(--line-soft);
 }
 
 .debug-step-box {
   border-radius: 16px;
-  padding: 22px 22px 20px;
+  padding: 20px 22px;
 }
 
 .debug-step-box + .debug-step-box {
@@ -1312,30 +1474,30 @@ onUnmounted(() => {
 
 .detail-text {
   color: var(--text-soft);
+  font-size: 14px;
   line-height: 1.7;
 }
 
 .debug-step-box .detail-text + .detail-text {
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .manual-segmentation-box,
 .demo-video-box {
-  margin-top: 18px;
-  padding: 18px 16px;
-  border-radius: 14px;
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 12px;
   background: var(--surface-secondary);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   border: 1px solid var(--line-soft);
 }
 
 .manual-title {
   font-weight: 600;
   color: var(--text-main);
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: 14px;
 }
 
 .manual-subtitle,
@@ -1347,32 +1509,30 @@ onUnmounted(() => {
 
 .manual-btn {
   align-self: flex-start;
-}
-
-.config-form {
-  margin-top: 16px;
+  border-radius: 9999px !important;
 }
 
 .frame-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 16px;
-  margin-top: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
 }
 
 .frame {
   width: 100%;
-  height: 128px;
+  height: 100px;
   object-fit: cover;
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface-secondary);
 }
 
 .video {
   width: 100%;
-  max-height: 360px;
+  max-height: 340px;
   background: #000;
-  border-radius: 20px;
+  border-radius: 16px;
+  display: block;
 }
 
 .tag-list {
@@ -1381,154 +1541,107 @@ onUnmounted(() => {
   gap: 8px;
 }
 
+/* Review Radio */
 :deep(.review-radio-group .el-radio-button__inner) {
-  min-width: 118px;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
-.dialog-footer :deep(.el-button:not(.submit-btn)) {
-  min-height: 44px;
-  border-radius: 9999px;
-  border-color: transparent;
-  background: rgba(120, 120, 128, 0.12);
-  color: var(--text-soft);
-  padding: 8px 18px;
-}
-
-.dialog-footer :deep(.el-button:not(.submit-btn):hover) {
-  background: rgba(120, 120, 128, 0.18);
-  color: var(--text-main);
-}
-
-:deep(.minimal-dialog .el-alert) {
-  border-radius: 12px;
-  border: 1px solid transparent;
-  background: rgba(120, 120, 128, 0.1);
+  min-width: 108px;
+  border-color: var(--line-soft);
+  background: var(--surface-strong);
   color: var(--text-soft);
 }
 
-:deep(.minimal-dialog .el-input-number) {
-  width: 100%;
+:deep(.review-radio-group .el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #fff !important;
 }
 
-:deep(.minimal-dialog .el-input-number .el-input__wrapper) {
-  border-radius: 0;
-  border-left: none;
-  border-right: none;
-}
-
-:deep(.minimal-dialog .el-input-number__decrease),
-:deep(.minimal-dialog .el-input-number__increase) {
-  width: 40px;
-  border-color: rgba(60, 60, 67, 0.16);
-  background: rgba(120, 120, 128, 0.08);
-  color: var(--text-soft);
-}
-
-:deep(.minimal-dialog .el-input-number__decrease) {
-  border-top-left-radius: 12px;
-  border-bottom-left-radius: 12px;
-}
-
-:deep(.minimal-dialog .el-input-number__increase) {
-  border-top-right-radius: 12px;
-  border-bottom-right-radius: 12px;
-}
-
-.submit-btn {
-  background-color: var(--accent);
-  border-color: var(--accent);
-  border-radius: 9999px;
-  min-height: 44px;
-}
-
-.submit-btn:hover {
-  background-color: var(--accent-deep);
-  border-color: var(--accent-deep);
-}
-
+/* ─── Dark Mode ───────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
-  .sidebar,
+  .sidebar {
+    background: var(--bg-elevated);
+  }
+
   .stat-card {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
-      var(--surface);
+    background: var(--surface);
   }
 
   .brand,
-  :deep(.el-menu-item.is-active) {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03)),
-      rgba(120, 120, 128, 0.18);
+  .nav-item.active {
+    background: rgba(120, 120, 128, 0.16);
   }
 }
 
+/* ─── Reduced Motion ──────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  :deep(.el-menu-item),
+  .nav-item,
   .logout-btn,
-  .create-btn,
-  .refresh-btn,
-  .action-btn,
-  .submit-btn,
-  .upload-btn,
-  .manual-btn,
-  :deep(.minimal-form .el-input__wrapper) {
+  .pill-btn,
+  .text-btn {
     transition: none;
   }
 }
 
+/* ─── Responsive ──────────────────────────────────────────── */
 @media (max-width: 1100px) {
-  .stats-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 768px) {
   .admin-layout {
-    display: block;
+    flex-direction: column;
     height: auto;
+    overflow: auto;
   }
 
   .sidebar {
     width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    height: auto;
+    padding: 12px;
     border-right: none;
-    border-bottom: 1px solid #e5e5ea;
-    padding: 12px 0;
+    border-bottom: 1px solid var(--line-soft);
   }
 
-  .brand,
-  .sidebar-bottom {
-    margin-left: 12px;
-    margin-right: 12px;
+  .brand { margin-bottom: 0; }
+
+  .nav-menu {
+    flex-direction: row;
+    gap: 4px;
   }
+
+  .nav-item { height: 40px; }
+
+  .sidebar-bottom {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-top: 10px;
+    margin-top: 8px;
+  }
+
+  .user-card { padding-bottom: 0; }
+
+  .main-container { overflow: visible; }
+
+  .content-area { padding: 16px; }
 
   .top-header {
-    height: auto;
-    padding: 20px 16px;
-    align-items: flex-start;
-  }
-
-  .header-left h2 {
-    font-size: 28px;
-  }
-
-  .header-right,
-  .form-row {
+    padding: 16px;
+    min-height: auto;
     flex-direction: column;
-    align-items: stretch;
+    align-items: flex-start;
+    gap: 12px;
   }
 
-  .content-area {
-    padding: 20px 16px;
+  .header-right {
+    flex-direction: row;
+    flex-wrap: wrap;
   }
 
-  .stats-grid {
-    grid-template-columns: 1fr;
-  }
+  .stats-grid { grid-template-columns: 1fr; }
+
+  .form-row { flex-direction: column; }
 }
 </style>

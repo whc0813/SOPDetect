@@ -1,6 +1,6 @@
 <template>
-  <el-container class="user-layout">
-    <el-header class="top-nav">
+  <div class="user-layout">
+    <header class="top-nav">
       <div class="brand">
         <div class="brand-logo">
           <el-icon><Monitor /></el-icon>
@@ -9,25 +9,25 @@
       </div>
       <div class="nav-right">
         <div class="user-info">
-          <el-avatar :size="32" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" />
+          <div class="avatar">{{ userInitials }}</div>
           <span class="username">{{ currentUserName }}</span>
         </div>
-        <el-button text class="logout-btn" @click="handleLogout">
-          退出登录
-        </el-button>
+        <button class="logout-btn" @click="handleLogout">退出登录</button>
       </div>
-    </el-header>
+    </header>
 
-    <el-main class="main-content">
+    <main class="main-content">
       <div class="content-wrapper">
-        <div class="user-tabs" v-if="!currentSop">
-          <el-radio-group v-model="activeTab" class="minimal-radio-group">
-            <el-radio-button label="tasks">待执行任务</el-radio-button>
-            <el-radio-button label="jobs">评测任务</el-radio-button>
-            <el-radio-button label="history">历史记录</el-radio-button>
-          </el-radio-group>
+
+        <div class="tab-bar" v-if="!currentSop">
+          <div class="segmented-control">
+            <button :class="['segment', { active: activeTab === 'tasks' }]" type="button" @click="activeTab = 'tasks'">待执行任务</button>
+            <button :class="['segment', { active: activeTab === 'jobs' }]" type="button" @click="activeTab = 'jobs'">评测任务</button>
+            <button :class="['segment', { active: activeTab === 'history' }]" type="button" @click="activeTab = 'history'">历史记录</button>
+          </div>
         </div>
 
+        <!-- 待执行任务 -->
         <div v-if="!currentSop && activeTab === 'tasks'" class="view-transition">
           <div class="page-header">
             <h2>可用任务</h2>
@@ -50,9 +50,14 @@
             </div>
           </div>
 
-          <el-empty v-if="sopList.length === 0" description="暂无可用流程，请联系管理员创建" class="minimal-empty" />
+          <div v-if="sopList.length === 0" class="empty-state">
+            <div class="empty-icon">📋</div>
+            <p class="empty-title">暂无可用流程</p>
+            <p class="empty-desc">请联系管理员创建标准操作流程</p>
+          </div>
         </div>
 
+        <!-- 评测任务 -->
         <div v-if="!currentSop && activeTab === 'jobs'" class="view-transition">
           <div class="page-header">
             <h2>评测任务</h2>
@@ -60,31 +65,44 @@
           </div>
 
           <div class="table-card">
-            <el-table :data="jobList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无评测任务">
-              <el-table-column prop="taskName" label="SOP 名称" min-width="180" />
-              <el-table-column prop="createdAt" label="提交时间" width="180" />
-              <el-table-column label="状态" width="120" align="center">
-                <template #default="{ row }">
-                  <el-tag :type="getJobStatusTagType(row.status)" effect="plain">{{ getJobStatusText(row.status) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="进度" width="180">
-                <template #default="{ row }">
-                  <div class="job-progress-cell">
-                    <span>{{ row.progressPercent }}%</span>
-                    <span class="muted-text">{{ getJobStageText(row.stage) }}</span>
-                  </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="140" align="center">
-                <template #default="{ row }">
-                  <el-button text @click="openJobDetail(row)">查看详情</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>SOP 名称</th>
+                  <th>提交时间</th>
+                  <th style="text-align:center">状态</th>
+                  <th>进度</th>
+                  <th style="text-align:center">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in jobList" :key="row.id">
+                  <td>{{ row.taskName }}</td>
+                  <td>{{ row.createdAt }}</td>
+                  <td style="text-align:center">
+                    <span :class="['badge', `badge-${getJobStatusTagType(row.status)}`]">
+                      {{ getJobStatusText(row.status) }}
+                    </span>
+                  </td>
+                  <td>
+                    <div class="progress-cell">
+                      <span class="progress-pct">{{ row.progressPercent }}%</span>
+                      <span class="muted-text">{{ getJobStageText(row.stage) }}</span>
+                    </div>
+                  </td>
+                  <td style="text-align:center">
+                    <button class="text-btn" @click="openJobDetail(row)">查看详情</button>
+                  </td>
+                </tr>
+                <tr v-if="jobList.length === 0">
+                  <td colspan="5" class="empty-row">暂无评测任务</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
+        <!-- 历史记录 -->
         <div v-if="!currentSop && activeTab === 'history'" class="view-transition">
           <div class="page-header">
             <h2>执行历史</h2>
@@ -92,35 +110,47 @@
           </div>
 
           <div class="table-card">
-            <el-table :data="historyList" style="width: 100%" :header-cell-style="{ background: '#fafafa', color: '#1d1d1f', fontWeight: '500' }" empty-text="暂无执行记录">
-              <el-table-column prop="taskName" label="SOP 名称" min-width="180" />
-              <el-table-column prop="finishTime" label="完成时间" width="180" />
-              <el-table-column label="AI 结论" width="100" align="center">
-                <template #default="{ row }">
-                  <el-tag :class="['minimal-status-tag', row.status === 'passed' ? 'is-passed' : 'is-failed']">
-                    {{ getStatusText(row.status) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="人工复核" width="120" align="center">
-                <template #default="{ row }">
-                  <el-tag class="minimal-status-tag is-review">{{ getManualReviewText(row.manualReview?.status) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="120" align="center">
-                <template #default="{ row }">
-                  <el-button text @click="openHistoryDetail(row)">查看详情</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>SOP 名称</th>
+                  <th>完成时间</th>
+                  <th style="text-align:center">AI 结论</th>
+                  <th style="text-align:center">人工复核</th>
+                  <th style="text-align:center">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in historyList" :key="row.id">
+                  <td>{{ row.taskName }}</td>
+                  <td>{{ row.finishTime }}</td>
+                  <td style="text-align:center">
+                    <span :class="['badge', row.status === 'passed' ? 'badge-success' : 'badge-danger']">
+                      {{ getStatusText(row.status) }}
+                    </span>
+                  </td>
+                  <td style="text-align:center">
+                    <span class="badge badge-default">{{ getManualReviewText(row.manualReview?.status) }}</span>
+                  </td>
+                  <td style="text-align:center">
+                    <button class="text-btn" @click="openHistoryDetail(row)">查看详情</button>
+                  </td>
+                </tr>
+                <tr v-if="historyList.length === 0">
+                  <td colspan="5" class="empty-row">暂无执行记录</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
+        <!-- 执行视图 -->
         <div v-else-if="currentSop" class="execution-view">
           <div class="execution-header">
-            <el-button text @click="backToList" class="back-btn">
-              <el-icon><ArrowLeft /></el-icon> 返回列表
-            </el-button>
+            <button class="back-btn" @click="backToList">
+              <el-icon><ArrowLeft /></el-icon>
+              返回列表
+            </button>
             <div class="header-titles">
               <h2>{{ currentSop.name }}</h2>
               <span class="scene-tag">{{ currentSop.scene }}</span>
@@ -128,18 +158,25 @@
           </div>
 
           <div class="progress-section">
-            <div class="progress-text">共 {{ currentSop.stepCount }} 个步骤</div>
-            <el-progress :percentage="currentJob ? currentJob.progressPercent : (evaluationResult ? 100 : 45)" :show-text="false" color="#000000" class="minimal-progress" />
+            <div class="progress-label">共 {{ currentSop.stepCount }} 个步骤</div>
+            <div class="progress-track">
+              <div
+                class="progress-fill"
+                :style="{ width: `${currentJob ? currentJob.progressPercent : (evaluationResult ? 100 : 45)}%` }"
+              ></div>
+            </div>
           </div>
 
           <div class="step-container">
-            <div class="step-label">操作流程</div>
+            <div class="step-section-label">操作流程</div>
 
             <div v-for="step in currentSop.steps" :key="step.stepNo" class="step-item">
               <div class="step-index">{{ step.stepNo }}</div>
               <div class="step-main">
                 <p class="step-desc">{{ step.description }}</p>
-                <div class="step-sub">{{ step.referenceMode === 'text' ? '仅按文字规则校验，无示范视频' : (step.referenceSummary || '已生成该步骤的参考信息') }}</div>
+                <div class="step-sub">
+                  {{ step.referenceMode === 'text' ? '仅按文字规则校验，无示范视频' : (step.referenceSummary || '已生成该步骤的参考信息') }}
+                </div>
               </div>
             </div>
 
@@ -181,7 +218,9 @@
               <h3>任务状态：{{ getJobStatusText(currentJob.status) }}</h3>
             </div>
             <div class="job-status-meta">
-              <el-tag :type="getJobStatusTagType(currentJob.status)" effect="plain">{{ getJobStageText(currentJob.stage) }}</el-tag>
+              <span :class="['badge', `badge-${getJobStatusTagType(currentJob.status)}`]">
+                {{ getJobStageText(currentJob.stage) }}
+              </span>
               <span>任务编号：{{ currentJob.id }}</span>
               <span>进度：{{ currentJob.progressPercent }}%</span>
             </div>
@@ -240,8 +279,9 @@
             </div>
           </div>
         </div>
+
       </div>
-    </el-main>
+    </main>
 
     <el-dialog v-model="historyDetailVisible" title="执行记录详情" width="820px">
       <div v-if="selectedHistoryRecord" class="detail-wrap">
@@ -276,7 +316,7 @@
         </div>
       </div>
     </el-dialog>
-  </el-container>
+  </div>
 </template>
 
 <script setup>
@@ -317,6 +357,11 @@ const currentUser = ref(getCurrentUser())
 let jobPollingTimer = null
 
 const currentUserName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '用户')
+
+const userInitials = computed(() => {
+  const name = currentUser.value?.displayName || currentUser.value?.username || 'U'
+  return name.charAt(0).toUpperCase()
+})
 
 const currentSopHasNoDemoVideo = computed(() => {
   const steps = currentSop.value?.steps || []
@@ -618,12 +663,16 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ─── Layout ─────────────────────────────────────────────── */
 .user-layout {
   min-height: 100vh;
   background-color: var(--bg-base);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  display: flex;
+  flex-direction: column;
 }
 
+/* ─── Top Nav ─────────────────────────────────────────────── */
 .top-nav {
   height: var(--toolbar-height);
   background: var(--bg-elevated);
@@ -642,7 +691,8 @@ onUnmounted(() => {
 .brand {
   display: flex;
   align-items: center;
-  font-size: 20px;
+  gap: 12px;
+  font-size: 18px;
   font-weight: 600;
   color: var(--text-main);
 }
@@ -650,41 +700,60 @@ onUnmounted(() => {
 .brand-logo {
   width: 32px;
   height: 32px;
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-deep) 100%);
+  background: linear-gradient(150deg, var(--accent), var(--accent-deep));
   border-radius: 8px;
-  margin-right: 12px;
   display: flex;
   justify-content: center;
   align-items: center;
-  color: #ffffff;
+  color: #fff;
   font-size: 16px;
+  flex-shrink: 0;
 }
 
 .nav-right {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 20px;
 }
 
 .user-info {
   display: flex;
   align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
 .username {
-  margin-left: 10px;
   font-size: 14px;
   font-weight: 500;
   color: var(--text-main);
 }
 
 .logout-btn {
+  border: none;
+  background: transparent;
   color: var(--text-soft);
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
   min-height: 44px;
-  border-radius: 12px;
+  padding: 8px 14px;
+  border-radius: 10px;
   transition:
-    transform var(--duration-micro) var(--ease-standard),
     background-color var(--duration-short) var(--ease-standard),
     color var(--duration-short) var(--ease-standard);
 }
@@ -698,7 +767,9 @@ onUnmounted(() => {
   transform: scale(0.96);
 }
 
+/* ─── Main ─────────────────────────────────────────────── */
 .main-content {
+  flex: 1;
   padding: 28px 32px;
 }
 
@@ -707,21 +778,60 @@ onUnmounted(() => {
   margin: 0 auto;
 }
 
-.user-tabs {
-  margin-bottom: 24px;
+/* ─── Tab Bar ─────────────────────────────────────────────── */
+.tab-bar {
   display: flex;
   justify-content: center;
+  margin-bottom: 32px;
 }
 
+.segmented-control {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--apple-fill);
+  border-radius: 9999px;
+}
+
+.segment {
+  padding: 9px 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 15px;
+  font-weight: 500;
+  border-radius: 9999px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition:
+    background-color var(--duration-short) var(--ease-standard),
+    color var(--duration-short) var(--ease-standard);
+}
+
+.segment.active {
+  background: var(--surface-strong);
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.segment:hover:not(.active) {
+  color: var(--text-main);
+}
+
+.segment:active {
+  transform: scale(0.97);
+}
+
+/* ─── Page Header ─────────────────────────────────────────── */
 .page-header {
-  margin-bottom: 32px;
+  margin-bottom: 28px;
 }
 
 .page-header h2 {
   font-size: 34px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-main);
-  margin: 0 0 8px 0;
+  margin: 0 0 8px;
   letter-spacing: -0.04em;
   line-height: 1.1;
 }
@@ -732,10 +842,11 @@ onUnmounted(() => {
   margin: 0;
 }
 
+/* ─── Task Cards ─────────────────────────────────────────── */
 .grid-container {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
 }
 
 .task-card {
@@ -744,15 +855,13 @@ onUnmounted(() => {
   border-radius: 16px;
   padding: 24px;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   transition:
     transform var(--duration-micro) var(--ease-standard),
     border-color var(--duration-short) var(--ease-standard),
     background-color var(--duration-short) var(--ease-standard);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  backdrop-filter: blur(var(--blur-md));
-  -webkit-backdrop-filter: blur(var(--blur-md));
 }
 
 .task-card:hover {
@@ -765,10 +874,11 @@ onUnmounted(() => {
 }
 
 .task-title {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 600;
   color: var(--text-main);
-  margin: 0 0 16px 0;
+  margin: 0 0 14px;
+  line-height: 1.3;
 }
 
 .task-meta {
@@ -779,256 +889,272 @@ onUnmounted(() => {
 .meta-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   font-size: 13px;
   color: var(--text-soft);
 }
 
 .card-action {
-  margin-top: 24px;
+  margin-top: 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 14px;
   font-weight: 500;
   color: var(--text-main);
-  padding-top: 16px;
+  padding-top: 14px;
   border-top: 1px solid var(--line-soft);
 }
 
-:deep(.minimal-radio-group) {
-  background-color: var(--apple-fill);
-  padding: 4px;
-  border-radius: 9999px;
-  display: inline-flex;
-  --el-fill-color-blank: transparent;
-  --el-border-color: transparent;
-  --el-border-color-hover: transparent;
-  --el-color-primary: var(--accent);
-  --el-text-color-primary: var(--text-main);
-  border: 1px solid transparent;
+/* ─── Empty State ─────────────────────────────────────────── */
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
 }
 
-:deep(.minimal-radio-group .el-radio-button__inner) {
-  border: none !important;
-  background: transparent !important;
-  background-color: transparent !important;
-  color: var(--text-soft) !important;
-  font-weight: 500;
-  border-radius: 9999px !important;
-  padding: 10px 28px;
-  min-height: 40px;
-  font-size: 16px;
-  transition:
-    transform var(--duration-micro) var(--ease-standard),
-    background-color var(--duration-short) var(--ease-standard),
-    color var(--duration-short) var(--ease-standard);
+.empty-icon {
+  font-size: 40px;
+  margin-bottom: 16px;
+  opacity: 0.5;
 }
 
-:deep(.minimal-radio-group .el-radio-button:hover .el-radio-button__inner) {
-  color: var(--text-main) !important;
-}
-
-:deep(.minimal-radio-group .el-radio-button.is-active .el-radio-button__inner),
-:deep(.minimal-radio-group .el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background: var(--surface-strong) !important;
-  background-color: var(--surface-strong) !important;
-  border-color: transparent !important;
-  color: var(--text-main) !important;
+.empty-title {
+  font-size: 17px;
   font-weight: 600;
+  color: var(--text-soft);
+  margin: 0 0 6px;
 }
 
-:deep(.minimal-radio-group .el-radio-button:first-child .el-radio-button__inner) {
-  border-left: none;
+.empty-desc {
+  font-size: 14px;
+  color: var(--text-faint);
+  margin: 0;
 }
 
-:deep(.minimal-radio-group .el-radio-button__original-radio:checked + .el-radio-button__inner::before) {
-  display: none !important;
-}
-
+/* ─── Data Table ─────────────────────────────────────────── */
 .table-card {
   background: var(--surface);
   border-radius: 16px;
   border: 1px solid var(--line-soft);
-  backdrop-filter: blur(var(--blur-md));
-  -webkit-backdrop-filter: blur(var(--blur-md));
-  padding: 0 8px 8px;
   overflow: hidden;
 }
 
-:deep(.minimal-status-tag) {
-  border-radius: 6px;
-  padding: 0 12px;
-  font-weight: 500;
-  border: 1px solid;
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
 }
 
-:deep(.minimal-status-tag.is-passed) {
-  background-color: var(--surface-strong);
-  color: var(--text-main);
-  border-color: rgba(0, 113, 227, 0.24);
-}
-
-:deep(.minimal-status-tag.is-failed),
-:deep(.minimal-status-tag.is-review) {
-  background-color: var(--surface-secondary);
-  color: var(--text-soft);
-  border-color: var(--line-soft);
-}
-
-:deep(.el-table) {
-  --el-table-border-color: var(--line-soft);
-  --el-table-header-bg-color: transparent;
-  --el-table-tr-bg-color: transparent;
-  --el-table-row-hover-bg-color: rgba(120, 120, 128, 0.06);
-  --el-fill-color-blank: transparent;
-  color: var(--text-main);
-  background: transparent;
-}
-
-:deep(.el-table__inner-wrapper::before) {
-  display: none;
-}
-
-:deep(.el-table th.el-table__cell) {
-  font-weight: 600;
+.data-table thead th {
+  text-align: left;
+  padding: 13px 16px;
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-faint);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: transparent !important;
-  border-bottom: 1px solid rgba(60, 60, 67, 0.16) !important;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  white-space: nowrap;
 }
 
-:deep(.el-table td.el-table__cell) {
-  padding: 16px 0;
+.data-table tbody td {
+  padding: 15px 16px;
   font-size: 15px;
   color: var(--text-main);
-  background: transparent !important;
-  border-bottom: 1px solid rgba(60, 60, 67, 0.12) !important;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: middle;
 }
 
-:deep(.el-table tr:last-child td.el-table__cell) {
-  border-bottom: none !important;
+.data-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
+.data-table tbody tr:hover td {
+  background: rgba(120, 120, 128, 0.04);
+}
+
+.empty-row {
+  text-align: center;
+  color: var(--text-faint);
+  padding: 48px 16px !important;
+  font-size: 14px;
+}
+
+/* ─── Badges ─────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-success { background: rgba(52, 199, 89, 0.12); color: #2f9b47; }
+.badge-danger  { background: rgba(255, 59, 48, 0.10); color: #d9342b; }
+.badge-warning { background: rgba(255, 159, 10, 0.12); color: #b26a00; }
+.badge-info    { background: rgba(0, 122, 255, 0.10); color: #0066cc; }
+.badge-default { background: rgba(120, 120, 128, 0.12); color: var(--text-soft); }
+
+/* ─── Text Button ─────────────────────────────────────────── */
+.text-btn {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  min-height: 44px;
+  font-family: inherit;
+  transition: background-color var(--duration-short) var(--ease-standard);
+}
+
+.text-btn:hover { background: rgba(0, 122, 255, 0.08); }
+.text-btn:active { background: rgba(0, 122, 255, 0.14); }
+
+/* Progress Cell */
+.progress-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.progress-pct {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.muted-text {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ─── Execution View ─────────────────────────────────────── */
 .execution-header {
-  margin-bottom: 40px;
+  margin-bottom: 36px;
 }
 
 .back-btn {
-  margin-bottom: 24px;
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
   color: var(--accent);
   font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
   min-height: 44px;
-  border-radius: 9999px;
+  padding: 8px 0;
+  margin-bottom: 16px;
   transition:
-    transform var(--duration-micro) var(--ease-standard),
-    background-color var(--duration-short) var(--ease-standard),
-    color var(--duration-short) var(--ease-standard);
+    color var(--duration-short) var(--ease-standard),
+    transform var(--duration-micro) var(--ease-standard);
 }
 
-.back-btn:hover {
-  color: var(--accent-deep);
-}
-
-.back-btn:active {
-  transform: scale(0.96);
-}
+.back-btn:hover { color: var(--accent-deep); }
+.back-btn:active { transform: scale(0.97); }
 
 .header-titles {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
 .header-titles h2 {
   font-size: 34px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-main);
   margin: 0;
   line-height: 1.1;
+  letter-spacing: -0.04em;
 }
 
 .scene-tag {
   background: var(--apple-fill);
   color: var(--text-soft);
-  padding: 6px 12px;
+  padding: 5px 12px;
   border-radius: 9999px;
   font-size: 13px;
-  font-weight: 600;
-  border: 1px solid transparent;
+  font-weight: 500;
 }
 
+/* ─── Progress Bar ─────────────────────────────────────────── */
 .progress-section {
-  margin-bottom: 40px;
+  margin-bottom: 36px;
 }
 
-.progress-text {
-  font-size: 13px;
+.progress-label {
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-faint);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 12px;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
 }
 
-:deep(.minimal-progress .el-progress-bar__outer) {
-  background-color: var(--apple-fill);
+.progress-track {
+  height: 5px;
+  background: var(--apple-fill);
   border-radius: 9999px;
-  height: 6px !important;
+  overflow: hidden;
 }
 
-:deep(.minimal-progress .el-progress-bar__inner) {
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
   border-radius: 9999px;
   transition: width var(--duration-medium) var(--ease-standard);
 }
 
+/* ─── Step Container ─────────────────────────────────────── */
 .step-container {
   background: var(--surface);
   border-radius: 20px;
   border: 1px solid var(--line-soft);
-  padding: 32px;
-  margin-bottom: 24px;
-  backdrop-filter: blur(var(--blur-md));
-  -webkit-backdrop-filter: blur(var(--blur-md));
+  padding: 28px 32px;
+  margin-bottom: 20px;
 }
 
-.step-label {
-  font-size: 13px;
+.step-section-label {
+  font-size: 12px;
   font-weight: 600;
-  color: var(--text-main);
+  color: var(--text-faint);
   text-transform: uppercase;
-  margin-bottom: 12px;
+  letter-spacing: 0.06em;
+  margin-bottom: 16px;
 }
 
 .step-item {
   display: flex;
-  gap: 16px;
+  gap: 14px;
   margin-top: 18px;
 }
 
-.step-main {
-  flex: 1;
-}
-
 .step-index {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--accent);
-  color: #ffffff;
+  color: #fff;
   display: flex;
   justify-content: center;
   align-items: center;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   flex-shrink: 0;
+  margin-top: 2px;
 }
 
+.step-main { flex: 1; }
+
 .step-desc {
-  font-size: 17px;
+  font-size: 16px;
   line-height: 1.6;
   color: var(--text-main);
   margin: 0;
@@ -1037,32 +1163,29 @@ onUnmounted(() => {
 .step-sub {
   font-size: 13px;
   color: var(--text-soft);
-  margin-top: 6px;
+  margin-top: 5px;
+  line-height: 1.5;
 }
 
+/* ─── Upload Section ─────────────────────────────────────── */
 .upload-section {
-  margin-top: 32px;
-  padding-top: 32px;
+  margin-top: 28px;
+  padding-top: 28px;
   border-top: 1px solid var(--line-soft);
 }
 
 :deep(.minimal-upload .el-upload-dragger) {
   background-color: var(--surface-secondary);
-  border: 1px dashed var(--line-strong);
+  border: 1.5px dashed var(--line-strong);
   border-radius: 16px;
   transition:
-    transform var(--duration-micro) var(--ease-standard),
     border-color var(--duration-short) var(--ease-standard),
     background-color var(--duration-short) var(--ease-standard);
 }
 
 :deep(.minimal-upload .el-upload-dragger:hover) {
-  border-color: rgba(0, 122, 255, 0.32);
-  background-color: var(--surface-strong);
-}
-
-:deep(.minimal-upload .el-upload-dragger:active) {
-  transform: scale(0.98);
+  border-color: rgba(0, 122, 255, 0.4);
+  background-color: rgba(0, 122, 255, 0.03);
 }
 
 .upload-content {
@@ -1075,13 +1198,13 @@ onUnmounted(() => {
 .upload-icon {
   font-size: 32px;
   color: var(--text-faint);
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .upload-text {
   font-size: 15px;
   color: var(--text-soft);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .upload-text .bold {
@@ -1095,67 +1218,61 @@ onUnmounted(() => {
 }
 
 .file-preview {
-  margin-top: 24px;
+  margin-top: 16px;
   background: var(--surface-secondary);
   border-radius: 12px;
   border: 1px solid var(--line-soft);
-  padding: 16px;
+  padding: 14px 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
 }
 
 .file-info {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   font-size: 14px;
   color: var(--text-main);
   font-weight: 500;
+  min-width: 0;
+}
+
+.file-info span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .submit-action-btn {
-  background-color: var(--accent);
-  border-color: var(--accent);
-  border-radius: 9999px;
-  padding: 8px 24px;
-  min-height: 44px;
-  transition:
-    transform var(--duration-micro) var(--ease-standard),
-    background-color var(--duration-short) var(--ease-standard),
-    border-color var(--duration-short) var(--ease-standard);
+  background-color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  border-radius: 9999px !important;
+  padding: 8px 20px !important;
+  min-height: 44px !important;
+  flex-shrink: 0;
 }
 
 .submit-action-btn:hover {
-  background-color: var(--accent-deep);
-  border-color: var(--accent-deep);
+  background-color: var(--accent-deep) !important;
+  border-color: var(--accent-deep) !important;
 }
 
-.submit-action-btn:active {
-  transform: scale(0.96);
-}
-
-.result-card {
-  margin-top: 24px;
-  border-radius: 20px;
-  padding: 32px;
-  border: 1px solid;
-}
-
+/* ─── Job Status Card ─────────────────────────────────────── */
 .job-status-card {
-  margin-top: 24px;
+  margin-top: 20px;
   border-radius: 20px;
   padding: 24px;
   border: 1px solid var(--line-soft);
   background: var(--surface);
-  backdrop-filter: blur(var(--blur-md));
-  -webkit-backdrop-filter: blur(var(--blur-md));
 }
 
 .job-status-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
   font-size: 13px;
   color: var(--text-faint);
   margin-bottom: 16px;
@@ -1166,13 +1283,13 @@ onUnmounted(() => {
   padding: 14px 16px;
   border-radius: 12px;
   background: var(--danger-fill);
-  border: 1px solid rgba(255, 59, 48, 0.2);
+  border: 1px solid rgba(255, 59, 48, 0.18);
 }
 
 .job-log-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .job-log-item {
@@ -1187,30 +1304,26 @@ onUnmounted(() => {
 .job-log-time {
   min-width: 140px;
   color: var(--text-faint);
+  flex-shrink: 0;
 }
 
-.job-log-text {
-  flex: 1;
-}
+.job-log-text { flex: 1; }
 
-.job-progress-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.muted-text {
-  color: var(--text-faint);
-  font-size: 12px;
+/* ─── Result Card ─────────────────────────────────────────── */
+.result-card {
+  margin-top: 20px;
+  border-radius: 20px;
+  padding: 28px 32px;
+  border: 1px solid;
 }
 
 .result-card.success {
-  background-color: var(--surface);
-  border-color: rgba(0, 122, 255, 0.32);
+  background: var(--surface);
+  border-color: rgba(0, 122, 255, 0.28);
 }
 
 .result-card.error {
-  background-color: var(--surface);
+  background: var(--surface);
   border-color: var(--line-soft);
 }
 
@@ -1218,26 +1331,20 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
-.result-icon {
-  font-size: 24px;
-}
+.result-icon { font-size: 22px; }
 
-.success .result-icon {
-  color: #1d1d1f;
-}
-
-.error .result-icon {
-  color: #86868b;
-}
+.success .result-icon { color: var(--accent); }
+.error .result-icon { color: var(--text-soft); }
 
 .result-header h3 {
   margin: 0;
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-main);
+  letter-spacing: -0.02em;
 }
 
 .result-score {
@@ -1249,17 +1356,18 @@ onUnmounted(() => {
 
 .result-note {
   margin-bottom: 14px;
-  padding: 14px 16px;
+  padding: 12px 16px;
   border-radius: 12px;
   background: var(--warning-fill);
   color: #9a6700;
+  font-size: 14px;
   line-height: 1.7;
 }
 
 .result-feedback {
   font-size: 15px;
-  line-height: 1.5;
-  margin: 0 0 24px 0;
+  line-height: 1.6;
+  margin: 0 0 20px;
   color: var(--text-soft);
 }
 
@@ -1267,101 +1375,101 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .issue-chip {
   display: inline-flex;
   align-items: center;
-  padding: 6px 12px;
+  padding: 5px 12px;
   background: var(--apple-fill);
   border-radius: 9999px;
   font-size: 13px;
   color: var(--text-soft);
-  border: 1px solid transparent;
 }
 
+/* ─── Step Results ─────────────────────────────────────────── */
 .step-result-list {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  margin-top: 12px;
-  margin-bottom: 24px;
+  gap: 12px;
+  margin-bottom: 20px;
 }
 
 .step-result-item,
 .detail-box {
   background: var(--surface-strong);
   border: 1px solid var(--line-soft);
-  border-radius: 16px;
-  padding: 18px 20px;
+  border-radius: 14px;
+  padding: 16px 20px;
 }
 
 .step-results-box {
-  padding: 22px 20px 20px;
+  padding: 18px 20px 16px;
 }
 
 .step-results-box .detail-title {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
+}
+
+.step-results-box .step-result-item {
+  background: var(--surface-secondary);
 }
 
 .step-results-box .step-result-item + .step-result-item {
-  margin-top: 16px;
+  margin-top: 10px;
 }
 
 .step-result-top {
   display: flex;
   justify-content: space-between;
-  gap: 20px;
+  gap: 16px;
   align-items: flex-start;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .step-result-title,
 .detail-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-main);
   line-height: 1.5;
 }
 
 .step-result-title {
-  max-width: calc(100% - 88px);
-}
-
-.step-result-status,
-.step-result-meta {
-  font-size: 13px;
-  color: var(--text-faint);
+  max-width: calc(100% - 80px);
 }
 
 .step-result-status {
   flex-shrink: 0;
-  min-height: 24px;
-  padding: 0 12px;
+  min-height: 22px;
+  padding: 2px 10px;
   border-radius: 9999px;
-  background: rgba(255, 59, 48, 0.08);
+  background: rgba(120, 120, 128, 0.1);
   color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
 }
 
 .step-result-meta {
   display: block;
-  margin-bottom: 10px;
-  line-height: 1.6;
+  font-size: 12px;
+  margin-bottom: 8px;
   color: var(--text-faint);
+  line-height: 1.5;
 }
 
 .step-result-item .detail-text {
-  line-height: 1.9;
+  line-height: 1.8;
 }
 
+/* ─── Detail Dialog Content ───────────────────────────────── */
 .detail-wrap {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .summary {
@@ -1372,6 +1480,7 @@ onUnmounted(() => {
 
 .detail-text {
   color: var(--text-soft);
+  font-size: 14px;
   line-height: 1.7;
 }
 
@@ -1379,45 +1488,43 @@ onUnmounted(() => {
   width: 100%;
   max-height: 360px;
   background: #000;
-  border-radius: 20px;
+  border-radius: 16px;
+  display: block;
 }
 
-.result-actions,
-.form-row {
+/* ─── Action Buttons ─────────────────────────────────────── */
+.result-actions {
   display: flex;
-  gap: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .action-btn-primary {
-  background-color: var(--accent);
-  border-color: var(--accent);
-  border-radius: 9999px;
-  min-height: 44px;
+  background-color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  border-radius: 9999px !important;
+  min-height: 44px !important;
 }
 
 .action-btn-primary:hover {
-  background-color: var(--accent-deep);
-  border-color: var(--accent-deep);
+  background-color: var(--accent-deep) !important;
+  border-color: var(--accent-deep) !important;
 }
 
 .action-btn-secondary {
-  border-radius: 9999px;
-  border-color: var(--line-soft);
-  color: var(--text-main);
-  background: var(--apple-fill);
-  min-height: 44px;
+  border-radius: 9999px !important;
+  border-color: var(--line-soft) !important;
+  color: var(--text-main) !important;
+  background: var(--apple-fill) !important;
+  min-height: 44px !important;
 }
 
 .action-btn-secondary:hover {
-  border-color: var(--line-strong);
-  color: var(--text-main);
-  background-color: var(--surface);
+  background: rgba(120, 120, 128, 0.18) !important;
+  border-color: var(--line-strong) !important;
 }
 
-.grow {
-  flex: 1;
-}
-
+/* ─── Dialog Overrides ─────────────────────────────────────── */
 :deep(.el-dialog) {
   border-radius: 20px;
   overflow: hidden;
@@ -1428,102 +1535,61 @@ onUnmounted(() => {
 }
 
 :deep(.el-dialog__header) {
-  padding: 24px 24px 16px;
+  padding: 22px 24px 16px;
   margin-right: 0;
   border-bottom: 1px solid var(--line-soft);
 }
 
 :deep(.el-dialog__title) {
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 700;
   color: var(--text-main);
+  letter-spacing: -0.02em;
 }
 
-:deep(.el-dialog__body) {
-  padding: 24px;
-}
+:deep(.el-dialog__body) { padding: 20px 24px; }
+:deep(.el-dialog__footer) { padding: 0 24px 22px; }
 
-:deep(.el-dialog__footer) {
-  padding: 0 24px 24px;
-}
-
-:deep(.el-button) {
-  border-radius: 12px;
-  font-weight: 600;
-  transition:
-    transform var(--duration-micro) var(--ease-standard),
-    background-color var(--duration-short) var(--ease-standard),
-    border-color var(--duration-short) var(--ease-standard),
-    color var(--duration-short) var(--ease-standard);
-}
-
-:deep(.el-button--primary) {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-:deep(.el-button--primary:hover) {
-  background: var(--accent-deep);
-  border-color: var(--accent-deep);
-}
-
-:deep(.el-button:active) {
-  transform: scale(0.96);
-}
-
+/* ─── Dark Mode ─────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   .task-card,
   .step-container,
   .job-status-card,
   .result-card,
   .table-card {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
-      var(--surface);
+    background: var(--surface);
   }
 }
 
+/* ─── Reduced Motion ─────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   .logout-btn,
   .task-card,
   .back-btn,
-  .submit-action-btn,
-  :deep(.minimal-radio-group .el-radio-button__inner),
-  :deep(.minimal-upload .el-upload-dragger),
-  :deep(.minimal-progress .el-progress-bar__inner),
-  :deep(.el-button) {
+  .segment,
+  .progress-fill,
+  :deep(.minimal-upload .el-upload-dragger) {
     transition: none;
   }
 }
 
+/* ─── Responsive ─────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .main-content {
-    padding: 24px 16px;
-  }
+  .main-content { padding: 20px 16px; }
 
   .top-nav {
-    padding: 16px;
+    padding: 0 16px;
     height: auto;
-    align-items: flex-start;
+    min-height: var(--toolbar-height);
   }
 
-  .nav-right,
-  .header-titles,
-  .file-preview,
-  .step-result-top,
-  .result-actions,
-  .form-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
+  .header-titles { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .header-titles h2 { font-size: 26px; }
+  .grid-container { grid-template-columns: 1fr; }
+  .result-actions { flex-direction: column; }
+  .file-preview { flex-direction: column; align-items: flex-start; }
+  .step-result-top { flex-direction: column; }
 
-  .grid-container {
-    grid-template-columns: 1fr;
-  }
-
-  .page-header h2,
-  .header-titles h2 {
-    font-size: 28px;
-  }
+  .segment { padding: 8px 18px; font-size: 14px; }
 }
 </style>
