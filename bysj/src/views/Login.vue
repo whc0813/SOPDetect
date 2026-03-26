@@ -2,7 +2,7 @@
   <div class="login-container">
     <div class="login-content">
       <div class="title-section">
-        <h1>视觉巡检</h1>
+        <h1>标准行为识别</h1>
         <p class="subtitle">标准操作流程管理系统</p>
       </div>
 
@@ -235,15 +235,25 @@ async function handleRegister() {
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background-color: #ffffff;
-  color: #1a1a1a;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  padding: 32px;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.56) 0%, transparent 26%),
+    var(--bg-base);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
 }
 
 .login-content {
   width: 100%;
   max-width: 380px;
-  padding: 40px;
+  padding: 32px 28px 28px;
+  border-radius: 20px;
+  border: 1px solid var(--line-soft);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.18)),
+    var(--surface);
+  backdrop-filter: blur(var(--blur-md));
+  -webkit-backdrop-filter: blur(var(--blur-md));
 }
 
 .title-section {
@@ -252,28 +262,32 @@ async function handleRegister() {
 }
 
 .title-section h1 {
-  font-size: 32px;
+  font-size: 34px;
   font-weight: 600;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.04em;
   margin: 0 0 8px 0;
-  color: #000000;
+  color: var(--text-main);
+  line-height: 1.1;
 }
 
 .subtitle {
-  font-size: 14px;
-  color: #86868b;
+  font-size: 15px;
+  color: var(--text-soft);
   margin: 0;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.01em;
+  line-height: 1.6;
 }
 
 .switch-row {
   display: flex;
   width: 100%;
   gap: 0;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
   padding: 4px;
-  background: #e5e5ea;
-  border-radius: 12px;
+  min-height: 44px;
+  background: var(--apple-fill);
+  border: 1px solid transparent;
+  border-radius: 9999px;
 }
 
 .switch-row :deep(.el-button + .el-button) {
@@ -285,29 +299,30 @@ async function handleRegister() {
   height: 40px;
   border: none !important;
   background: transparent !important;
-  color: #515154 !important;
-  border-radius: 8px !important;
-  font-size: 15px;
-  font-weight: 500;
-  box-shadow: none !important;
-  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  color: var(--text-soft) !important;
+  border-radius: 9999px !important;
+  font-size: 16px;
+  font-weight: 600;
+  transition:
+    transform var(--duration-micro) var(--ease-standard),
+    background-color var(--duration-short) var(--ease-standard),
+    color var(--duration-short) var(--ease-standard);
 }
 
 .switch-btn:hover {
-  color: #1d1d1f !important;
+  color: var(--text-main) !important;
   background: transparent !important;
 }
 
 .switch-btn.is-active {
-  background: #000000 !important;
-  color: #ffffff !important;
+  background: var(--surface-strong) !important;
+  color: var(--text-main) !important;
   font-weight: 600;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
 }
 
 .switch-btn.is-active:hover {
-  background: #000000 !important;
-  color: #ffffff !important;
+  background: var(--surface-strong) !important;
+  color: var(--text-main) !important;
 }
 
 .switch-btn.is-active:focus,
@@ -315,62 +330,76 @@ async function handleRegister() {
 .switch-btn:focus,
 .switch-btn:active {
   border: none !important;
-  box-shadow: none !important;
+}
+
+.switch-btn:active {
+  transform: scale(0.96);
 }
 
 .login-form {
-  margin-top: 20px;
+  margin-top: 8px;
 }
 
 :deep(.minimal-input .el-input__wrapper) {
-  box-shadow: none !important;
-  border-bottom: 1px solid #e5e5ea;
-  border-radius: 0;
-  padding: 8px 0;
-  background-color: transparent;
-  transition: border-color 0.3s ease;
+  min-height: 48px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 6px 14px;
+  background-color: var(--surface-strong);
+  transition:
+    transform var(--duration-micro) var(--ease-standard),
+    border-color var(--duration-short) var(--ease-standard),
+    outline-color var(--duration-short) var(--ease-standard),
+    background-color var(--duration-short) var(--ease-standard);
 }
 
 :deep(.minimal-input .el-input__wrapper.is-focus) {
-  border-bottom: 1px solid #000000;
+  border-color: var(--apple-blue) !important;
+  outline: 4px solid rgba(0, 122, 255, 0.16);
+  outline-offset: 0;
 }
 
 :deep(.minimal-input .el-input__inner) {
-  font-size: 15px;
-  color: #1d1d1f;
+  font-size: 17px;
+  color: var(--text-main);
   height: 40px;
 }
 
 :deep(.minimal-input .el-input__prefix) {
-  color: #86868b;
+  color: var(--text-faint);
   margin-right: 12px;
 }
 
 .login-btn {
   width: 100%;
-  height: 48px;
+  min-height: 48px;
   margin-top: 24px;
-  background-color: #000000;
-  border-color: #000000;
-  border-radius: 8px;
-  font-size: 16px;
-  font-weight: 500;
-  letter-spacing: 0.5px;
-  transition: all 0.3s ease;
+  background-color: var(--accent);
+  border-color: var(--accent);
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  transition:
+    transform var(--duration-micro) var(--ease-standard),
+    background-color var(--duration-short) var(--ease-standard),
+    border-color var(--duration-short) var(--ease-standard);
 }
 
 .login-btn:hover,
 .login-btn:focus {
-  background-color: #333333;
-  border-color: #333333;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  background-color: var(--accent-deep);
+  border-color: var(--accent-deep);
+}
+
+.login-btn:active {
+  transform: scale(0.96);
 }
 
 .tip {
   margin-top: 32px;
   font-size: 13px;
-  color: #86868b;
+  color: var(--text-faint);
   text-align: center;
   line-height: 1.8;
 }
@@ -378,5 +407,27 @@ async function handleRegister() {
 .tip span {
   display: inline-block;
   padding: 0 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .login-container {
+    background:
+      radial-gradient(circle at top, rgba(255, 255, 255, 0.08) 0%, transparent 24%),
+      var(--bg-base);
+  }
+
+  .login-content {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+      var(--surface);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch-btn,
+  .login-btn,
+  :deep(.minimal-input .el-input__wrapper) {
+    transition: none;
+  }
 }
 </style>
