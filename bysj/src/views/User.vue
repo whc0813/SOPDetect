@@ -1,5 +1,9 @@
 <template>
   <div class="user-layout">
+    <div class="blob blob-blue" aria-hidden="true"></div>
+    <div class="blob blob-purple" aria-hidden="true"></div>
+    <div class="blob blob-green" aria-hidden="true"></div>
+
     <header class="top-nav">
       <div class="brand">
         <div class="brand-logo">
@@ -29,13 +33,20 @@
 
         <!-- 待执行任务 -->
         <div v-if="!currentSop && activeTab === 'tasks'" class="view-transition">
-          <div class="page-header">
-            <h2>可用任务</h2>
-            <p class="subtitle">请选择一个标准操作流程开始执行</p>
+          <div class="hero-section">
+            <p class="hero-greeting">{{ greetingText }}，</p>
+            <h1 class="hero-name">{{ currentUserName }}</h1>
+            <p class="hero-meta">
+              <span v-if="sopList.length > 0" class="hero-count">{{ sopList.length }} 个流程可执行</span>
+              <span v-else class="hero-count">暂无待执行流程</span>
+            </p>
           </div>
 
+          <div class="section-label">可用任务</div>
+
           <div class="grid-container">
-            <div v-for="sop in sopList" :key="sop.id" class="task-card" @click="startSop(sop)">
+            <div v-for="(sop, index) in sopList" :key="sop.id" :class="['task-card', `accent-${(index % 5) + 1}`]" @click="startSop(sop)">
+              <div class="task-card-accent-bar" aria-hidden="true"></div>
               <div class="card-content">
                 <h3 class="task-title">{{ sop.name }}</h3>
                 <div class="task-meta">
@@ -170,12 +181,17 @@
           <div class="step-container">
             <div class="step-section-label">操作流程</div>
 
-            <div v-for="step in currentSop.steps" :key="step.stepNo" class="step-item">
-              <div class="step-index">{{ step.stepNo }}</div>
-              <div class="step-main">
-                <p class="step-desc">{{ step.description }}</p>
-                <div class="step-sub">
-                  {{ step.referenceMode === 'text' ? '仅按文字规则校验，无示范视频' : (step.referenceSummary || '已生成该步骤的参考信息') }}
+            <div class="timeline">
+              <div v-for="(step, si) in currentSop.steps" :key="step.stepNo" class="tl-item">
+                <div class="tl-rail">
+                  <div class="tl-dot">{{ step.stepNo }}</div>
+                  <div v-if="si < currentSop.steps.length - 1" class="tl-line" aria-hidden="true"></div>
+                </div>
+                <div class="tl-body">
+                  <p class="step-desc">{{ step.description }}</p>
+                  <div class="step-sub">
+                    {{ step.referenceMode === 'text' ? '仅按文字规则校验，无示范视频' : (step.referenceSummary || '已生成该步骤的参考信息') }}
+                  </div>
                 </div>
               </div>
             </div>
@@ -361,6 +377,14 @@ const currentUserName = computed(() => currentUser.value?.displayName || current
 const userInitials = computed(() => {
   const name = currentUser.value?.displayName || currentUser.value?.username || 'U'
   return name.charAt(0).toUpperCase()
+})
+
+const greetingText = computed(() => {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 11) return '早上好'
+  if (hour >= 11 && hour < 14) return '中午好'
+  if (hour >= 14 && hour < 18) return '下午好'
+  return '晚上好'
 })
 
 const currentSopHasNoDemoVideo = computed(() => {
@@ -665,27 +689,79 @@ onUnmounted(() => {
 <style scoped>
 /* ─── Layout ─────────────────────────────────────────────── */
 .user-layout {
+  position: relative;
   min-height: 100vh;
   background-color: var(--bg-base);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
+}
+
+/* ─── Ambient Blobs ──────────────────────────────────────── */
+.blob {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(72px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.blob-blue {
+  width: 560px;
+  height: 560px;
+  top: -120px;
+  left: -80px;
+  background: radial-gradient(circle, rgba(0, 122, 255, 0.16) 0%, transparent 70%);
+  animation: float-a 10s ease-in-out infinite alternate;
+}
+
+.blob-purple {
+  width: 480px;
+  height: 480px;
+  bottom: -100px;
+  right: -60px;
+  background: radial-gradient(circle, rgba(88, 86, 214, 0.11) 0%, transparent 70%);
+  animation: float-b 13s ease-in-out infinite alternate;
+}
+
+.blob-green {
+  width: 360px;
+  height: 360px;
+  top: 10%;
+  right: 20%;
+  background: radial-gradient(circle, rgba(52, 199, 89, 0.08) 0%, transparent 70%);
+  animation: float-c 16s ease-in-out infinite alternate;
+}
+
+@keyframes float-a {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(40px, 30px) scale(1.08); }
+}
+@keyframes float-b {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(-30px, -40px) scale(1.06); }
+}
+@keyframes float-c {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(20px, -25px) scale(1.04); }
 }
 
 /* ─── Top Nav ─────────────────────────────────────────────── */
 .top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
   height: var(--toolbar-height);
-  background: var(--bg-elevated);
-  border-bottom: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.72);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(48px) saturate(160%);
+  -webkit-backdrop-filter: blur(48px) saturate(160%);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05), 0 2px 12px rgba(0, 0, 0, 0.04);
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 0 32px;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  backdrop-filter: blur(var(--blur-md));
-  -webkit-backdrop-filter: blur(var(--blur-md));
 }
 
 .brand {
@@ -769,6 +845,8 @@ onUnmounted(() => {
 
 /* ─── Main ─────────────────────────────────────────────── */
 .main-content {
+  position: relative;
+  z-index: 1;
   flex: 1;
   padding: 28px 32px;
 }
@@ -822,6 +900,50 @@ onUnmounted(() => {
   transform: scale(0.97);
 }
 
+/* ─── Hero Section ────────────────────────────────────────── */
+.hero-section {
+  padding: 40px 0 32px;
+}
+
+.hero-greeting {
+  font-size: 17px;
+  color: var(--text-soft);
+  margin: 0 0 4px;
+  font-weight: 500;
+}
+
+.hero-name {
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  color: var(--text-main);
+  margin: 0 0 12px;
+  line-height: 1;
+}
+
+.hero-meta {
+  margin: 0;
+}
+
+.hero-count {
+  display: inline-block;
+  font-size: 14px;
+  color: var(--text-faint);
+  background: var(--apple-fill);
+  padding: 4px 12px;
+  border-radius: 9999px;
+  font-weight: 500;
+}
+
+.section-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 14px;
+}
+
 /* ─── Page Header ─────────────────────────────────────────── */
 .page-header {
   margin-bottom: 28px;
@@ -845,33 +967,58 @@ onUnmounted(() => {
 /* ─── Task Cards ─────────────────────────────────────────── */
 .grid-container {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
 }
 
 .task-card {
-  background: var(--surface);
-  border: 1px solid var(--line-soft);
-  border-radius: 16px;
-  padding: 24px;
+  position: relative;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.60);
+  border-radius: 18px;
+  padding: 20px 24px 20px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.04);
   transition:
-    transform var(--duration-micro) var(--ease-standard),
-    border-color var(--duration-short) var(--ease-standard),
-    background-color var(--duration-short) var(--ease-standard);
+    transform 0.15s cubic-bezier(.34,1.56,.64,1),
+    box-shadow 0.18s ease,
+    border-color 0.12s ease;
 }
 
 .task-card:hover {
-  border-color: rgba(0, 122, 255, 0.32);
-  background-color: var(--surface-strong);
+  transform: translateY(-4px);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.11), 0 4px 12px rgba(0, 0, 0, 0.06);
+  border-color: rgba(255, 255, 255, 0.80);
 }
 
 .task-card:active {
-  transform: scale(0.98);
+  transform: scale(0.97) translateY(0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
 }
+
+/* Accent bars */
+.task-card-accent-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 18px 18px 0 0;
+}
+
+.accent-1 .task-card-accent-bar { background: #007AFF; }
+.accent-2 .task-card-accent-bar { background: #34C759; }
+.accent-3 .task-card-accent-bar { background: #FF9F0A; }
+.accent-4 .task-card-accent-bar { background: #FF375F; }
+.accent-5 .task-card-accent-bar { background: #BF5AF2; }
+
+.task-card { padding-top: 22px; }
 
 .task-title {
   font-size: 19px;
@@ -933,9 +1080,12 @@ onUnmounted(() => {
 
 /* ─── Data Table ─────────────────────────────────────────── */
 .table-card {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(32px) saturate(150%);
+  -webkit-backdrop-filter: blur(32px) saturate(150%);
   border-radius: 16px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05), 0 8px 32px rgba(0, 0, 0, 0.04);
   overflow: hidden;
 }
 
@@ -1114,9 +1264,12 @@ onUnmounted(() => {
 
 /* ─── Step Container ─────────────────────────────────────── */
 .step-container {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(32px) saturate(150%);
+  -webkit-backdrop-filter: blur(32px) saturate(150%);
   border-radius: 20px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05), 0 8px 32px rgba(0, 0, 0, 0.04);
   padding: 28px 32px;
   margin-bottom: 20px;
 }
@@ -1130,6 +1283,55 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
+/* ─── Timeline ───────────────────────────────────────────── */
+.timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.tl-item {
+  display: flex;
+  gap: 0;
+}
+
+.tl-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 36px;
+  flex-shrink: 0;
+}
+
+.tl-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  z-index: 1;
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.35);
+}
+
+.tl-line {
+  flex: 1;
+  width: 2px;
+  background: var(--line-soft);
+  margin: 4px 0;
+  min-height: 16px;
+}
+
+.tl-body {
+  flex: 1;
+  padding: 2px 0 24px 16px;
+}
+
+/* Legacy alias for older step markup (unused but safe) */
 .step-item {
   display: flex;
   gap: 14px;
@@ -1264,8 +1466,11 @@ onUnmounted(() => {
   margin-top: 20px;
   border-radius: 20px;
   padding: 24px;
-  border: 1px solid var(--line-soft);
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(32px) saturate(150%);
+  -webkit-backdrop-filter: blur(32px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05), 0 8px 32px rgba(0, 0, 0, 0.04);
 }
 
 .job-status-meta {
@@ -1314,17 +1519,17 @@ onUnmounted(() => {
   margin-top: 20px;
   border-radius: 20px;
   padding: 28px 32px;
-  border: 1px solid;
+  border: 1px solid transparent;
 }
 
 .result-card.success {
-  background: var(--surface);
-  border-color: rgba(0, 122, 255, 0.28);
+  background: linear-gradient(135deg, rgba(52, 199, 89, 0.07) 0%, rgba(0, 122, 255, 0.05) 100%);
+  border-color: rgba(52, 199, 89, 0.22);
 }
 
 .result-card.error {
-  background: var(--surface);
-  border-color: var(--line-soft);
+  background: linear-gradient(135deg, rgba(255, 59, 48, 0.06) 0%, rgba(255, 159, 10, 0.04) 100%);
+  border-color: rgba(255, 59, 48, 0.18);
 }
 
 .result-header {
@@ -1334,10 +1539,10 @@ onUnmounted(() => {
   margin-bottom: 14px;
 }
 
-.result-icon { font-size: 22px; }
+.result-icon { font-size: 24px; }
 
-.success .result-icon { color: var(--accent); }
-.error .result-icon { color: var(--text-soft); }
+.success .result-icon { color: #34C759; }
+.error .result-icon { color: #FF3B30; }
 
 .result-header h3 {
   margin: 0;
@@ -1398,10 +1603,11 @@ onUnmounted(() => {
 
 .step-result-item,
 .detail-box {
-  background: var(--surface-strong);
-  border: 1px solid var(--line-soft);
-  border-radius: 14px;
+  background: rgba(120, 120, 128, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.60);
+  border-radius: 16px;
   padding: 16px 20px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
 }
 
 .step-results-box {
@@ -1473,9 +1679,16 @@ onUnmounted(() => {
 }
 
 .summary {
-  font-size: 14px;
+  display: inline-flex;
+  align-self: flex-start;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--text-main);
+  color: var(--text-soft);
+  background: rgba(120, 120, 128, 0.10);
+  padding: 6px 14px;
+  border-radius: 9999px;
+  border: 1px solid rgba(120, 120, 128, 0.14);
+  letter-spacing: -0.01em;
 }
 
 .detail-text {
@@ -1500,65 +1713,151 @@ onUnmounted(() => {
 }
 
 .action-btn-primary {
-  background-color: var(--accent) !important;
-  border-color: var(--accent) !important;
-  border-radius: 9999px !important;
+  background: #007AFF !important;
+  background-color: #007AFF !important;
+  border: none !important;
+  border-radius: 13px !important;
   min-height: 44px !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14), inset 0 1px 0 rgba(255,255,255,0.18) !important;
 }
 
 .action-btn-primary:hover {
-  background-color: var(--accent-deep) !important;
-  border-color: var(--accent-deep) !important;
+  background: #0071F5 !important;
+  background-color: #0071F5 !important;
+}
+
+.action-btn-primary:active {
+  background: #0064DB !important;
+  background-color: #0064DB !important;
+  transform: scale(0.985) !important;
 }
 
 .action-btn-secondary {
-  border-radius: 9999px !important;
-  border-color: var(--line-soft) !important;
+  border-radius: 13px !important;
+  border: 1px solid rgba(120, 120, 128, 0.22) !important;
+  border-color: rgba(120, 120, 128, 0.22) !important;
   color: var(--text-main) !important;
-  background: var(--apple-fill) !important;
+  background: rgba(120, 120, 128, 0.10) !important;
+  background-color: rgba(120, 120, 128, 0.10) !important;
   min-height: 44px !important;
+  font-weight: 500 !important;
 }
 
 .action-btn-secondary:hover {
-  background: rgba(120, 120, 128, 0.18) !important;
-  border-color: var(--line-strong) !important;
+  background: rgba(120, 120, 128, 0.16) !important;
+  background-color: rgba(120, 120, 128, 0.16) !important;
 }
 
 /* ─── Dialog Overrides ─────────────────────────────────────── */
 :deep(.el-dialog) {
-  border-radius: 20px;
+  border-radius: 24px !important;
   overflow: hidden;
-  border: 1px solid var(--line-soft);
-  background: var(--surface-strong);
-  backdrop-filter: blur(var(--blur-md));
-  -webkit-backdrop-filter: blur(var(--blur-md));
+  border: 1px solid rgba(255, 255, 255, 0.70) !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+  backdrop-filter: blur(60px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(60px) saturate(180%) !important;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.04),
+    0 8px 32px rgba(0, 0, 0, 0.08),
+    0 32px 80px rgba(0, 0, 0, 0.10) !important;
 }
 
 :deep(.el-dialog__header) {
-  padding: 22px 24px 16px;
+  padding: 24px 28px 18px;
   margin-right: 0;
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: transparent;
 }
 
 :deep(.el-dialog__title) {
-  font-size: 19px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 750;
   color: var(--text-main);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 
-:deep(.el-dialog__body) { padding: 20px 24px; }
-:deep(.el-dialog__footer) { padding: 0 24px 22px; }
+:deep(.el-dialog__headerbtn) {
+  top: 22px;
+  right: 22px;
+  width: 30px;
+  height: 30px;
+  background: rgba(120, 120, 128, 0.12);
+  border-radius: 50%;
+}
+
+:deep(.el-dialog__headerbtn .el-dialog__close) {
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+:deep(.el-dialog__headerbtn:hover) {
+  background: rgba(120, 120, 128, 0.20);
+}
+
+:deep(.el-dialog__body) { padding: 22px 28px; }
+:deep(.el-dialog__footer) { padding: 0 28px 24px; }
 
 /* ─── Dark Mode ─────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
+  .top-nav {
+    background: rgba(26, 26, 28, 0.78);
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 2px 12px rgba(0, 0, 0, 0.15);
+  }
+
   .task-card,
   .step-container,
   .job-status-card,
-  .result-card,
   .table-card {
-    background: var(--surface);
+    background: rgba(30, 30, 32, 0.82);
+    border-color: rgba(255, 255, 255, 0.10);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.20), 0 8px 32px rgba(0, 0, 0, 0.16);
   }
+
+  .result-card.success {
+    background: linear-gradient(135deg, rgba(52, 199, 89, 0.10) 0%, rgba(0, 122, 255, 0.07) 100%);
+    border-color: rgba(52, 199, 89, 0.25);
+  }
+
+  .result-card.error {
+    background: linear-gradient(135deg, rgba(255, 59, 48, 0.09) 0%, rgba(255, 159, 10, 0.06) 100%);
+    border-color: rgba(255, 59, 48, 0.22);
+  }
+
+  :deep(.el-dialog) {
+    background: rgba(28, 28, 30, 0.95) !important;
+    border-color: rgba(255, 255, 255, 0.10) !important;
+    box-shadow:
+      0 0 0 0.5px rgba(255, 255, 255, 0.06),
+      0 8px 32px rgba(0, 0, 0, 0.30),
+      0 32px 80px rgba(0, 0, 0, 0.24) !important;
+  }
+
+  :deep(.el-dialog__header) {
+    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  .step-result-item,
+  .detail-box {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .summary {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.10);
+    color: rgba(255, 255, 255, 0.55);
+  }
+
+  .blob-blue { opacity: 0.65; }
+  .blob-purple { opacity: 0.55; }
+  .blob-green { opacity: 0.45; }
+}
+
+/* ─── Reduced Motion blob override ─────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .blob { animation: none; }
 }
 
 /* ─── Reduced Motion ─────────────────────────────────────── */
