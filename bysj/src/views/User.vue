@@ -8,10 +8,9 @@
         <span>视觉巡检</span>
       </div>
       <div class="nav-right">
-        <el-button text class="config-btn" @click="openConfigDialog">API 配置</el-button>
         <div class="user-info">
           <el-avatar :size="32" src="https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png" />
-          <span class="username">操作用户</span>
+          <span class="username">{{ currentUserName }}</span>
         </div>
         <el-button text class="logout-btn" @click="handleLogout">
           退出登录
@@ -201,9 +200,6 @@
               <div v-else class="detail-text">暂无任务日志</div>
             </div>
             <div class="result-actions">
-              <el-button v-if="currentJob.status === 'succeeded' && currentJob.resultRecordId" type="primary" class="action-btn-primary" @click="openHistoryDetailById(currentJob.resultRecordId)">
-                查看评测详情
-              </el-button>
               <el-button v-if="currentJob.status === 'failed'" class="action-btn-secondary" @click="retryCurrentJob" :loading="isRetryingJob">
                 重试任务
               </el-button>
@@ -238,7 +234,7 @@
             </div>
 
             <div class="result-actions">
-              <el-button v-if="currentJob?.resultRecordId" type="primary" class="action-btn-primary" @click="openHistoryDetailById(currentJob.resultRecordId)">查看历史详情</el-button>
+              <el-button v-if="currentJob?.resultRecordId" type="primary" class="action-btn-primary" @click="openHistoryDetailById(currentJob.resultRecordId)">查看评测详情</el-button>
               <el-button v-if="currentJob?.status === 'failed'" class="action-btn-secondary" @click="retryCurrentJob" :loading="isRetryingJob">重试任务</el-button>
               <el-button v-if="currentJob?.status === 'failed'" class="action-btn-secondary" @click="retrySop">重新上传</el-button>
             </div>
@@ -246,38 +242,6 @@
         </div>
       </div>
     </el-main>
-
-    <el-dialog v-model="configVisible" title="后端 API 配置" width="640px">
-      <el-alert type="info" :closable="false" show-icon title="当前配置保存到后端，管理员创建 SOP 和用户执行评估都会共用这份配置。" />
-      <el-form label-position="top" class="config-form">
-        <el-form-item label="API Key">
-          <el-input v-model="apiConfig.apiKey" type="password" show-password />
-        </el-form-item>
-        <div class="form-row">
-          <el-form-item label="Base URL" class="grow">
-            <el-input v-model="apiConfig.baseURL" />
-          </el-form-item>
-          <el-form-item label="模型名称" class="grow">
-            <el-input v-model="apiConfig.model" />
-          </el-form-item>
-        </div>
-        <div class="form-row">
-          <el-form-item label="fps" class="grow">
-            <el-input-number v-model="apiConfig.fps" :min="0.1" :max="10" :step="0.5" />
-          </el-form-item>
-          <el-form-item label="temperature" class="grow">
-            <el-input-number v-model="apiConfig.temperature" :min="0" :max="2" :step="0.1" />
-          </el-form-item>
-          <el-form-item label="timeout(ms)" class="grow">
-            <el-input-number v-model="apiConfig.timeoutMs" :min="10000" :max="300000" :step="10000" />
-          </el-form-item>
-        </div>
-      </el-form>
-      <template #footer>
-        <el-button @click="resetApiConfig">恢复默认</el-button>
-        <el-button type="primary" @click="saveApiConfig">保存配置</el-button>
-      </template>
-    </el-dialog>
 
     <el-dialog v-model="historyDetailVisible" title="执行记录详情" width="820px">
       <div v-if="selectedHistoryRecord" class="detail-wrap">
@@ -336,15 +300,6 @@ import {
 } from '../api/client'
 
 const router = useRouter()
-const DEFAULT_API_CONFIG = {
-  apiKey: '',
-  baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-  model: 'qwen3.5-plus',
-  fps: 2,
-  temperature: 0.1,
-  timeoutMs: 120000
-}
-
 const sopList = ref([])
 const jobList = ref([])
 const historyList = ref([])
@@ -355,13 +310,13 @@ const isEvaluating = ref(false)
 const isRetryingJob = ref(false)
 const currentJob = ref(null)
 const evaluationResult = ref(null)
-const configVisible = ref(false)
 const historyDetailVisible = ref(false)
 const selectedHistoryRecord = ref(null)
 const selectedHistoryVideoUrl = ref('')
-const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 const currentUser = ref(getCurrentUser())
 let jobPollingTimer = null
+
+const currentUserName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '用户')
 
 const currentSopHasNoDemoVideo = computed(() => {
   const steps = currentSop.value?.steps || []
@@ -469,18 +424,6 @@ function startJobPolling(jobId) {
   jobPollingTimer = setInterval(() => {
     refreshCurrentJob(jobId, true)
   }, 3000)
-}
-
-function openConfigDialog() {
-  ElMessage.warning('普通用户无权修改系统配置')
-}
-
-function saveApiConfig() {
-  ElMessage.warning('普通用户无权修改系统配置')
-}
-
-function resetApiConfig() {
-  Object.assign(apiConfig, DEFAULT_API_CONFIG)
 }
 
 async function handleLogout() {
@@ -734,13 +677,11 @@ onUnmounted(() => {
   color: #1d1d1f;
 }
 
-.config-btn,
 .logout-btn {
   color: #86868b;
   font-weight: 500;
 }
 
-.config-btn:hover,
 .logout-btn:hover {
   color: #1d1d1f;
 }
@@ -839,25 +780,46 @@ onUnmounted(() => {
   padding: 4px;
   border-radius: 12px;
   display: inline-flex;
+  --el-fill-color-blank: transparent;
+  --el-border-color: transparent;
+  --el-border-color-hover: transparent;
+  --el-color-primary: #000000;
+  --el-text-color-primary: #1d1d1f;
 }
 
 :deep(.minimal-radio-group .el-radio-button__inner) {
   border: none !important;
-  background: transparent;
-  color: #515154;
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #515154 !important;
   font-weight: 500;
   box-shadow: none !important;
   border-radius: 8px !important;
   padding: 8px 32px;
   font-size: 15px;
-  transition: all 0.3s ease;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
+:deep(.minimal-radio-group .el-radio-button:hover .el-radio-button__inner) {
+  color: #1d1d1f !important;
+}
+
+:deep(.minimal-radio-group .el-radio-button.is-active .el-radio-button__inner),
 :deep(.minimal-radio-group .el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background-color: #000000;
-  color: #ffffff;
+  background: #000000 !important;
+  background-color: #000000 !important;
+  border-color: #000000 !important;
+  color: #ffffff !important;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
   font-weight: 600;
+}
+
+:deep(.minimal-radio-group .el-radio-button:first-child .el-radio-button__inner) {
+  border-left: none;
+}
+
+:deep(.minimal-radio-group .el-radio-button__original-radio:checked + .el-radio-button__inner::before) {
+  display: none !important;
 }
 
 .table-card {
@@ -1332,10 +1294,6 @@ onUnmounted(() => {
 
 .grow {
   flex: 1;
-}
-
-.config-form {
-  margin-top: 16px;
 }
 
 :deep(.el-dialog) {

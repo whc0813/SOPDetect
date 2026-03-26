@@ -42,6 +42,9 @@
           <p class="header-subtitle">{{ panelHeaderSubtitle }}</p>
         </div>
         <div class="header-right">
+          <el-button class="refresh-btn" @click="openConfigDialog">
+            API 配置
+          </el-button>
           <el-button v-if="activeMenu === 'stats' || activeMenu === 'users'" class="refresh-btn" @click="reloadCurrentView">
             刷新数据
           </el-button>
@@ -227,6 +230,40 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="configVisible" title="后端 API 配置" width="640px" class="minimal-dialog">
+      <el-alert type="info" :closable="false" show-icon title="当前配置保存到后端，管理员创建 SOP 和用户执行评估都会共用这份配置。" />
+      <el-form label-position="top" class="minimal-form config-form">
+        <el-form-item label="API Key">
+          <el-input v-model="apiConfig.apiKey" type="password" show-password />
+        </el-form-item>
+        <div class="form-row">
+          <el-form-item label="Base URL" class="flex-1">
+            <el-input v-model="apiConfig.baseURL" />
+          </el-form-item>
+          <el-form-item label="模型名称" class="flex-1">
+            <el-input v-model="apiConfig.model" />
+          </el-form-item>
+        </div>
+        <div class="form-row">
+          <el-form-item label="fps" class="flex-1">
+            <el-input-number v-model="apiConfig.fps" :min="0.1" :max="10" :step="0.5" />
+          </el-form-item>
+          <el-form-item label="temperature" class="flex-1">
+            <el-input-number v-model="apiConfig.temperature" :min="0" :max="2" :step="0.1" />
+          </el-form-item>
+          <el-form-item label="timeout(ms)" class="flex-1">
+            <el-input-number v-model="apiConfig.timeoutMs" :min="10000" :max="300000" :step="10000" />
+          </el-form-item>
+        </div>
+      </el-form>
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="resetApiConfig">恢复默认</el-button>
+          <el-button type="primary" class="submit-btn" @click="saveApiConfig">保存配置</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="debugVisible" title="SOP 预处理详情" width="900px" class="minimal-dialog">
       <div v-loading="debugLoading" class="detail-wrap">
           <div v-if="selectedSopDebug">
@@ -315,7 +352,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataLine, Document, Monitor, Plus, SwitchButton } from '@element-plus/icons-vue'
-import { clearAuthSession, createSop, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getCurrentUser, getHistoryDetail, getSopDetail, getStats, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateSopStepDemoVideo, updateSopStepSegmentation, updateUserStatus } from '../api/client'
+import { clearAuthSession, createSop, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getConfig, getCurrentUser, getHistoryDetail, getSopDetail, getStats, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateConfig, updateSopStepDemoVideo, updateSopStepSegmentation, updateUserStatus } from '../api/client'
 
 const router = useRouter()
 const activeMenu = ref('manage')
@@ -326,6 +363,7 @@ const summaryStats = ref({ totalSops: 0, totalExecutions: 0, pendingReviewCount:
 const sopStatsList = ref([])
 const dialogVisible = ref(false)
 const isSaving = ref(false)
+const configVisible = ref(false)
 const debugVisible = ref(false)
 const debugLoading = ref(false)
 const selectedSopDebug = ref(null)
@@ -338,6 +376,15 @@ const reviewVideoUrl = ref('')
 const reviewForm = reactive({ status: 'approved', note: '' })
 const sopForm = reactive({ name: '', scene: '', stepCount: 1, steps: [{ description: '', video: null }] })
 const currentUser = ref(getCurrentUser())
+const DEFAULT_API_CONFIG = {
+  apiKey: '',
+  baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  model: 'qwen3.5-plus',
+  fps: 2,
+  temperature: 0.1,
+  timeoutMs: 120000
+}
+const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 
 const headerTitle = computed(() => activeMenu.value === 'manage' ? 'SOP 管理' : '数据统计')
 const headerSubtitle = computed(() => activeMenu.value === 'manage' ? '统一管理 SOP 内容、步骤说明和示范视频' : '查看整体执行情况，并处理需要人工确认的记录')
@@ -355,6 +402,34 @@ const panelHeaderSubtitle = computed(() => {
 
 function createEmptyStep() {
   return { description: '', video: null }
+}
+
+async function loadApiConfig() {
+  const config = (await getConfig()).data || {}
+  Object.assign(apiConfig, DEFAULT_API_CONFIG, config)
+}
+
+async function openConfigDialog() {
+  try {
+    await loadApiConfig()
+    configVisible.value = true
+  } catch (error) {
+    ElMessage.error(error.message || '加载配置失败')
+  }
+}
+
+async function saveApiConfig() {
+  try {
+    await updateConfig({ ...apiConfig })
+    configVisible.value = false
+    ElMessage.success('配置已保存')
+  } catch (error) {
+    ElMessage.error(error.message || '保存配置失败')
+  }
+}
+
+function resetApiConfig() {
+  Object.assign(apiConfig, DEFAULT_API_CONFIG)
 }
 
 function revokeVideoUrl(targetRef) {
@@ -1099,6 +1174,10 @@ onUnmounted(() => {
 
 .manual-btn {
   align-self: flex-start;
+}
+
+.config-form {
+  margin-top: 16px;
 }
 
 .frame-grid {

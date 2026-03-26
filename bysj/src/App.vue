@@ -59,64 +59,73 @@ a {
 }
 
 .minimal-msgbox {
-  border-radius: var(--radius-lg) !important;
-  border: 1px solid rgba(255, 255, 255, 0.4) !important;
-  box-shadow: var(--shadow-lg) !important;
+  border-radius: 16px !important;
+  border: 1px solid #e5e5ea !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08) !important;
   padding: 0 !important;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.8) !important;
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  background: #ffffff !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .minimal-msgbox .el-message-box__header {
-  padding: 22px 24px 14px !important;
-  border-bottom: 1px solid var(--line-soft);
-  background: transparent;
+  padding: 24px 24px 16px !important;
+  border-bottom: 1px solid #e5e5ea;
+  background: #ffffff;
 }
 
 .minimal-msgbox .el-message-box__title {
   font-weight: 600 !important;
   font-size: 18px !important;
   letter-spacing: -0.02em;
-  color: var(--text-main) !important;
+  color: #1d1d1f !important;
 }
 
 .minimal-msgbox .el-message-box__content {
   padding: 20px 24px !important;
-  color: var(--text-soft);
+  color: #515154;
   font-size: 14px;
+  line-height: 1.7;
 }
 
 .minimal-msgbox .el-message-box__btns {
-  padding: 16px 24px 22px !important;
+  padding: 0 24px 24px !important;
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  background: transparent;
+  background: #ffffff;
 }
 
 .minimal-msgbox .el-message-box__btns .el-button {
   min-width: 96px;
-  height: 42px;
-  border-radius: 999px !important;
-  font-weight: 600;
-  padding: 8px 24px;
+  height: 40px;
+  border-radius: 8px !important;
+  font-weight: 500;
+  padding: 8px 20px;
+  box-shadow: none !important;
 }
 
 .minimal-msgbox .el-message-box__btns .el-button--primary {
-  background: var(--accent) !important;
-  border-color: transparent !important;
-  box-shadow: none;
+  background: #000000 !important;
+  border-color: #000000 !important;
+  color: #ffffff !important;
 }
 
 .minimal-msgbox .el-message-box__btns .el-button--primary:hover {
-  background: var(--accent-deep) !important;
+  background: #333333 !important;
+  border-color: #333333 !important;
 }
 
 .minimal-msgbox .el-message-box__btns .el-button:not(.el-button--primary) {
-  border-color: var(--line-soft) !important;
-  background: #fff !important;
-  color: var(--text-main) !important;
+  border-color: #d2d2d7 !important;
+  background: #ffffff !important;
+  color: #1d1d1f !important;
+}
+
+.minimal-msgbox .el-message-box__btns .el-button:not(.el-button--primary):hover {
+  border-color: #86868b !important;
+  color: #000000 !important;
+  background: #ffffff !important;
 }
 </style>

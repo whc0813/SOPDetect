@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -18,6 +19,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from pathlib import Path
+from imageio_ffmpeg import get_ffmpeg_exe
 try:
     from storage import (
         add_history,
@@ -374,6 +377,84 @@ def infer_suffix(mime_type: str):
     return mapping.get(mime_type, ".mp4")
 
 
+def build_data_url(mime_type: str, binary: bytes):
+    encoded = base64.b64encode(binary).decode("utf-8")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def ensure_browser_playable_video(mime_type: str, binary: bytes, original_name: str = ""):
+    if not str(mime_type or "").startswith("video/"):
+        return {
+            "mimeType": mime_type,
+            "binary": binary,
+            "name": original_name,
+            "transcoded": False,
+        }
+
+    source_path = None
+    output_path = None
+    try:
+        source_handle = tempfile.NamedTemporaryFile(delete=False, suffix=infer_suffix(mime_type))
+        source_path = source_handle.name
+        source_handle.write(binary)
+        source_handle.flush()
+        source_handle.close()
+
+        output_handle = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        output_path = output_handle.name
+        output_handle.close()
+
+        ffmpeg_exe = get_ffmpeg_exe()
+        command = [
+            ffmpeg_exe,
+            "-y",
+            "-i",
+            source_path,
+            "-movflags",
+            "+faststart",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            output_path,
+        ]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
+            return {
+                "mimeType": mime_type,
+                "binary": binary,
+                "name": original_name,
+                "transcoded": False,
+            }
+
+        normalized_name = original_name or "video.mp4"
+        normalized_name = f"{Path(normalized_name).stem or 'video'}.mp4"
+        return {
+            "mimeType": "video/mp4",
+            "binary": Path(output_path).read_bytes(),
+            "name": normalized_name,
+            "transcoded": True,
+        }
+    except Exception:
+        return {
+            "mimeType": mime_type,
+            "binary": binary,
+            "name": original_name,
+            "transcoded": False,
+        }
+    finally:
+        cleanup_file(source_path)
+        cleanup_file(output_path)
+
+
 def data_url_to_temp_path(data_url: str):
     mime_type, binary = split_data_url(data_url)
     handle = tempfile.NamedTemporaryFile(delete=False, suffix=infer_suffix(mime_type))
@@ -677,12 +758,18 @@ async def store_demo_video_and_prepare_bundle(
     uploaded_by=None,
 ):
     mime_type, binary = split_data_url(video_data_url)
+    normalized_video = ensure_browser_playable_video(
+        mime_type,
+        binary,
+        (video_meta.name if video_meta else "") or f"sop-step-{step_no}",
+    )
+    normalized_data_url = build_data_url(normalized_video["mimeType"], normalized_video["binary"])
     demo_video = attach_media(
         data,
-        binary=binary,
-        mime_type=mime_type,
-        original_name=(video_meta.name if video_meta else "") or f"sop-step-{step_no}",
-        size=video_meta.size if video_meta else None,
+        binary=normalized_video["binary"],
+        mime_type=normalized_video["mimeType"],
+        original_name=normalized_video["name"] or ((video_meta.name if video_meta else "") or f"sop-step-{step_no}"),
+        size=len(normalized_video["binary"]),
         last_modified=video_meta.lastModified if video_meta else None,
         owner_role="admin",
         business_type="sop_step_demo",
@@ -693,7 +780,7 @@ async def store_demo_video_and_prepare_bundle(
     bundle = await prepare_reference_bundle(
         step_no=step_no,
         description=description,
-        video_data_url=video_data_url,
+        video_data_url=normalized_data_url,
         max_frames=8,
         api_config=api_config,
     )
@@ -1652,13 +1739,18 @@ async def create_sop_evaluation_job(sop_id: str, req: CreateEvaluationJobRequest
         raise HTTPException(status_code=400, detail="请先上传待评测视频")
 
     mime_type, binary = split_data_url(req.userVideoDataUrl)
+    normalized_video = ensure_browser_playable_video(
+        mime_type,
+        binary,
+        (req.uploadedVideo.name if req.uploadedVideo else "") or "uploaded-video",
+    )
     data = load_db()
     uploaded_video = attach_media(
         data,
-        binary=binary,
-        mime_type=mime_type,
-        original_name=(req.uploadedVideo.name if req.uploadedVideo else "") or "uploaded-video",
-        size=req.uploadedVideo.size if req.uploadedVideo else None,
+        binary=normalized_video["binary"],
+        mime_type=normalized_video["mimeType"],
+        original_name=normalized_video["name"] or ((req.uploadedVideo.name if req.uploadedVideo else "") or "uploaded-video"),
+        size=len(normalized_video["binary"]),
         last_modified=req.uploadedVideo.lastModified if req.uploadedVideo else None,
         owner_role="user",
         business_type="evaluation_job_upload",
@@ -1725,12 +1817,17 @@ async def create_history(req: CreateHistoryRequest, current_user=Depends(get_cur
     data = load_db()
     if req.userVideoDataUrl:
         mime_type, binary = split_data_url(req.userVideoDataUrl)
+        normalized_video = ensure_browser_playable_video(
+            mime_type,
+            binary,
+            (req.uploadedVideo.name if req.uploadedVideo else "") or "uploaded-video",
+        )
         uploaded_video = attach_media(
             data,
-            binary=binary,
-            mime_type=mime_type,
-            original_name=(req.uploadedVideo.name if req.uploadedVideo else "") or "uploaded-video",
-            size=req.uploadedVideo.size if req.uploadedVideo else None,
+            binary=normalized_video["binary"],
+            mime_type=normalized_video["mimeType"],
+            original_name=normalized_video["name"] or ((req.uploadedVideo.name if req.uploadedVideo else "") or "uploaded-video"),
+            size=len(normalized_video["binary"]),
             last_modified=req.uploadedVideo.lastModified if req.uploadedVideo else None,
             owner_role="user",
             business_type="execution_upload",

@@ -9,14 +9,14 @@
       <div class="switch-row">
         <el-button
           :type="mode === 'login' ? 'primary' : 'default'"
-          class="switch-btn"
+          :class="['switch-btn', { 'is-active': mode === 'login' }]"
           @click="switchMode('login')"
         >
           登录
         </el-button>
         <el-button
           :type="mode === 'register' ? 'primary' : 'default'"
-          class="switch-btn"
+          :class="['switch-btn', { 'is-active': mode === 'register' }]"
           @click="switchMode('register')"
         >
           注册
@@ -268,12 +268,54 @@ async function handleRegister() {
 
 .switch-row {
   display: flex;
-  gap: 12px;
+  width: 100%;
+  gap: 0;
   margin-bottom: 20px;
+  padding: 4px;
+  background: #e5e5ea;
+  border-radius: 12px;
+}
+
+.switch-row :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .switch-btn {
   flex: 1;
+  height: 40px;
+  border: none !important;
+  background: transparent !important;
+  color: #515154 !important;
+  border-radius: 8px !important;
+  font-size: 15px;
+  font-weight: 500;
+  box-shadow: none !important;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.switch-btn:hover {
+  color: #1d1d1f !important;
+  background: transparent !important;
+}
+
+.switch-btn.is-active {
+  background: #000000 !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+.switch-btn.is-active:hover {
+  background: #000000 !important;
+  color: #ffffff !important;
+}
+
+.switch-btn.is-active:focus,
+.switch-btn.is-active:active,
+.switch-btn:focus,
+.switch-btn:active {
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .login-form {
