@@ -21,6 +21,7 @@ DB_LOCK = threading.Lock()
 SCHEMA_LOCK = threading.Lock()
 SCHEMA_READY = False
 ENV_PATH = BASE_DIR / ".env"
+SCHEMA_SQL_PATH = BASE_DIR / "mysql_schema.sql"
 
 DEFAULT_CONFIG = {
     "apiKey": "",
@@ -54,311 +55,6 @@ MYSQL_SETTINGS = {
     "charset": "utf8mb4",
 }
 
-SCHEMA_STATEMENTS = [
-    """
-    CREATE TABLE IF NOT EXISTS users (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      username VARCHAR(50) NOT NULL,
-      password_hash VARCHAR(255) NOT NULL,
-      display_name VARCHAR(100) NOT NULL,
-      role ENUM('admin', 'user') NOT NULL,
-      status ENUM('active', 'disabled') NOT NULL DEFAULT 'active',
-      last_login_at DATETIME NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_users_username (username),
-      KEY idx_users_role_status (role, status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS user_login_sessions (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      user_id BIGINT UNSIGNED NOT NULL,
-      session_token VARCHAR(128) NOT NULL,
-      status ENUM('active', 'revoked') NOT NULL DEFAULT 'active',
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      revoked_at DATETIME NULL,
-      UNIQUE KEY uk_user_login_sessions_token (session_token),
-      KEY idx_user_login_sessions_user_status (user_id, status),
-      CONSTRAINT fk_user_login_sessions_user
-        FOREIGN KEY (user_id) REFERENCES users (id)
-        ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ai_configs (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      config_name VARCHAR(100) NOT NULL DEFAULT 'default',
-      provider VARCHAR(50) NOT NULL DEFAULT 'dashscope',
-      base_url VARCHAR(255) NOT NULL,
-      model_name VARCHAR(100) NOT NULL,
-      api_key_encrypted TEXT NULL,
-      fps DECIMAL(4,2) NOT NULL DEFAULT 2.00,
-      temperature DECIMAL(3,2) NOT NULL DEFAULT 0.10,
-      timeout_ms INT NOT NULL DEFAULT 120000,
-      is_default TINYINT(1) NOT NULL DEFAULT 1,
-      created_by BIGINT UNSIGNED NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_ai_configs_name (config_name),
-      KEY idx_ai_configs_default (is_default),
-      CONSTRAINT fk_ai_configs_created_by
-        FOREIGN KEY (created_by) REFERENCES users (id)
-        ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS sops (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      sop_code VARCHAR(50) NOT NULL,
-      name VARCHAR(200) NOT NULL,
-      scene VARCHAR(200) NULL,
-      description TEXT NULL,
-      step_count INT NOT NULL DEFAULT 0,
-      demo_video_count INT NOT NULL DEFAULT 0,
-      status ENUM('draft', 'published', 'archived') NOT NULL DEFAULT 'published',
-      created_by BIGINT UNSIGNED NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_sops_code (sop_code),
-      KEY idx_sops_status_created (status, created_at),
-      CONSTRAINT fk_sops_created_by
-        FOREIGN KEY (created_by) REFERENCES users (id)
-        ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS sop_steps (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      sop_id BIGINT UNSIGNED NOT NULL,
-      step_no INT NOT NULL,
-      description TEXT NOT NULL,
-      reference_mode ENUM('text', 'video') NOT NULL DEFAULT 'text',
-      reference_summary TEXT NULL,
-      roi_hint VARCHAR(255) NULL,
-      ai_used TINYINT(1) NOT NULL DEFAULT 0,
-      reference_duration_sec DECIMAL(8,3) NULL,
-      reference_fps DECIMAL(6,3) NULL,
-      reference_frame_count INT NULL,
-      raw_ai_result JSON NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_sop_steps_no (sop_id, step_no),
-      KEY idx_sop_steps_sop (sop_id),
-      CONSTRAINT fk_sop_steps_sop
-        FOREIGN KEY (sop_id) REFERENCES sops (id)
-        ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS media_files (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      media_code VARCHAR(64) NOT NULL,
-      owner_role ENUM('admin', 'user') NOT NULL,
-      business_type ENUM('sop_step_demo', 'execution_upload', 'evaluation_job_upload', 'other') NOT NULL,
-      related_sop_id BIGINT UNSIGNED NULL,
-      related_step_id BIGINT UNSIGNED NULL,
-      related_execution_id BIGINT UNSIGNED NULL,
-      original_name VARCHAR(255) NOT NULL,
-      stored_name VARCHAR(255) NOT NULL,
-      file_ext VARCHAR(20) NULL,
-      mime_type VARCHAR(100) NOT NULL,
-      file_size BIGINT UNSIGNED NOT NULL,
-      storage_disk VARCHAR(50) NOT NULL DEFAULT 'local',
-      storage_path VARCHAR(500) NOT NULL,
-      access_url VARCHAR(500) NULL,
-      last_modified_ms BIGINT NULL,
-      uploaded_by BIGINT UNSIGNED NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_media_files_code (media_code),
-      KEY idx_media_owner_business (owner_role, business_type),
-      KEY idx_media_sop_step (related_sop_id, related_step_id),
-      KEY idx_media_execution (related_execution_id),
-      CONSTRAINT fk_media_related_sop
-        FOREIGN KEY (related_sop_id) REFERENCES sops (id)
-        ON DELETE SET NULL,
-      CONSTRAINT fk_media_related_step
-        FOREIGN KEY (related_step_id) REFERENCES sop_steps (id)
-        ON DELETE SET NULL,
-      CONSTRAINT fk_media_uploaded_by
-        FOREIGN KEY (uploaded_by) REFERENCES users (id)
-        ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS sop_step_keyframes (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      sop_step_id BIGINT UNSIGNED NOT NULL,
-      frame_type ENUM('reference', 'analysis') NOT NULL DEFAULT 'reference',
-      sort_order INT NOT NULL,
-      timestamp_sec DECIMAL(8,3) NULL,
-      image_data LONGTEXT NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_sop_step_keyframes_order (sop_step_id, frame_type, sort_order),
-      KEY idx_sop_step_keyframes_step (sop_step_id),
-      CONSTRAINT fk_sop_step_keyframes_step
-        FOREIGN KEY (sop_step_id) REFERENCES sop_steps (id)
-        ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS sop_step_substeps (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      sop_step_id BIGINT UNSIGNED NOT NULL,
-      sort_order INT NOT NULL,
-      title VARCHAR(200) NOT NULL,
-      timestamp_sec DECIMAL(8,3) NOT NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_sop_step_substeps_order (sop_step_id, sort_order),
-      KEY idx_sop_step_substeps_step (sop_step_id),
-      CONSTRAINT fk_sop_step_substeps_step
-        FOREIGN KEY (sop_step_id) REFERENCES sop_steps (id)
-        ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS sop_executions (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      execution_code VARCHAR(64) NOT NULL,
-      sop_id BIGINT UNSIGNED NOT NULL,
-      user_id BIGINT UNSIGNED NULL,
-      uploaded_video_media_id BIGINT UNSIGNED NULL,
-      finish_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      score DECIMAL(5,2) NULL,
-      ai_status ENUM('passed', 'failed') NOT NULL,
-      feedback TEXT NULL,
-      sequence_assessment TEXT NULL,
-      prerequisite_violated TINYINT(1) NOT NULL DEFAULT 0,
-      payload_preview JSON NULL,
-      raw_model_result JSON NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_sop_executions_code (execution_code),
-      KEY idx_sop_executions_sop (sop_id),
-      KEY idx_sop_executions_user (user_id),
-      KEY idx_sop_executions_status_time (ai_status, finish_time),
-      CONSTRAINT fk_sop_executions_sop
-        FOREIGN KEY (sop_id) REFERENCES sops (id)
-        ON DELETE RESTRICT,
-      CONSTRAINT fk_sop_executions_user
-        FOREIGN KEY (user_id) REFERENCES users (id)
-        ON DELETE SET NULL,
-      CONSTRAINT fk_sop_executions_video
-        FOREIGN KEY (uploaded_video_media_id) REFERENCES media_files (id)
-        ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS execution_issues (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      execution_id BIGINT UNSIGNED NOT NULL,
-      issue_text VARCHAR(255) NOT NULL,
-      sort_order INT NOT NULL DEFAULT 1,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      KEY idx_execution_issues_execution (execution_id),
-      CONSTRAINT fk_execution_issues_execution
-        FOREIGN KEY (execution_id) REFERENCES sop_executions (id)
-        ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS execution_step_results (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      execution_id BIGINT UNSIGNED NOT NULL,
-      sop_step_id BIGINT UNSIGNED NULL,
-      step_no INT NOT NULL,
-      description TEXT NOT NULL,
-      passed TINYINT(1) NOT NULL,
-      score DECIMAL(5,2) NOT NULL,
-      confidence DECIMAL(5,2) NOT NULL,
-      issue_type VARCHAR(100) NULL,
-      completion_level VARCHAR(100) NULL,
-      order_issue TINYINT(1) NOT NULL DEFAULT 0,
-      prerequisite_violated TINYINT(1) NOT NULL DEFAULT 0,
-      evidence TEXT NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_execution_step_results_no (execution_id, step_no),
-      KEY idx_execution_step_results_step (sop_step_id),
-      CONSTRAINT fk_execution_step_results_execution
-        FOREIGN KEY (execution_id) REFERENCES sop_executions (id)
-        ON DELETE CASCADE,
-      CONSTRAINT fk_execution_step_results_sop_step
-        FOREIGN KEY (sop_step_id) REFERENCES sop_steps (id)
-        ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS manual_reviews (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      execution_id BIGINT UNSIGNED NOT NULL,
-      review_status ENUM('approved', 'rejected', 'needs_attention') NOT NULL,
-      review_note TEXT NULL,
-      reviewer_id BIGINT UNSIGNED NULL,
-      review_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_manual_reviews_execution (execution_id),
-      KEY idx_manual_reviews_status_time (review_status, review_time),
-      CONSTRAINT fk_manual_reviews_execution
-        FOREIGN KEY (execution_id) REFERENCES sop_executions (id)
-        ON DELETE CASCADE,
-      CONSTRAINT fk_manual_reviews_reviewer
-        FOREIGN KEY (reviewer_id) REFERENCES users (id)
-        ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS evaluation_jobs (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      job_code VARCHAR(64) NOT NULL,
-      sop_id BIGINT UNSIGNED NOT NULL,
-      user_id BIGINT UNSIGNED NULL,
-      uploaded_video_media_id BIGINT UNSIGNED NULL,
-      status ENUM('queued', 'processing', 'succeeded', 'failed') NOT NULL DEFAULT 'queued',
-      stage VARCHAR(50) NOT NULL DEFAULT 'submitted',
-      progress_percent INT NOT NULL DEFAULT 0,
-      retry_count INT NOT NULL DEFAULT 0,
-      max_retry_count INT NOT NULL DEFAULT 3,
-      failure_reason VARCHAR(255) NULL,
-      failure_detail TEXT NULL,
-      result_execution_id BIGINT UNSIGNED NULL,
-      queue_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      start_at DATETIME NULL,
-      finish_at DATETIME NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_evaluation_jobs_code (job_code),
-      KEY idx_evaluation_jobs_user_status (user_id, status, created_at),
-      KEY idx_evaluation_jobs_status_created (status, created_at),
-      CONSTRAINT fk_evaluation_jobs_sop
-        FOREIGN KEY (sop_id) REFERENCES sops (id)
-        ON DELETE RESTRICT,
-      CONSTRAINT fk_evaluation_jobs_user
-        FOREIGN KEY (user_id) REFERENCES users (id)
-        ON DELETE SET NULL,
-      CONSTRAINT fk_evaluation_jobs_video
-        FOREIGN KEY (uploaded_video_media_id) REFERENCES media_files (id)
-        ON DELETE SET NULL,
-      CONSTRAINT fk_evaluation_jobs_execution
-        FOREIGN KEY (result_execution_id) REFERENCES sop_executions (id)
-        ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS evaluation_job_logs (
-      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-      job_id BIGINT UNSIGNED NOT NULL,
-      level ENUM('info', 'warning', 'error') NOT NULL DEFAULT 'info',
-      stage VARCHAR(50) NOT NULL DEFAULT 'submitted',
-      message VARCHAR(255) NOT NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      KEY idx_evaluation_job_logs_job (job_id, created_at),
-      CONSTRAINT fk_evaluation_job_logs_job
-        FOREIGN KEY (job_id) REFERENCES evaluation_jobs (id)
-        ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """,
-]
 
 
 def ensure_storage():
@@ -463,30 +159,46 @@ def _mysql_connection(database=None, autocommit=False):
         ) from exc
 
 
-def _ensure_database():
-    try:
-        connection = pymysql.connect(
-            host=MYSQL_SETTINGS["host"],
-            port=MYSQL_SETTINGS["port"],
-            user=MYSQL_SETTINGS["user"],
-            password=MYSQL_SETTINGS["password"],
-            charset=MYSQL_SETTINGS["charset"],
-            cursorclass=DictCursor,
-            autocommit=True,
+def _load_schema_sql():
+    if not SCHEMA_SQL_PATH.exists():
+        raise RuntimeError(f"???????????: {SCHEMA_SQL_PATH}")
+    sql = SCHEMA_SQL_PATH.read_text(encoding="utf-8")
+    default_database = "sop_eval_system"
+    target_database = MYSQL_SETTINGS["database"]
+    if target_database and target_database != default_database:
+        sql = sql.replace(
+            f"CREATE DATABASE IF NOT EXISTS {default_database}",
+            f"CREATE DATABASE IF NOT EXISTS {target_database}",
         )
-    except pymysql.MySQLError as exc:
-        raise RuntimeError(
-            f"MySQL 连接失败，请检查 backend/.env 配置与数据库权限：{exc}"
-        ) from exc
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"CREATE DATABASE IF NOT EXISTS `{MYSQL_SETTINGS['database']}` "
-                "DEFAULT CHARACTER SET utf8mb4 DEFAULT COLLATE utf8mb4_unicode_ci"
-            )
-    finally:
-        connection.close()
+        sql = sql.replace(f"USE {default_database}", f"USE {target_database}")
+    return sql
 
+
+def _split_sql_statements(sql_text):
+    statements = []
+    current = []
+    in_single_quote = False
+    in_double_quote = False
+
+    for char in sql_text:
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+        elif char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+
+        if char == ";" and not in_single_quote and not in_double_quote:
+            statement = "".join(current).strip()
+            if statement:
+                statements.append(statement)
+            current = []
+            continue
+
+        current.append(char)
+
+    tail = "".join(current).strip()
+    if tail:
+        statements.append(tail)
+    return statements
 
 def _ensure_seed_data(connection):
     with connection.cursor() as cursor:
@@ -538,32 +250,6 @@ def _ensure_seed_data(connection):
             )
 
 
-def _ensure_media_files_business_type(connection):
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT COLUMN_TYPE
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = %s
-              AND TABLE_NAME = 'media_files'
-              AND COLUMN_NAME = 'business_type'
-            LIMIT 1
-            """,
-            (MYSQL_SETTINGS["database"],),
-        )
-        row = cursor.fetchone()
-        column_type = (row or {}).get("COLUMN_TYPE") or ""
-        if "evaluation_job_upload" in column_type:
-            return
-        cursor.execute(
-            """
-            ALTER TABLE media_files
-            MODIFY COLUMN business_type
-            ENUM('sop_step_demo', 'execution_upload', 'evaluation_job_upload', 'other') NOT NULL
-            """
-        )
-
-
 def ensure_schema():
     global SCHEMA_READY
     if SCHEMA_READY:
@@ -574,13 +260,11 @@ def ensure_schema():
             return
 
         ensure_storage()
-        _ensure_database()
-        connection = _mysql_connection()
+        connection = _mysql_connection(database=None)
         try:
             with connection.cursor() as cursor:
-                for statement in SCHEMA_STATEMENTS:
+                for statement in _split_sql_statements(_load_schema_sql()):
                     cursor.execute(statement)
-            _ensure_media_files_business_type(connection)
             _ensure_seed_data(connection)
             connection.commit()
             SCHEMA_READY = True
@@ -589,7 +273,6 @@ def ensure_schema():
             raise
         finally:
             connection.close()
-
 
 def _get_connection():
     ensure_schema()

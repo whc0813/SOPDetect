@@ -4,7 +4,7 @@ CREATE DATABASE IF NOT EXISTS sop_eval_system
 
 USE sop_eval_system;
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   username VARCHAR(50) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
@@ -16,9 +16,23 @@ CREATE TABLE users (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_users_username (username),
   KEY idx_users_role_status (role, status)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE ai_configs (
+CREATE TABLE IF NOT EXISTS user_login_sessions (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  session_token VARCHAR(128) NOT NULL,
+  status ENUM('active', 'revoked') NOT NULL DEFAULT 'active',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revoked_at DATETIME NULL,
+  UNIQUE KEY uk_user_login_sessions_token (session_token),
+  KEY idx_user_login_sessions_user_status (user_id, status),
+  CONSTRAINT fk_user_login_sessions_user
+    FOREIGN KEY (user_id) REFERENCES users (id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_configs (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   config_name VARCHAR(100) NOT NULL DEFAULT 'default',
   provider VARCHAR(50) NOT NULL DEFAULT 'dashscope',
@@ -37,9 +51,9 @@ CREATE TABLE ai_configs (
   CONSTRAINT fk_ai_configs_created_by
     FOREIGN KEY (created_by) REFERENCES users (id)
     ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE sops (
+CREATE TABLE IF NOT EXISTS sops (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   sop_code VARCHAR(50) NOT NULL,
   name VARCHAR(200) NOT NULL,
@@ -56,9 +70,9 @@ CREATE TABLE sops (
   CONSTRAINT fk_sops_created_by
     FOREIGN KEY (created_by) REFERENCES users (id)
     ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE sop_steps (
+CREATE TABLE IF NOT EXISTS sop_steps (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   sop_id BIGINT UNSIGNED NOT NULL,
   step_no INT NOT NULL,
@@ -78,13 +92,13 @@ CREATE TABLE sop_steps (
   CONSTRAINT fk_sop_steps_sop
     FOREIGN KEY (sop_id) REFERENCES sops (id)
     ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE media_files (
+CREATE TABLE IF NOT EXISTS media_files (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   media_code VARCHAR(64) NOT NULL,
   owner_role ENUM('admin', 'user') NOT NULL,
-  business_type ENUM('sop_step_demo', 'execution_upload', 'other') NOT NULL,
+  business_type ENUM('sop_step_demo', 'execution_upload', 'evaluation_job_upload', 'other') NOT NULL,
   related_sop_id BIGINT UNSIGNED NULL,
   related_step_id BIGINT UNSIGNED NULL,
   related_execution_id BIGINT UNSIGNED NULL,
@@ -112,9 +126,9 @@ CREATE TABLE media_files (
   CONSTRAINT fk_media_uploaded_by
     FOREIGN KEY (uploaded_by) REFERENCES users (id)
     ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE sop_step_keyframes (
+CREATE TABLE IF NOT EXISTS sop_step_keyframes (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   sop_step_id BIGINT UNSIGNED NOT NULL,
   frame_type ENUM('reference', 'analysis') NOT NULL DEFAULT 'reference',
@@ -127,9 +141,9 @@ CREATE TABLE sop_step_keyframes (
   CONSTRAINT fk_sop_step_keyframes_step
     FOREIGN KEY (sop_step_id) REFERENCES sop_steps (id)
     ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE sop_step_substeps (
+CREATE TABLE IF NOT EXISTS sop_step_substeps (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   sop_step_id BIGINT UNSIGNED NOT NULL,
   sort_order INT NOT NULL,
@@ -141,9 +155,9 @@ CREATE TABLE sop_step_substeps (
   CONSTRAINT fk_sop_step_substeps_step
     FOREIGN KEY (sop_step_id) REFERENCES sop_steps (id)
     ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE sop_executions (
+CREATE TABLE IF NOT EXISTS sop_executions (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   execution_code VARCHAR(64) NOT NULL,
   sop_id BIGINT UNSIGNED NOT NULL,
@@ -172,9 +186,9 @@ CREATE TABLE sop_executions (
   CONSTRAINT fk_sop_executions_video
     FOREIGN KEY (uploaded_video_media_id) REFERENCES media_files (id)
     ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE execution_issues (
+CREATE TABLE IF NOT EXISTS execution_issues (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   execution_id BIGINT UNSIGNED NOT NULL,
   issue_text VARCHAR(255) NOT NULL,
@@ -184,9 +198,9 @@ CREATE TABLE execution_issues (
   CONSTRAINT fk_execution_issues_execution
     FOREIGN KEY (execution_id) REFERENCES sop_executions (id)
     ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE execution_step_results (
+CREATE TABLE IF NOT EXISTS execution_step_results (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   execution_id BIGINT UNSIGNED NOT NULL,
   sop_step_id BIGINT UNSIGNED NULL,
@@ -209,9 +223,9 @@ CREATE TABLE execution_step_results (
   CONSTRAINT fk_execution_step_results_sop_step
     FOREIGN KEY (sop_step_id) REFERENCES sop_steps (id)
     ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE manual_reviews (
+CREATE TABLE IF NOT EXISTS manual_reviews (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   execution_id BIGINT UNSIGNED NOT NULL,
   review_status ENUM('approved', 'rejected', 'needs_attention') NOT NULL,
@@ -228,14 +242,53 @@ CREATE TABLE manual_reviews (
   CONSTRAINT fk_manual_reviews_reviewer
     FOREIGN KEY (reviewer_id) REFERENCES users (id)
     ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO users (username, password_hash, display_name, role)
-VALUES
-  ('admin', 'replace_with_bcrypt_hash', '管理员', 'admin'),
-  ('user', 'replace_with_bcrypt_hash', '操作用户', 'user');
+CREATE TABLE IF NOT EXISTS evaluation_jobs (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  job_code VARCHAR(64) NOT NULL,
+  sop_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  uploaded_video_media_id BIGINT UNSIGNED NULL,
+  status ENUM('queued', 'processing', 'succeeded', 'failed') NOT NULL DEFAULT 'queued',
+  stage VARCHAR(50) NOT NULL DEFAULT 'submitted',
+  progress_percent INT NOT NULL DEFAULT 0,
+  retry_count INT NOT NULL DEFAULT 0,
+  max_retry_count INT NOT NULL DEFAULT 3,
+  failure_reason VARCHAR(255) NULL,
+  failure_detail TEXT NULL,
+  result_execution_id BIGINT UNSIGNED NULL,
+  queue_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  start_at DATETIME NULL,
+  finish_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_evaluation_jobs_code (job_code),
+  KEY idx_evaluation_jobs_user_status (user_id, status, created_at),
+  KEY idx_evaluation_jobs_status_created (status, created_at),
+  CONSTRAINT fk_evaluation_jobs_sop
+    FOREIGN KEY (sop_id) REFERENCES sops (id)
+    ON DELETE RESTRICT,
+  CONSTRAINT fk_evaluation_jobs_user
+    FOREIGN KEY (user_id) REFERENCES users (id)
+    ON DELETE SET NULL,
+  CONSTRAINT fk_evaluation_jobs_video
+    FOREIGN KEY (uploaded_video_media_id) REFERENCES media_files (id)
+    ON DELETE SET NULL,
+  CONSTRAINT fk_evaluation_jobs_execution
+    FOREIGN KEY (result_execution_id) REFERENCES sop_executions (id)
+    ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO ai_configs (config_name, provider, base_url, model_name, is_default)
-VALUES
-  ('default', 'dashscope', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'qwen3.5-plus', 1);
-
+CREATE TABLE IF NOT EXISTS evaluation_job_logs (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  job_id BIGINT UNSIGNED NOT NULL,
+  level ENUM('info', 'warning', 'error') NOT NULL DEFAULT 'info',
+  stage VARCHAR(50) NOT NULL DEFAULT 'submitted',
+  message VARCHAR(255) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_evaluation_job_logs_job (job_id, created_at),
+  CONSTRAINT fk_evaluation_job_logs_job
+    FOREIGN KEY (job_id) REFERENCES evaluation_jobs (id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
