@@ -686,6 +686,8 @@ def get_user_by_id(user_id):
 
 
 def has_active_session(user_id):
+    if not user_id:
+        return False
     with _get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -697,7 +699,19 @@ def has_active_session(user_id):
                 """,
                 (user_id,),
             )
-            return cursor.fetchone() is not None
+            has_session = cursor.fetchone() is not None
+            if has_session:
+                cursor.execute(
+                    """
+                    UPDATE user_login_sessions
+                    SET status = 'revoked',
+                        revoked_at = NOW()
+                    WHERE user_id = %s AND status = 'active'
+                    """,
+                    (user_id,),
+                )
+        connection.commit()
+    return False
 
 
 def create_user_session(user_id, session_token):
@@ -743,6 +757,23 @@ def revoke_user_session(user_id, session_token):
                 WHERE user_id = %s AND session_token = %s AND status = 'active'
                 """,
                 (user_id, session_token),
+            )
+        connection.commit()
+
+
+def revoke_all_user_sessions(user_id):
+    if not user_id:
+        return
+    with _get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE user_login_sessions
+                SET status = 'revoked',
+                    revoked_at = NOW()
+                WHERE user_id = %s AND status = 'active'
+                """,
+                (user_id,),
             )
         connection.commit()
 

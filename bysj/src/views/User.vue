@@ -45,8 +45,7 @@
           <div class="section-label">可用任务</div>
 
           <div class="grid-container">
-            <div v-for="(sop, index) in sopList" :key="sop.id" :class="['task-card', `accent-${(index % 5) + 1}`]" @click="startSop(sop)">
-              <div class="task-card-accent-bar" aria-hidden="true"></div>
+            <div v-for="sop in sopList" :key="sop.id" class="task-card" @click="startSop(sop)">
               <div class="card-content">
                 <h3 class="task-title">{{ sop.name }}</h3>
                 <div class="task-meta">
@@ -1002,23 +1001,6 @@ onUnmounted(() => {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
-/* Accent bars */
-.task-card-accent-bar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  border-radius: 18px 18px 0 0;
-}
-
-.accent-1 .task-card-accent-bar { background: #007AFF; }
-.accent-2 .task-card-accent-bar { background: #34C759; }
-.accent-3 .task-card-accent-bar { background: #FF9F0A; }
-.accent-4 .task-card-accent-bar { background: #FF375F; }
-.accent-5 .task-card-accent-bar { background: #BF5AF2; }
-
-.task-card { padding-top: 22px; }
 
 .task-title {
   font-size: 19px;

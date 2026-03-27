@@ -139,26 +139,22 @@
         <!-- 数据统计 -->
         <div v-else class="stats-view">
           <div class="stats-grid">
-            <div class="stat-card stat-blue">
-              <div class="stat-accent-bar" aria-hidden="true"></div>
+            <div class="stat-card">
               <div class="stat-label">SOP 总数</div>
               <div class="stat-value">{{ summaryStats.totalSops }}</div>
               <div class="stat-desc">当前已发布流程数量</div>
             </div>
-            <div class="stat-card stat-green">
-              <div class="stat-accent-bar" aria-hidden="true"></div>
+            <div class="stat-card">
               <div class="stat-label">执行记录</div>
               <div class="stat-value">{{ summaryStats.totalExecutions }}</div>
               <div class="stat-desc">累计采集到的用户执行记录</div>
             </div>
-            <div class="stat-card stat-teal">
-              <div class="stat-accent-bar" aria-hidden="true"></div>
+            <div class="stat-card">
               <div class="stat-label">通过率</div>
               <div class="stat-value">{{ formatRate(summaryStats.passRate) }}</div>
               <div class="stat-desc">当前自动评测整体通过表现</div>
             </div>
-            <div class="stat-card stat-red highlight-card">
-              <div class="stat-accent-bar" aria-hidden="true"></div>
+            <div class="stat-card highlight-card">
               <div class="stat-label">待复核</div>
               <div class="stat-value">{{ summaryStats.pendingReviewCount }}</div>
               <div class="stat-desc">还需要人工确认的记录</div>
@@ -1280,20 +1276,6 @@ onUnmounted(() => {
   border-color: rgba(255, 255, 255, 0.80);
 }
 
-/* Colored top accent bar on stat cards */
-.stat-accent-bar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  border-radius: 16px 16px 0 0;
-}
-
-.stat-blue .stat-accent-bar  { background: #007AFF; }
-.stat-green .stat-accent-bar { background: #34C759; }
-.stat-teal .stat-accent-bar  { background: #30D158; }
-.stat-red .stat-accent-bar   { background: #FF3B30; }
 
 .highlight-card {
   border-color: rgba(255, 59, 48, 0.22);
