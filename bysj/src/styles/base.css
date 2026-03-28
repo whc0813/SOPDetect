@@ -1,0 +1,383 @@
+/* ═══════════════════════════════════════════════════════════
+   Global Resets & Element Plus Overrides
+   ═══════════════════════════════════════════════════════════ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--bg-base);
+  background-image:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.52) 0%, transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.32), transparent 22%);
+  background-attachment: fixed;
+  color: var(--text-main);
+  font-family: var(--font-family);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  html,
+  body {
+    background-image:
+      radial-gradient(circle at top, rgba(40, 40, 44, 0.4) 0%, transparent 28%),
+      linear-gradient(180deg, rgba(40, 40, 44, 0.2), transparent 22%);
+  }
+}
+
+#app {
+  min-height: 100vh;
+  color: var(--text-main);
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--fill-secondary);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fill-primary);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Element Plus — Dialog Overrides
+   ═══════════════════════════════════════════════════════════ */
+
+.apple-dialog {
+  border-radius: var(--radius-2xl) !important;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.70) !important;
+  background: var(--material-ultra-thick) !important;
+  backdrop-filter: blur(var(--blur-xl)) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(var(--blur-xl)) saturate(180%) !important;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.04),
+    0 8px 32px rgba(0, 0, 0, 0.08),
+    0 32px 80px rgba(0, 0, 0, 0.10) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .apple-dialog {
+    border-color: rgba(84, 84, 88, 0.65) !important;
+    box-shadow:
+      0 0 0 0.5px rgba(0, 0, 0, 0.2),
+      0 8px 32px rgba(0, 0, 0, 0.3),
+      0 32px 80px rgba(0, 0, 0, 0.4) !important;
+  }
+}
+
+.apple-dialog .el-dialog__header {
+  padding: var(--sp-6) var(--sp-8) 18px;
+  margin-right: 0;
+  border-bottom: 1px solid var(--separator);
+  background: transparent;
+}
+
+.apple-dialog .el-dialog__title {
+  font-weight: 700;
+  font-size: var(--fs-title3);
+  color: var(--text-main);
+  letter-spacing: -0.03em;
+}
+
+.apple-dialog .el-dialog__headerbtn {
+  top: 22px;
+  right: 22px;
+  width: 30px;
+  height: 30px;
+  background: var(--fill-tertiary);
+  border-radius: 50%;
+  transition: background var(--duration-micro) var(--ease-standard);
+}
+
+.apple-dialog .el-dialog__headerbtn .el-dialog__close {
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.apple-dialog .el-dialog__headerbtn:hover {
+  background: var(--fill-secondary);
+}
+
+.apple-dialog .el-dialog__body {
+  padding: 22px var(--sp-8);
+  background: transparent;
+}
+
+.apple-dialog .el-dialog__footer {
+  background: transparent;
+}
+
+.dialog-fade-enter-active .apple-dialog,
+.dialog-fade-leave-active .apple-dialog {
+  transition:
+    transform var(--duration-medium) var(--ease-standard),
+    opacity var(--duration-medium) var(--ease-standard),
+    filter var(--duration-medium) var(--ease-standard);
+  transform-origin: top center;
+}
+
+.dialog-fade-enter-from .apple-dialog,
+.dialog-fade-leave-to .apple-dialog {
+  opacity: 0;
+  transform: translateY(-18px) scale(0.985);
+  filter: blur(8px);
+}
+
+.dialog-fade-enter-to .apple-dialog,
+.dialog-fade-leave-from .apple-dialog {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: blur(0);
+}
+
+/* ── Dialog Form Inputs ──────────────────────────────────── */
+
+.apple-form .el-form-item__label {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--text-soft);
+  padding-bottom: 6px;
+  letter-spacing: -0.01em;
+}
+
+.apple-form .el-input__wrapper {
+  border: none !important;
+  border-radius: var(--radius-md);
+  padding: 4px 14px;
+  background: var(--fill-tertiary);
+  box-shadow: none !important;
+  height: 46px;
+  transition: background var(--duration-short), box-shadow var(--duration-short);
+}
+
+.apple-form .el-input__wrapper.is-focus {
+  background: var(--fill-quaternary) !important;
+  box-shadow: 0 0 0 3.5px rgba(0, 122, 255, 0.30) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .apple-form .el-input__wrapper.is-focus {
+    box-shadow: 0 0 0 3.5px rgba(10, 132, 255, 0.40) !important;
+  }
+}
+
+.apple-form .el-input__inner {
+  color: var(--text-main);
+  font-size: var(--fs-subheadline);
+  font-family: inherit;
+}
+
+.apple-form .el-textarea__inner {
+  background: var(--fill-tertiary);
+  border: none !important;
+  border-radius: var(--radius-md);
+  padding: var(--sp-3) 14px;
+  font-family: inherit;
+  font-size: var(--fs-subheadline);
+  color: var(--text-main);
+  box-shadow: none !important;
+  resize: none;
+  transition: background var(--duration-short), box-shadow var(--duration-short);
+}
+
+.apple-form .el-textarea__inner:focus {
+  background: var(--fill-quaternary) !important;
+  box-shadow: 0 0 0 3.5px rgba(0, 122, 255, 0.30) !important;
+  outline: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .apple-form .el-textarea__inner:focus {
+    box-shadow: 0 0 0 3.5px rgba(10, 132, 255, 0.40) !important;
+  }
+}
+
+.apple-form .el-select .el-input__wrapper {
+  height: 44px;
+}
+
+/* ── Input Number ────────────────────────────────────────── */
+
+.apple-dialog .el-input-number,
+.apple-form .el-input-number {
+  width: 100%;
+  border: 1px solid var(--separator-opaque);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.apple-dialog .el-input-number .el-input__wrapper,
+.apple-form .el-input-number .el-input__wrapper {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  height: 44px;
+  background: transparent !important;
+}
+
+.apple-dialog .el-input-number__decrease:hover ~ .el-input .el-input__wrapper,
+.apple-dialog .el-input-number__increase:hover ~ .el-input .el-input__wrapper,
+.apple-form .el-input-number__decrease:hover ~ .el-input .el-input__wrapper,
+.apple-form .el-input-number__increase:hover ~ .el-input .el-input__wrapper {
+  box-shadow: none !important;
+}
+
+.apple-dialog .el-input-number__decrease,
+.apple-dialog .el-input-number__increase,
+.apple-form .el-input-number__decrease,
+.apple-form .el-input-number__increase {
+  width: 38px;
+  top: 0 !important;
+  bottom: 0 !important;
+  background: var(--fill-quaternary) !important;
+  color: var(--text-soft) !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.apple-dialog .el-input-number__decrease,
+.apple-form .el-input-number__decrease {
+  left: 0 !important;
+  border-right: 1px solid var(--separator-opaque) !important;
+}
+
+.apple-dialog .el-input-number__increase,
+.apple-form .el-input-number__increase {
+  right: 0 !important;
+  border-left: 1px solid var(--separator-opaque) !important;
+}
+
+/* ── Alert ───────────────────────────────────────────────── */
+
+.apple-dialog .el-alert {
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--info-fill);
+  color: var(--text-soft);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Element Plus — MessageBox Overrides
+   ═══════════════════════════════════════════════════════════ */
+
+.apple-msgbox {
+  border-radius: var(--radius-lg) !important;
+  border: 1px solid var(--line-soft) !important;
+  padding: 0 !important;
+  overflow: hidden;
+  background: var(--surface-strong) !important;
+  backdrop-filter: blur(var(--blur-md));
+  -webkit-backdrop-filter: blur(var(--blur-md));
+}
+
+.apple-msgbox .el-message-box__header {
+  padding: var(--sp-6) var(--sp-6) var(--sp-4) !important;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+}
+
+.apple-msgbox .el-message-box__title {
+  font-weight: 600 !important;
+  font-size: 18px !important;
+  letter-spacing: -0.02em;
+  color: var(--text-main) !important;
+}
+
+.apple-msgbox .el-message-box__content {
+  padding: var(--sp-5) var(--sp-6) !important;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.apple-msgbox .el-message-box__btns {
+  padding: 0 var(--sp-6) var(--sp-6) !important;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+  background: transparent;
+}
+
+.apple-msgbox .el-message-box__btns .el-button {
+  min-width: 96px;
+  height: var(--touch-target);
+  border-radius: var(--radius-md) !important;
+  font-weight: 500;
+  padding: var(--sp-2) var(--sp-5);
+  transition:
+    transform var(--duration-micro) var(--ease-standard),
+    background-color var(--duration-short) var(--ease-standard),
+    border-color var(--duration-short) var(--ease-standard),
+    color var(--duration-short) var(--ease-standard) !important;
+}
+
+.apple-msgbox .el-message-box__btns .el-button:active {
+  transform: scale(0.96);
+}
+
+.apple-msgbox .el-message-box__btns .el-button--primary {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #ffffff !important;
+}
+
+.apple-msgbox .el-message-box__btns .el-button--primary:hover {
+  background: var(--accent-deep) !important;
+  border-color: var(--accent-deep) !important;
+}
+
+.apple-msgbox .el-message-box__btns .el-button:not(.el-button--primary) {
+  border-color: var(--line-strong) !important;
+  background: var(--surface-secondary) !important;
+  color: var(--text-main) !important;
+}
+
+.apple-msgbox .el-message-box__btns .el-button:not(.el-button--primary):hover {
+  background: var(--surface) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Page Transition
+   ═══════════════════════════════════════════════════════════ */
+
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity var(--duration-short) var(--ease-standard);
+}
+
+.page-fade-enter-from,
+.page-fade-leave-to {
+  opacity: 0;
+}

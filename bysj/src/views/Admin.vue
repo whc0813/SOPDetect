@@ -1,11 +1,12 @@
 <template>
   <div class="admin-layout">
-    <div class="blob blob-blue" aria-hidden="true"></div>
-    <div class="blob blob-purple" aria-hidden="true"></div>
-    <div class="blob blob-green" aria-hidden="true"></div>
+    <AppBlobs />
+
+    <!-- Sidebar backdrop (mobile) -->
+    <div :class="['sidebar-backdrop', { 'is-open': sidebarOpen }]" @click="sidebarOpen = false"></div>
 
     <!-- Sidebar -->
-    <aside class="sidebar">
+    <aside :class="['sidebar', { 'is-open': sidebarOpen }]">
       <div class="brand">
         <div class="brand-logo">
           <el-icon><Monitor /></el-icon>
@@ -43,6 +44,9 @@
     <!-- Main Area -->
     <div class="main-container">
       <header class="top-header">
+        <button class="hamburger-btn" @click="sidebarOpen = !sidebarOpen">
+          <el-icon><Fold /></el-icon>
+        </button>
         <div class="header-left">
           <h2>{{ panelHeaderTitle }}</h2>
           <p class="header-subtitle">{{ panelHeaderSubtitle }}</p>
@@ -60,101 +64,70 @@
       <main class="content-area">
 
         <!-- SOP 管理 -->
-        <div v-if="activeMenu === 'manage'" class="table-card">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>SOP 名称</th>
-                <th>适用场景</th>
-                <th style="text-align:center">步骤数</th>
-                <th>创建时间</th>
-                <th style="text-align:right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in sopList" :key="row.id">
-                <td>{{ row.name }}</td>
-                <td>{{ row.scene }}</td>
-                <td style="text-align:center">
-                  <span class="badge badge-default">{{ row.stepCount }}</span>
-                </td>
-                <td>{{ row.createTime }}</td>
-                <td style="text-align:right">
-                  <button class="text-btn" @click="openDebugSop(row)">查看</button>
-                  <button class="text-btn danger" @click="deleteCurrentSop(row)">删除</button>
-                </td>
-              </tr>
-              <tr v-if="sopList.length === 0">
-                <td colspan="5" class="empty-row">暂无 SOP</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <GroupedList
+          v-if="activeMenu === 'manage'"
+          :columns="sopColumns"
+          :data="sopList"
+          empty-text="暂无 SOP"
+        >
+          <template #cell-stepCount="{ value }">
+            <StatusBadge type="default">{{ value }}</StatusBadge>
+          </template>
+          <template #cell-actions="{ row }">
+            <button class="text-btn" @click="openDebugSop(row)">查看</button>
+            <button class="text-btn danger" @click="deleteCurrentSop(row)">删除</button>
+          </template>
+        </GroupedList>
 
         <!-- 用户管理 -->
-        <div v-else-if="activeMenu === 'users'" class="table-card">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>昵称</th>
-                <th>账号</th>
-                <th style="text-align:center">角色</th>
-                <th style="text-align:center">状态</th>
-                <th>最近登录</th>
-                <th>创建时间</th>
-                <th style="text-align:center">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in userList" :key="row.id">
-                <td>{{ row.displayName }}</td>
-                <td>{{ row.username }}</td>
-                <td style="text-align:center">
-                  <span :class="['badge', row.role === 'admin' ? 'badge-danger' : 'badge-default']">
-                    {{ row.role === 'admin' ? '管理员' : '普通用户' }}
-                  </span>
-                </td>
-                <td style="text-align:center">
-                  <span :class="['badge', row.status === 'active' ? 'badge-success' : 'badge-warning']">
-                    {{ row.status === 'active' ? '启用' : '禁用' }}
-                  </span>
-                </td>
-                <td>{{ row.lastLoginAt }}</td>
-                <td>{{ row.createdAt }}</td>
-                <td style="text-align:center">
-                  <button
-                    class="text-btn"
-                    :disabled="row.role === 'admin' && row.id === currentUser?.id"
-                    @click="toggleUserStatus(row)"
-                  >{{ row.status === 'active' ? '禁用' : '启用' }}</button>
-                </td>
-              </tr>
-              <tr v-if="userList.length === 0">
-                <td colspan="7" class="empty-row">暂无用户</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <GroupedList
+          v-else-if="activeMenu === 'users'"
+          :columns="userColumns"
+          :data="userList"
+          empty-text="暂无用户"
+        >
+          <template #cell-role="{ row }">
+            <StatusBadge :type="row.role === 'admin' ? 'danger' : 'default'">
+              {{ row.role === 'admin' ? '管理员' : '普通用户' }}
+            </StatusBadge>
+          </template>
+          <template #cell-status="{ row }">
+            <StatusBadge :type="row.status === 'active' ? 'success' : 'warning'">
+              {{ row.status === 'active' ? '启用' : '禁用' }}
+            </StatusBadge>
+          </template>
+          <template #cell-actions="{ row }">
+            <button
+              class="text-btn"
+              :disabled="row.role === 'admin' && row.id === currentUser?.id"
+              @click="toggleUserStatus(row)"
+            >{{ row.status === 'active' ? '禁用' : '启用' }}</button>
+          </template>
+        </GroupedList>
 
         <!-- 数据统计 -->
         <div v-else class="stats-view">
           <div class="stats-grid">
             <div class="stat-card">
+              <div class="stat-icon icon-blue"><el-icon><Document /></el-icon></div>
               <div class="stat-label">SOP 总数</div>
               <div class="stat-value">{{ summaryStats.totalSops }}</div>
               <div class="stat-desc">当前已发布流程数量</div>
             </div>
             <div class="stat-card">
+              <div class="stat-icon icon-green"><el-icon><DataLine /></el-icon></div>
               <div class="stat-label">执行记录</div>
               <div class="stat-value">{{ summaryStats.totalExecutions }}</div>
               <div class="stat-desc">累计采集到的用户执行记录</div>
             </div>
             <div class="stat-card">
+              <div class="stat-icon icon-orange"><el-icon><DataLine /></el-icon></div>
               <div class="stat-label">通过率</div>
               <div class="stat-value">{{ formatRate(summaryStats.passRate) }}</div>
               <div class="stat-desc">当前自动评测整体通过表现</div>
             </div>
             <div class="stat-card highlight-card">
+              <div class="stat-icon icon-red"><el-icon><DataLine /></el-icon></div>
               <div class="stat-label">待复核</div>
               <div class="stat-value">{{ summaryStats.pendingReviewCount }}</div>
               <div class="stat-desc">还需要人工确认的记录</div>
@@ -162,82 +135,86 @@
           </div>
 
           <div class="section-block">
-            <div class="section-head">
-              <div class="section-title">SOP 维度统计</div>
-              <div class="section-subtitle">按流程查看执行次数、通过率和平均得分</div>
-            </div>
-            <div class="table-card">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>SOP 名称</th>
-                    <th>适用场景</th>
-                    <th style="text-align:center">执行次数</th>
-                    <th style="text-align:center">通过次数</th>
-                    <th style="text-align:center">通过率</th>
-                    <th style="text-align:center">平均得分</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in sopStatsList" :key="row.taskId || row.taskName">
-                    <td>{{ row.taskName }}</td>
-                    <td>{{ row.scene }}</td>
-                    <td style="text-align:center">{{ row.totalCount }}</td>
-                    <td style="text-align:center">{{ row.passedCount }}</td>
-                    <td style="text-align:center">{{ formatRate(row.passRate) }}</td>
-                    <td style="text-align:center">{{ formatAverageScore(row.averageScore) }}</td>
-                  </tr>
-                  <tr v-if="sopStatsList.length === 0">
-                    <td colspan="6" class="empty-row">暂无统计数据</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <SectionHeader title="SOP 维度统计" subtitle="按流程查看执行次数、通过率和平均得分" />
+            <GroupedList
+              :columns="sopStatsColumns"
+              :data="sopStatsList"
+              empty-text="暂无统计数据"
+            >
+              <template #cell-passRate="{ value }">{{ formatRate(value) }}</template>
+              <template #cell-averageScore="{ value }">{{ formatAverageScore(value) }}</template>
+            </GroupedList>
           </div>
 
           <div class="section-block">
-            <div class="section-head">
-              <div class="section-title">执行记录列表</div>
-              <div class="section-subtitle">从这里查看明细并处理人工复核</div>
+            <SectionHeader title="执行记录列表" subtitle="从这里查看明细并处理人工复核" />
+            <div class="filter-toolbar">
+              <div class="filter-form">
+                <el-input
+                  v-model="historyFilters.keyword"
+                  class="filter-input"
+                  clearable
+                  placeholder="按 SOP 名称搜索"
+                  @keyup.enter="applyHistoryFilters"
+                />
+                <el-select v-model="historyFilters.aiStatus" class="filter-select" placeholder="AI 结论" clearable>
+                  <el-option label="全部 AI 结论" value="" />
+                  <el-option label="通过" value="passed" />
+                  <el-option label="异常" value="failed" />
+                </el-select>
+                <el-select v-model="historyFilters.reviewStatus" class="filter-select" placeholder="人工复核" clearable>
+                  <el-option label="全部复核状态" value="" />
+                  <el-option label="待复核" value="pending" />
+                  <el-option label="复核通过" value="approved" />
+                  <el-option label="复核不通过" value="rejected" />
+                  <el-option label="需要整改" value="needs_attention" />
+                </el-select>
+                <el-select v-model="historyFilters.sortOrder" class="filter-select filter-sort" placeholder="时间排序">
+                  <el-option label="按时间倒序" value="desc" />
+                  <el-option label="按时间正序" value="asc" />
+                </el-select>
+              </div>
+              <div class="filter-actions">
+                <button
+                  type="button"
+                  :class="['pill-btn', 'filter-pill', { active: historyFilters.reviewStatus === 'pending' }]"
+                  @click="togglePendingReviewFilter"
+                >
+                  只看待复核
+                </button>
+                <button
+                  type="button"
+                  :class="['pill-btn', 'filter-pill', { active: historyFilters.aiStatus === 'failed' }]"
+                  @click="toggleAiAbnormalFilter"
+                >
+                  只看 AI 判定异常
+                </button>
+                <el-button class="filter-action-btn" type="primary" @click="applyHistoryFilters">查询</el-button>
+                <el-button class="filter-action-btn" @click="resetHistoryFilters">重置</el-button>
+              </div>
             </div>
-            <div class="table-card">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>SOP 名称</th>
-                    <th>所属用户</th>
-                    <th>完成时间</th>
-                    <th style="text-align:center">AI 结论</th>
-                    <th style="text-align:center">人工复核</th>
-                    <th style="text-align:right">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in historyList" :key="row.id">
-                    <td>{{ row.taskName }}</td>
-                    <td>{{ row.userDisplayName || row.userName || '未知用户' }}</td>
-                    <td>{{ row.finishTime }}</td>
-                    <td style="text-align:center">
-                      <span :class="['badge', row.status === 'passed' ? 'badge-success' : 'badge-danger']">
-                        {{ getStatusText(row.status) }}
-                      </span>
-                    </td>
-                    <td style="text-align:center">
-                      <span :class="['badge', getReviewBadgeClass(row.manualReview?.status)]">
-                        {{ getReviewStatusText(row.manualReview?.status) }}
-                      </span>
-                    </td>
-                    <td style="text-align:right">
-                      <button class="text-btn" @click="openHistoryDetail(row)">详情</button>
-                      <button class="text-btn" @click="openReviewDialog(row)">复核</button>
-                    </td>
-                  </tr>
-                  <tr v-if="historyList.length === 0">
-                    <td colspan="6" class="empty-row">暂无执行记录</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <GroupedList
+              v-loading="historyLoading"
+              :columns="historyColumns"
+              :data="historyList"
+              :empty-text="historyEmptyText"
+            >
+              <template #cell-userName="{ row }">{{ row.userDisplayName || row.userName || '未知用户' }}</template>
+              <template #cell-aiStatus="{ row }">
+                <StatusBadge :type="row.status === 'passed' ? 'success' : 'danger'">
+                  {{ getStatusText(row.status) }}
+                </StatusBadge>
+              </template>
+              <template #cell-reviewStatus="{ row }">
+                <StatusBadge :type="getReviewBadgeType(row.manualReview?.status)">
+                  {{ getReviewStatusText(row.manualReview?.status) }}
+                </StatusBadge>
+              </template>
+              <template #cell-actions="{ row }">
+                <button class="text-btn" @click="openHistoryDetail(row)">详情</button>
+                <button class="text-btn" @click="openReviewDialog(row)">复核</button>
+              </template>
+            </GroupedList>
           </div>
         </div>
 
@@ -245,8 +222,8 @@
     </div>
 
     <!-- ─── 新建 SOP 对话框 ─────────────────────────────────── -->
-    <el-dialog v-model="dialogVisible" title="新建标准操作流程 (SOP)" width="640px" class="minimal-dialog" destroy-on-close>
-      <el-form :model="sopForm" label-position="top" class="minimal-form">
+    <el-dialog v-model="dialogVisible" title="新建标准操作流程 (SOP)" width="640px" class="apple-dialog" destroy-on-close>
+      <el-form :model="sopForm" label-position="top" class="apple-form">
         <div class="form-row">
           <el-form-item label="SOP 名称" class="flex-1">
             <el-input v-model="sopForm.name" placeholder="例如：实验室安全操作规范" />
@@ -257,14 +234,14 @@
         </div>
 
         <el-form-item label="步骤数量">
-          <el-input-number v-model="sopForm.stepCount" :min="1" :max="20" @change="handleStepCountChange" class="minimal-input-number" />
+          <el-input-number v-model="sopForm.stepCount" :min="1" :max="20" @change="handleStepCountChange" />
         </el-form-item>
 
         <div class="steps-section">
           <div class="section-title">步骤详情</div>
           <div v-for="(step, index) in sopForm.steps" :key="index" class="step-card">
             <div class="step-header">步骤 {{ index + 1 }}</div>
-            <el-input v-model="step.description" type="textarea" :rows="2" resize="none" class="minimal-textarea" placeholder="请描述该步骤的标准动作，大模型将以此为比对依据..." />
+            <el-input v-model="step.description" type="textarea" :rows="2" resize="none" placeholder="请描述该步骤的标准动作，大模型将以此为比对依据..." />
             <el-upload action="#" :auto-upload="false" :show-file-list="false" accept="video/*" :on-change="(file) => handleStepVideoChange(index, file)">
               <el-button class="upload-btn">{{ step.video ? step.video.name : '可选：上传示范视频' }}</el-button>
             </el-upload>
@@ -281,9 +258,9 @@
     </el-dialog>
 
     <!-- ─── API 配置对话框 ────────────────────────────────────── -->
-    <el-dialog v-model="configVisible" title="后端 API 配置" width="640px" class="minimal-dialog">
+    <el-dialog v-model="configVisible" title="后端 API 配置" width="640px" class="apple-dialog">
       <el-alert type="info" :closable="false" show-icon title="当前配置保存到后端，管理员创建 SOP 和用户执行评估都会共用这份配置。" />
-      <el-form label-position="top" class="minimal-form config-form">
+      <el-form label-position="top" class="apple-form config-form">
         <el-form-item label="API Key">
           <el-input v-model="apiConfig.apiKey" type="password" show-password />
         </el-form-item>
@@ -316,7 +293,7 @@
     </el-dialog>
 
     <!-- ─── SOP 预处理详情对话框 ─────────────────────────────── -->
-    <el-dialog v-model="debugVisible" title="SOP 预处理详情" width="900px" class="minimal-dialog">
+    <el-dialog v-model="debugVisible" title="SOP 预处理详情" width="900px" class="apple-dialog">
       <div v-loading="debugLoading" class="detail-wrap">
         <div v-if="selectedSopDebug">
           <div class="summary debug-summary">{{ selectedSopDebug.name }} / {{ selectedSopDebug.scene }}</div>
@@ -352,7 +329,7 @@
     </el-dialog>
 
     <!-- ─── 执行记录详情对话框 ────────────────────────────────── -->
-    <el-dialog v-model="historyDetailVisible" title="执行记录详情" width="820px" class="minimal-dialog">
+    <el-dialog v-model="historyDetailVisible" title="执行记录详情" width="820px" class="apple-dialog">
       <div v-if="selectedHistoryRecord" class="detail-wrap">
         <div class="summary">{{ selectedHistoryRecord.taskName }} / {{ selectedHistoryRecord.userDisplayName || selectedHistoryRecord.userName || '未知用户' }} / {{ selectedHistoryRecord.finishTime }}</div>
         <div class="detail-box">
@@ -374,11 +351,11 @@
     </el-dialog>
 
     <!-- ─── 人工复核对话框 ─────────────────────────────────────── -->
-    <el-dialog v-model="reviewDialogVisible" title="人工复核" width="560px" class="minimal-dialog">
+    <el-dialog v-model="reviewDialogVisible" title="人工复核" width="560px" class="apple-dialog">
       <div v-if="reviewTarget" class="detail-wrap">
         <div class="summary">{{ reviewTarget.taskName }} / {{ reviewTarget.userDisplayName || reviewTarget.userName || '未知用户' }} / {{ reviewTarget.finishTime }}</div>
         <video v-if="reviewVideoUrl" :src="reviewVideoUrl" controls class="video" />
-        <el-form :model="reviewForm" label-position="top" class="minimal-form">
+        <el-form :model="reviewForm" label-position="top" class="apple-form">
           <el-form-item label="复核结论">
             <el-radio-group v-model="reviewForm.status" class="review-radio-group">
               <el-radio-button label="approved">复核通过</el-radio-button>
@@ -406,14 +383,20 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataLine, Document, Monitor, Plus, SwitchButton } from '@element-plus/icons-vue'
+import { DataLine, Document, Fold, Monitor, Plus, SwitchButton } from '@element-plus/icons-vue'
 import { clearAuthSession, createSop, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getConfig, getCurrentUser, getHistoryDetail, getSopDetail, getStats, isAuthSessionError, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateConfig, updateSopStepDemoVideo, updateSopStepSegmentation, updateUserStatus } from '../api/client'
+import AppBlobs from '../components/AppBlobs.vue'
+import GroupedList from '../components/GroupedList.vue'
+import SectionHeader from '../components/SectionHeader.vue'
+import StatusBadge from '../components/StatusBadge.vue'
 
 const router = useRouter()
+const sidebarOpen = ref(false)
 const activeMenu = ref('manage')
 const sopList = ref([])
 const userList = ref([])
 const historyList = ref([])
+const historyLoading = ref(false)
 const summaryStats = ref({ totalSops: 0, totalExecutions: 0, pendingReviewCount: 0, passRate: 0 })
 const sopStatsList = ref([])
 const dialogVisible = ref(false)
@@ -429,6 +412,12 @@ const reviewDialogVisible = ref(false)
 const reviewTarget = ref(null)
 const reviewVideoUrl = ref('')
 const reviewForm = reactive({ status: 'approved', note: '' })
+const historyFilters = reactive({
+  keyword: '',
+  aiStatus: '',
+  reviewStatus: '',
+  sortOrder: 'desc'
+})
 const sopForm = reactive({ name: '', scene: '', stepCount: 1, steps: [{ description: '', video: null }] })
 const currentUser = ref(getCurrentUser())
 const DEFAULT_API_CONFIG = {
@@ -441,8 +430,6 @@ const DEFAULT_API_CONFIG = {
 }
 const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 
-const headerTitle = computed(() => activeMenu.value === 'manage' ? 'SOP 管理' : '数据统计')
-const headerSubtitle = computed(() => activeMenu.value === 'manage' ? '统一管理 SOP 内容、步骤说明和示范视频' : '查看整体执行情况，并处理需要人工确认的记录')
 const currentUserName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '管理员')
 const userInitials = computed(() => {
   const name = currentUser.value?.displayName || currentUser.value?.username || 'A'
@@ -458,6 +445,49 @@ const panelHeaderSubtitle = computed(() => {
   if (activeMenu.value === 'users') return '查看已注册账号，并启用或禁用普通用户'
   return '查看整体执行情况，并处理需要人工确认的记录'
 })
+
+const hasActiveHistoryFilters = computed(() => {
+  return !!(
+    String(historyFilters.keyword || '').trim() ||
+    historyFilters.aiStatus ||
+    historyFilters.reviewStatus ||
+    historyFilters.sortOrder !== 'desc'
+  )
+})
+const historyEmptyText = computed(() => hasActiveHistoryFilters.value ? '当前筛选条件下暂无记录' : '暂无执行记录')
+
+const sopColumns = [
+  { key: 'name', label: 'SOP 名称' },
+  { key: 'scene', label: '适用场景' },
+  { key: 'stepCount', label: '步骤数', align: 'center' },
+  { key: 'createTime', label: '创建时间' },
+  { key: 'actions', label: '操作', align: 'right' }
+]
+const userColumns = [
+  { key: 'displayName', label: '昵称' },
+  { key: 'username', label: '账号' },
+  { key: 'role', label: '角色', align: 'center' },
+  { key: 'status', label: '状态', align: 'center' },
+  { key: 'lastLoginAt', label: '最近登录' },
+  { key: 'createdAt', label: '创建时间' },
+  { key: 'actions', label: '操作', align: 'center' }
+]
+const sopStatsColumns = [
+  { key: 'taskName', label: 'SOP 名称' },
+  { key: 'scene', label: '适用场景' },
+  { key: 'totalCount', label: '执行次数', align: 'center' },
+  { key: 'passedCount', label: '通过次数', align: 'center' },
+  { key: 'passRate', label: '通过率', align: 'center' },
+  { key: 'averageScore', label: '平均得分', align: 'center' }
+]
+const historyColumns = [
+  { key: 'taskName', label: 'SOP 名称' },
+  { key: 'userName', label: '所属用户' },
+  { key: 'finishTime', label: '完成时间' },
+  { key: 'aiStatus', label: 'AI 结论', align: 'center' },
+  { key: 'reviewStatus', label: '人工复核', align: 'center' },
+  { key: 'actions', label: '操作', align: 'right' }
+]
 
 function showErrorMessage(error, fallback) {
   if (isAuthSessionError(error)) return
@@ -520,7 +550,17 @@ async function loadSopList() {
 }
 
 async function loadHistoryList() {
-  historyList.value = ((await listHistory()).data || []).map(normalizeHistory)
+  historyLoading.value = true
+  try {
+    historyList.value = ((await listHistory({
+      keyword: historyFilters.keyword,
+      aiStatus: historyFilters.aiStatus,
+      reviewStatus: historyFilters.reviewStatus,
+      sortOrder: historyFilters.sortOrder
+    })).data || []).map(normalizeHistory)
+  } finally {
+    historyLoading.value = false
+  }
 }
 
 async function loadUserList() {
@@ -531,6 +571,28 @@ async function loadStats() {
   const result = await getStats()
   summaryStats.value = result.data?.summaryStats || summaryStats.value
   sopStatsList.value = result.data?.sopStatsList || []
+}
+
+function applyHistoryFilters() {
+  loadHistoryList().catch((error) => showErrorMessage(error, '加载执行记录失败'))
+}
+
+function resetHistoryFilters() {
+  historyFilters.keyword = ''
+  historyFilters.aiStatus = ''
+  historyFilters.reviewStatus = ''
+  historyFilters.sortOrder = 'desc'
+  applyHistoryFilters()
+}
+
+function togglePendingReviewFilter() {
+  historyFilters.reviewStatus = historyFilters.reviewStatus === 'pending' ? '' : 'pending'
+  applyHistoryFilters()
+}
+
+function toggleAiAbnormalFilter() {
+  historyFilters.aiStatus = historyFilters.aiStatus === 'failed' ? '' : 'failed'
+  applyHistoryFilters()
 }
 
 async function reloadCurrentView() {
@@ -544,6 +606,7 @@ async function reloadCurrentView() {
 
 function handleMenuSelect(index) {
   activeMenu.value = index
+  sidebarOpen.value = false
   reloadCurrentView().catch((error) => showErrorMessage(error, '加载失败'))
 }
 
@@ -618,7 +681,7 @@ async function openDebugSop(row) {
 
 async function deleteCurrentSop(row) {
   try {
-    await ElMessageBox.confirm('确定删除该 SOP 吗？', '提示', { type: 'warning', customClass: 'minimal-msgbox' })
+    await ElMessageBox.confirm('确定删除该 SOP 吗？', '提示', { type: 'warning', customClass: 'apple-msgbox' })
     await removeSop(row.id)
     await Promise.all([reloadCurrentView(), loadStats()])
     ElMessage.success('删除成功')
@@ -778,18 +841,18 @@ function getReviewStatusText(status) {
   return '待复核'
 }
 
-function getReviewTagClass(status) {
-  if (status === 'approved') return 'is-review-approved'
-  if (status === 'rejected') return 'is-review-rejected'
-  if (status === 'needs_attention') return 'is-review-attention'
-  return 'is-review-pending'
-}
-
 function getReviewBadgeClass(status) {
   if (status === 'approved') return 'badge-success'
   if (status === 'rejected') return 'badge-danger'
   if (status === 'needs_attention') return 'badge-warning'
   return 'badge-default'
+}
+
+function getReviewBadgeType(status) {
+  if (status === 'approved') return 'success'
+  if (status === 'rejected') return 'danger'
+  if (status === 'needs_attention') return 'warning'
+  return 'default'
 }
 
 function formatSubsteps(list) {
@@ -807,100 +870,58 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* ─── Layout Shell ───────────────────────────────────────── */
+/* ── Layout Shell ────────────────────────────────────────── */
+
 .admin-layout {
   position: relative;
   display: flex;
   height: 100vh;
   overflow: hidden;
   background: var(--bg-base);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  font-family: var(--font-family);
 }
 
-/* ─── Ambient Blobs ──────────────────────────────────────── */
-.blob {
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(72px);
-  pointer-events: none;
-  z-index: 0;
-}
+/* ── Sidebar ─────────────────────────────────────────────── */
 
-.blob-blue {
-  width: 560px;
-  height: 560px;
-  top: -120px;
-  left: -80px;
-  background: radial-gradient(circle, rgba(0, 122, 255, 0.16) 0%, transparent 70%);
-  animation: float-a 10s ease-in-out infinite alternate;
-}
-
-.blob-purple {
-  width: 480px;
-  height: 480px;
-  bottom: -100px;
-  right: -60px;
-  background: radial-gradient(circle, rgba(88, 86, 214, 0.11) 0%, transparent 70%);
-  animation: float-b 13s ease-in-out infinite alternate;
-}
-
-.blob-green {
-  width: 360px;
-  height: 360px;
-  top: 10%;
-  right: 20%;
-  background: radial-gradient(circle, rgba(52, 199, 89, 0.08) 0%, transparent 70%);
-  animation: float-c 16s ease-in-out infinite alternate;
-}
-
-@keyframes float-a {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(40px, 30px) scale(1.08); }
-}
-@keyframes float-b {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(-30px, -40px) scale(1.06); }
-}
-@keyframes float-c {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(20px, -25px) scale(1.04); }
-}
-
-/* ─── Sidebar ─────────────────────────────────────────────── */
 .sidebar {
   position: relative;
   z-index: 10;
   width: var(--sidebar-width);
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.72);
-  border-right: 1px solid rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(48px) saturate(160%);
-  -webkit-backdrop-filter: blur(48px) saturate(160%);
-  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.04), 2px 0 16px rgba(0, 0, 0, 0.04);
+  background: var(--material-regular);
+  border-right: 1px solid var(--separator);
+  backdrop-filter: blur(var(--blur-lg)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(160%);
   display: flex;
   flex-direction: column;
-  padding: 16px 0 20px;
+  padding: var(--sp-4) 0 var(--sp-5);
   overflow-y: auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sidebar {
+    box-shadow: 1px 0 0 rgba(0, 0, 0, 0.3);
+  }
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 4px 16px 20px;
-  padding: 10px 12px;
-  font-size: 17px;
+  margin: var(--sp-1) var(--sp-4) var(--sp-5);
+  padding: 10px var(--sp-3);
+  font-size: var(--fs-headline);
   font-weight: 700;
   color: var(--text-main);
   border-radius: 14px;
-  background: rgba(120, 120, 128, 0.08);
+  background: var(--fill-quaternary);
 }
 
 .brand-logo {
   width: 30px;
   height: 30px;
   background: linear-gradient(150deg, var(--accent), var(--accent-deep));
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -909,62 +930,68 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-/* ─── Nav Menu ────────────────────────────────────────────── */
+/* ── Nav Menu ────────────────────────────────────────────── */
+
 .nav-menu {
   flex: 1;
   padding: 0 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   width: 100%;
-  height: 48px;
-  padding: 0 12px;
+  height: 44px;
+  padding: 0 var(--sp-3);
   border: none;
-  border-radius: 13px;
+  border-radius: 10px;
   background: transparent;
   color: var(--text-soft);
-  font-size: 15px;
+  font-size: var(--fs-subheadline);
   font-weight: 500;
   cursor: pointer;
   font-family: inherit;
   text-align: left;
   transition:
-    background-color 0.15s ease,
-    color 0.15s ease,
-    transform 0.08s ease;
+    background-color var(--duration-short) var(--ease-standard),
+    color var(--duration-short) var(--ease-standard),
+    transform var(--duration-micro) var(--ease-standard);
 }
 
 .nav-item:hover {
-  background: rgba(120, 120, 128, 0.10);
+  background: var(--fill-quaternary);
   color: var(--text-main);
 }
 
 .nav-item.active {
-  background: rgba(120, 120, 128, 0.13);
-  color: var(--text-main);
+  background: rgba(0, 122, 255, 0.12);
+  color: var(--accent);
   font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  .nav-item.active {
+    background: rgba(10, 132, 255, 0.18);
+  }
 }
 
 .nav-item:active {
   transform: scale(0.97);
 }
 
-/* Colored icon badge */
 .nav-icon-wrap {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 15px;
+  font-size: 14px;
   flex-shrink: 0;
 }
 
@@ -974,15 +1001,11 @@ onUnmounted(() => {
 .icon-green  { background: linear-gradient(140deg, #34C759, #28A745); }
 .icon-red    { background: linear-gradient(140deg, #FF6B6B, #FF3B30); }
 
-.nav-icon {
-  font-size: 16px;
-  flex-shrink: 0;
-}
+/* ── Sidebar Bottom ──────────────────────────────────────── */
 
-/* ─── Sidebar Bottom ──────────────────────────────────────── */
 .sidebar-bottom {
-  margin: 16px 10px 0;
-  padding-top: 16px;
+  margin: var(--sp-4) 10px 0;
+  padding-top: var(--sp-4);
   border-top: 1px solid var(--line-soft);
 }
 
@@ -990,7 +1013,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 8px 14px;
+  padding: var(--sp-2) var(--sp-2) 14px;
 }
 
 .avatar {
@@ -1019,12 +1042,12 @@ onUnmounted(() => {
 .logout-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
   width: 100%;
-  height: 44px;
+  height: var(--touch-target);
   padding: 0 14px;
   border: none;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-soft);
   font-size: 14px;
@@ -1037,7 +1060,7 @@ onUnmounted(() => {
 }
 
 .logout-btn:hover {
-  background: var(--apple-fill);
+  background: var(--fill-quaternary);
   color: var(--text-main);
 }
 
@@ -1045,7 +1068,8 @@ onUnmounted(() => {
   transform: scale(0.97);
 }
 
-/* ─── Main Container ──────────────────────────────────────── */
+/* ── Main Container ──────────────────────────────────────── */
+
 .main-container {
   position: relative;
   z-index: 1;
@@ -1055,30 +1079,30 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* ─── Top Header ──────────────────────────────────────────── */
+/* ── Top Header ──────────────────────────────────────────── */
+
 .top-header {
-  min-height: 88px;
-  background: rgba(255, 255, 255, 0.72);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(48px) saturate(160%);
-  -webkit-backdrop-filter: blur(48px) saturate(160%);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05), 0 2px 12px rgba(0, 0, 0, 0.04);
+  height: 64px;
+  background: var(--material-regular);
+  border-bottom: 1px solid var(--separator);
+  backdrop-filter: blur(var(--blur-lg)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(160%);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 32px;
+  padding: 0 var(--sp-8);
   flex-shrink: 0;
 }
 
 .header-left {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: baseline;
+  gap: var(--sp-3);
 }
 
 .header-left h2 {
   margin: 0;
-  font-size: 26px;
+  font-size: var(--fs-title2);
   font-weight: 700;
   color: var(--text-main);
   letter-spacing: -0.03em;
@@ -1087,8 +1111,8 @@ onUnmounted(() => {
 
 .header-subtitle {
   margin: 0;
-  font-size: 14px;
-  color: var(--text-soft);
+  font-size: var(--fs-footnote);
+  color: var(--text-faint);
   line-height: 1.4;
 }
 
@@ -1099,196 +1123,76 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-/* ─── Pill Buttons ────────────────────────────────────────── */
-.pill-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 18px;
-  min-height: 44px;
-  border-radius: 9999px;
-  border: 1px solid var(--line-soft);
-  background: var(--apple-fill);
-  color: var(--text-main);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  font-family: inherit;
-  white-space: nowrap;
-  transition:
-    background-color var(--duration-short) var(--ease-standard),
-    border-color var(--duration-short) var(--ease-standard),
-    transform var(--duration-micro) var(--ease-standard);
-}
+/* ── Content Area ────────────────────────────────────────── */
 
-.pill-btn:hover {
-  background: rgba(120, 120, 128, 0.18);
-  border-color: var(--line-strong);
-}
-
-.pill-btn:active {
-  transform: scale(0.97);
-}
-
-.primary-pill {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  font-weight: 600;
-}
-
-.primary-pill:hover {
-  background: var(--accent-deep);
-  border-color: var(--accent-deep);
-}
-
-/* ─── Content Area ────────────────────────────────────────── */
 .content-area {
   flex: 1;
-  padding: 24px;
+  padding: var(--sp-6);
   overflow-y: auto;
 }
 
-/* ─── Data Table ──────────────────────────────────────────── */
-.table-card {
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(32px) saturate(150%);
-  -webkit-backdrop-filter: blur(32px) saturate(150%);
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05), 0 8px 32px rgba(0, 0, 0, 0.04);
-  overflow: hidden;
-}
+/* ── Stats ───────────────────────────────────────────────── */
 
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.data-table thead th {
-  text-align: left;
-  padding: 13px 16px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  border-bottom: 1px solid var(--line-soft);
-  background: transparent;
-  white-space: nowrap;
-}
-
-.data-table tbody td {
-  padding: 14px 16px;
-  font-size: 14px;
-  color: var(--text-main);
-  border-bottom: 1px solid var(--line-soft);
-  vertical-align: middle;
-  transition: background 0.1s;
-}
-
-.data-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-/* Zebra stripe */
-.data-table tbody tr:nth-child(even) td {
-  background: rgba(120, 120, 128, 0.03);
-}
-
-.data-table tbody tr:hover td {
-  background: rgba(0, 122, 255, 0.05) !important;
-}
-
-.empty-row {
-  text-align: center;
-  color: var(--text-faint) !important;
-  padding: 48px 16px !important;
-  font-size: 14px;
-}
-
-/* ─── Badges ──────────────────────────────────────────────── */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 10px;
-  border-radius: 9999px;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.badge-success { background: rgba(52, 199, 89, 0.12); color: #2f9b47; }
-.badge-danger  { background: rgba(255, 59, 48, 0.10); color: #d9342b; }
-.badge-warning { background: rgba(255, 159, 10, 0.12); color: #b26a00; }
-.badge-info    { background: rgba(0, 122, 255, 0.10); color: #0066cc; }
-.badge-default { background: rgba(120, 120, 128, 0.12); color: var(--text-soft); }
-
-/* ─── Text Button ─────────────────────────────────────────── */
-.text-btn {
-  border: none;
-  background: none;
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 6px 10px;
-  border-radius: 8px;
-  min-height: 44px;
-  font-family: inherit;
-  transition: background-color var(--duration-short) var(--ease-standard);
-}
-
-.text-btn:hover { background: rgba(0, 122, 255, 0.08); }
-.text-btn:active { background: rgba(0, 122, 255, 0.14); }
-.text-btn.danger { color: var(--danger); }
-.text-btn.danger:hover { background: rgba(255, 59, 48, 0.08); }
-.text-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
-/* ─── Stats ───────────────────────────────────────────────── */
 .stats-view {
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: var(--sp-8);
 }
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-4);
 }
 
 .stat-card {
   position: relative;
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(28px) saturate(150%);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  background: var(--material-chrome);
+  backdrop-filter: blur(var(--blur-md)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--blur-md)) saturate(150%);
   border: 1px solid rgba(255, 255, 255, 0.60);
-  border-radius: 16px;
-  padding: 20px 24px 24px;
-  min-height: 148px;
+  border-radius: var(--radius-xl);
+  padding: var(--sp-5) var(--sp-6) var(--sp-6);
+  min-height: 160px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: var(--sp-2);
   overflow: hidden;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.04);
-  transition: box-shadow 0.15s ease, transform 0.12s ease;
+  transition: box-shadow var(--duration-short) ease, transform var(--duration-short) ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .stat-card {
+    border-color: rgba(84, 84, 88, 0.4);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  }
 }
 
 .stat-card:hover {
   box-shadow: 0 10px 36px rgba(0, 0, 0, 0.10), 0 4px 12px rgba(0, 0, 0, 0.06);
-  transform: translateY(-3px);
-  border-color: rgba(255, 255, 255, 0.80);
+  transform: translateY(-2px);
 }
 
+.stat-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 16px;
+  margin-bottom: var(--sp-1);
+}
 
 .highlight-card {
   border-color: rgba(255, 59, 48, 0.22);
-  background: linear-gradient(160deg, rgba(255, 59, 48, 0.04) 0%, transparent 60%), var(--surface);
+  background: linear-gradient(160deg, rgba(255, 59, 48, 0.04) 0%, transparent 60%), var(--material-chrome);
 }
 
 .stat-label {
-  font-size: 12px;
+  font-size: var(--fs-caption1);
   font-weight: 600;
   color: var(--text-faint);
   text-transform: uppercase;
@@ -1296,7 +1200,7 @@ onUnmounted(() => {
 }
 
 .stat-value {
-  font-size: 36px;
+  font-size: 44px;
   font-weight: 700;
   color: var(--text-main);
   letter-spacing: -0.04em;
@@ -1304,338 +1208,47 @@ onUnmounted(() => {
 }
 
 .stat-desc {
-  font-size: 13px;
+  font-size: var(--fs-footnote);
   color: var(--text-soft);
   line-height: 1.5;
 }
 
-.section-block {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+/* ── Filter ──────────────────────────────────────────────── */
+
+.filter-input {
+  min-width: 220px;
+  flex: 1 1 260px;
 }
 
-.section-head {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.filter-select {
+  width: 160px;
 }
 
-.section-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-main);
-  letter-spacing: -0.02em;
+.filter-sort {
+  width: 150px;
 }
 
-.section-subtitle {
-  font-size: 14px;
-  color: var(--text-soft);
-}
-
-/* ─── Dialogs ─────────────────────────────────────────────── */
-:deep(.minimal-dialog) {
-  border-radius: 24px !important;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.70) !important;
-  background: rgba(255, 255, 255, 0.94) !important;
-  backdrop-filter: blur(60px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(60px) saturate(180%) !important;
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.04),
-    0 8px 32px rgba(0, 0, 0, 0.08),
-    0 32px 80px rgba(0, 0, 0, 0.10) !important;
-}
-
-:deep(.minimal-dialog .el-dialog__header) {
-  padding: 24px 28px 18px;
-  margin-right: 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  background: transparent;
-}
-
-:deep(.minimal-dialog .el-dialog__title) {
-  font-weight: 750;
-  font-size: 20px;
-  color: var(--text-main);
-  letter-spacing: -0.03em;
-}
-
-:deep(.minimal-dialog .el-dialog__headerbtn) {
-  top: 22px;
-  right: 22px;
-  width: 30px;
-  height: 30px;
-  background: rgba(120, 120, 128, 0.12);
-  border-radius: 50%;
-}
-
-:deep(.minimal-dialog .el-dialog__headerbtn .el-dialog__close) {
-  font-size: 13px;
-  color: var(--text-soft);
-}
-
-:deep(.minimal-dialog .el-dialog__headerbtn:hover) {
-  background: rgba(120, 120, 128, 0.20);
-}
-
-:deep(.minimal-dialog .el-dialog__body) {
-  padding: 22px 28px;
-  background: transparent;
-}
-
-:deep(.minimal-dialog .el-dialog__footer) {
-  background: transparent;
-}
-
-/* ─── Dialog Form Styles ──────────────────────────────────── */
-.form-row {
-  display: flex;
-  gap: 16px;
-}
-
-.flex-1 { flex: 1; }
-
-:deep(.minimal-form .el-form-item__label) {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-soft);
-  padding-bottom: 6px;
-  letter-spacing: -0.01em;
-}
-
-/* Filled-style input (matches Login.vue field-input) */
-:deep(.minimal-form .el-input__wrapper) {
-  border: none !important;
-  border-radius: 13px;
-  padding: 4px 14px;
-  background: rgba(120, 120, 128, 0.11);
-  box-shadow: none !important;
-  height: 46px;
-  transition: background 0.15s, box-shadow 0.15s;
-}
-
-:deep(.minimal-form .el-input__wrapper.is-focus) {
-  background: rgba(120, 120, 128, 0.07) !important;
-  box-shadow: 0 0 0 3.5px rgba(0, 122, 255, 0.30) !important;
-}
-
-:deep(.minimal-form .el-input__inner) {
-  color: var(--text-main);
-  font-size: 15px;
-  font-family: inherit;
-}
-
-:deep(.minimal-form .el-textarea__inner) {
-  background: rgba(120, 120, 128, 0.11);
-  border: none !important;
-  border-radius: 13px;
-  padding: 12px 14px;
-  font-family: inherit;
-  font-size: 15px;
-  color: var(--text-main);
-  box-shadow: none !important;
-  resize: none;
-  transition: background 0.15s, box-shadow 0.15s;
-}
-
-:deep(.minimal-form .el-textarea__inner:focus) {
-  background: rgba(120, 120, 128, 0.07) !important;
-  box-shadow: 0 0 0 3.5px rgba(0, 122, 255, 0.30) !important;
-  outline: none;
-}
-
-/* Steps Section in Create Dialog */
-.steps-section {
-  margin-top: 20px;
-}
-
-.step-card {
-  background: rgba(120, 120, 128, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.60);
-  border-radius: 16px;
-  padding: 18px 20px;
-  margin-top: 10px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
-}
-
-.step-header {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 10px;
-}
-
-.upload-btn {
-  margin-top: 4px;
-  min-height: 44px !important;
-  border-radius: 12px !important;
-  border: 1px solid rgba(120, 120, 128, 0.22) !important;
-  border-color: rgba(120, 120, 128, 0.22) !important;
-  background: rgba(120, 120, 128, 0.09) !important;
-  background-color: rgba(120, 120, 128, 0.09) !important;
-  color: var(--text-main) !important;
-  font-size: 14px !important;
-  font-weight: 500 !important;
-  font-family: inherit !important;
-}
-
-.step-hint {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--text-faint);
-  line-height: 1.6;
-}
-
-/* Config Form */
-.config-form {
-  margin-top: 16px;
-}
-
-:deep(.minimal-dialog .el-input-number) { width: 100%; }
-
-:deep(.minimal-dialog .el-input-number .el-input__wrapper) {
-  border-radius: 0;
-  border-left: none;
-  border-right: none;
-}
-
-:deep(.minimal-dialog .el-input-number__decrease) {
-  width: 38px;
-  border-color: var(--line-soft);
-  background: rgba(120, 120, 128, 0.08);
-  color: var(--text-soft);
-  border-top-left-radius: 12px;
-  border-bottom-left-radius: 12px;
-}
-
-:deep(.minimal-dialog .el-input-number__increase) {
-  width: 38px;
-  border-color: var(--line-soft);
-  background: rgba(120, 120, 128, 0.08);
-  color: var(--text-soft);
-  border-top-right-radius: 12px;
-  border-bottom-right-radius: 12px;
-}
-
-/* Alert in config dialog */
-:deep(.minimal-dialog .el-alert) {
-  border-radius: 12px;
-  border: 1px solid transparent;
-  background: rgba(0, 122, 255, 0.07);
-  color: var(--text-soft);
-}
-
-/* Dialog Footer */
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 0 24px 22px;
-}
-
-.submit-btn {
-  background: #007AFF !important;
-  background-color: #007AFF !important;
-  border: none !important;
-  border-radius: 13px !important;
-  min-height: 46px !important;
-  font-weight: 600 !important;
-  font-size: 15px !important;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14), inset 0 1px 0 rgba(255,255,255,0.18) !important;
-  transition: background 0.12s, transform 0.08s !important;
-}
-
-.submit-btn:hover {
-  background: #0071F5 !important;
-  background-color: #0071F5 !important;
-}
-
-.submit-btn:active {
-  background: #0064DB !important;
-  background-color: #0064DB !important;
-  transform: scale(0.985) !important;
-}
-
-.dialog-footer :deep(.el-button:not(.submit-btn)) {
-  min-height: 46px;
-  border-radius: 13px;
-  border: 1px solid rgba(120, 120, 128, 0.22) !important;
-  background: rgba(120, 120, 128, 0.10) !important;
-  background-color: rgba(120, 120, 128, 0.10) !important;
-  color: var(--text-soft);
-  font-size: 15px;
-  padding: 8px 20px;
-}
-
-.dialog-footer :deep(.el-button:not(.submit-btn):hover) {
-  background: rgba(120, 120, 128, 0.16) !important;
-  background-color: rgba(120, 120, 128, 0.16) !important;
-  color: var(--text-main);
-}
-
-/* ─── Debug Dialog ────────────────────────────────────────── */
-.detail-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.summary {
-  display: inline-flex;
-  align-self: flex-start;
-  font-weight: 600;
-  color: var(--text-soft);
-  font-size: 13px;
-  background: rgba(120, 120, 128, 0.10);
-  padding: 6px 14px;
-  border-radius: 9999px;
-  border: 1px solid rgba(120, 120, 128, 0.14);
-  letter-spacing: -0.01em;
-}
+/* ── Debug Dialog ────────────────────────────────────────── */
 
 .debug-summary {
-  font-size: 15px;
+  font-size: var(--fs-subheadline);
   line-height: 1.6;
-  margin-bottom: 4px;
-}
-
-.detail-box {
-  background: rgba(120, 120, 128, 0.07);
-  border-radius: 16px;
-  padding: 16px 18px;
-  border: 1px solid rgba(255, 255, 255, 0.60);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  margin-bottom: var(--sp-1);
 }
 
 .debug-step-box {
-  border-radius: 16px;
-  padding: 20px 22px;
+  border-radius: var(--radius-lg);
+  padding: var(--sp-5) 22px;
 }
 
 .debug-step-box + .debug-step-box {
-  margin-top: 4px;
-}
-
-.detail-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-main);
-  margin-bottom: 8px;
+  margin-top: var(--sp-1);
 }
 
 .debug-step-box .detail-title {
-  font-size: 16px;
+  font-size: var(--fs-callout);
   line-height: 1.5;
-  margin-bottom: 12px;
-}
-
-.detail-text {
-  color: var(--text-soft);
-  font-size: 14px;
-  line-height: 1.7;
+  margin-bottom: var(--sp-3);
 }
 
 .debug-step-box .detail-text + .detail-text {
@@ -1644,10 +1257,10 @@ onUnmounted(() => {
 
 .manual-segmentation-box,
 .demo-video-box {
-  margin-top: 16px;
-  padding: 18px 20px;
+  margin-top: var(--sp-4);
+  padding: 18px var(--sp-5);
   border-radius: 14px;
-  background: rgba(0, 122, 255, 0.04);
+  background: var(--info-fill);
   border: 1px solid rgba(0, 122, 255, 0.14);
   display: flex;
   flex-direction: column;
@@ -1662,21 +1275,21 @@ onUnmounted(() => {
 
 .manual-subtitle,
 .muted-text {
-  font-size: 12px;
+  font-size: var(--fs-caption1);
   color: var(--text-faint);
   line-height: 1.7;
 }
 
 .manual-btn {
   align-self: flex-start;
-  border-radius: 9999px !important;
+  border-radius: var(--radius-full) !important;
 }
 
 .frame-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 12px;
-  margin-top: 16px;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
 }
 
 .frame {
@@ -1687,23 +1300,16 @@ onUnmounted(() => {
   background: var(--surface-secondary);
 }
 
-.video {
-  width: 100%;
-  max-height: 340px;
-  background: #000;
-  border-radius: 16px;
-  display: block;
+/* ── Config Form ─────────────────────────────────────────── */
+
+.config-form {
+  margin-top: var(--sp-4);
 }
 
-.tag-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+/* ── Review Radio — segmented control style ──────────────── */
 
-/* Review Radio — segmented control style */
 :deep(.review-radio-group) {
-  background: rgba(120, 120, 128, 0.12);
+  background: var(--fill-tertiary);
   border-radius: 11px;
   padding: 3px;
   display: inline-flex;
@@ -1716,7 +1322,7 @@ onUnmounted(() => {
 
 :deep(.review-radio-group .el-radio-button__inner) {
   border: none !important;
-  border-radius: 8px !important;
+  border-radius: var(--radius-sm) !important;
   background: transparent !important;
   color: var(--text-soft) !important;
   font-size: 14px;
@@ -1725,85 +1331,114 @@ onUnmounted(() => {
   height: 38px;
   line-height: 38px;
   padding: 0 14px;
-  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  transition: background var(--duration-short), color var(--duration-short), box-shadow var(--duration-short);
   box-shadow: none !important;
 }
 
 :deep(.review-radio-group .el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background: #007AFF !important;
+  background: var(--accent) !important;
   color: #fff !important;
   font-weight: 600 !important;
   box-shadow: 0 1px 6px rgba(0, 122, 255, 0.35) !important;
 }
 
+/* ── Hamburger Button ────────────────────────────────────── */
 
-/* ─── Reduced Motion blob override ─────────────────────────── */
-@media (prefers-reduced-motion: reduce) {
-  .blob { animation: none; }
+.hamburger-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-target);
+  height: var(--touch-target);
+  border: none;
+  background: var(--fill-quaternary);
+  color: var(--text-main);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 20px;
+  transition: background var(--duration-short);
 }
 
-/* ─── Reduced Motion ──────────────────────────────────────── */
-@media (prefers-reduced-motion: reduce) {
-  .nav-item,
-  .logout-btn,
-  .pill-btn,
-  .text-btn {
-    transition: none;
-  }
+.hamburger-btn:hover {
+  background: var(--fill-secondary);
 }
 
-/* ─── Responsive ──────────────────────────────────────────── */
+/* ── Sidebar Backdrop ───────────────────────────────────── */
+
+.sidebar-backdrop {
+  display: none;
+}
+
+/* ── Responsive ──────────────────────────────────────────── */
+
 @media (max-width: 1100px) {
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 768px) {
-  .admin-layout {
-    flex-direction: column;
-    height: auto;
-    overflow: auto;
+  .hamburger-btn {
+    display: flex;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 99;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-medium) var(--ease-standard);
+  }
+
+  .sidebar-backdrop.is-open {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: var(--sidebar-width);
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform var(--duration-medium) var(--ease-spring);
+  }
+
+  .sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  .main-container { overflow: visible; margin-left: 0; }
+  .content-area { padding: var(--sp-4); }
+
+  .filter-toolbar,
+  .filter-form,
+  .filter-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-input,
+  .filter-select,
+  .filter-sort {
     width: 100%;
-    flex-direction: row;
-    flex-wrap: wrap;
-    height: auto;
-    padding: 12px;
-    border-right: none;
-    border-bottom: 1px solid var(--line-soft);
   }
-
-  .brand { margin-bottom: 0; }
-
-  .nav-menu {
-    flex-direction: row;
-    gap: 4px;
-  }
-
-  .nav-item { height: 40px; }
-
-  .sidebar-bottom {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding-top: 10px;
-    margin-top: 8px;
-  }
-
-  .user-card { padding-bottom: 0; }
-
-  .main-container { overflow: visible; }
-
-  .content-area { padding: 16px; }
 
   .top-header {
-    padding: 16px;
-    min-height: auto;
+    padding: var(--sp-4);
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--sp-3);
+  }
+
+  .header-left {
+    flex: 1;
     flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
+    gap: var(--sp-1);
   }
 
   .header-right {
@@ -1812,7 +1447,16 @@ onUnmounted(() => {
   }
 
   .stats-grid { grid-template-columns: 1fr; }
-
   .form-row { flex-direction: column; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-item,
+  .logout-btn,
+  .stat-card,
+  .sidebar,
+  .sidebar-backdrop {
+    transition: none;
+  }
 }
 </style>

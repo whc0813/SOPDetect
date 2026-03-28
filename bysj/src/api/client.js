@@ -237,8 +237,20 @@ export async function retryEvaluationJob(jobId) {
   })
 }
 
-export async function listHistory() {
-  return apiRequest('/api/history')
+export async function listHistory(filters = {}) {
+  const params = new URLSearchParams()
+  const keyword = String(filters.keyword || '').trim()
+  const aiStatus = String(filters.aiStatus || '').trim()
+  const reviewStatus = String(filters.reviewStatus || '').trim()
+  const sortOrder = String(filters.sortOrder || '').trim()
+
+  if (keyword) params.set('keyword', keyword)
+  if (aiStatus) params.set('aiStatus', aiStatus)
+  if (reviewStatus) params.set('reviewStatus', reviewStatus)
+  if (sortOrder) params.set('sortOrder', sortOrder)
+
+  const query = params.toString()
+  return apiRequest(`/api/history${query ? `?${query}` : ''}`)
 }
 
 export async function getHistoryDetail(recordId) {

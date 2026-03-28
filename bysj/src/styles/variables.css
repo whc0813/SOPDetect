@@ -1,0 +1,210 @@
+/* ═══════════════════════════════════════════════════════════
+   Apple HIG Design Tokens — Light Mode (Default)
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Label Colors ──────────────────────────────────────── */
+  --label-primary: #000000;
+  --label-secondary: rgba(60, 60, 67, 0.6);
+  --label-tertiary: rgba(60, 60, 67, 0.3);
+  --label-quaternary: rgba(60, 60, 67, 0.18);
+
+  /* ── Background Colors ─────────────────────────────────── */
+  --system-bg-primary: #f2f2f7;
+  --system-bg-secondary: #ffffff;
+  --system-bg-tertiary: #f2f2f7;
+  --grouped-bg-primary: #f2f2f7;
+  --grouped-bg-secondary: #ffffff;
+  --grouped-bg-tertiary: #f9f9fb;
+
+  /* ── Fill Colors ───────────────────────────────────────── */
+  --fill-primary: rgba(120, 120, 128, 0.2);
+  --fill-secondary: rgba(120, 120, 128, 0.16);
+  --fill-tertiary: rgba(120, 120, 128, 0.12);
+  --fill-quaternary: rgba(120, 120, 128, 0.08);
+
+  /* ── Separator Colors ──────────────────────────────────── */
+  --separator: rgba(60, 60, 67, 0.29);
+  --separator-opaque: #c6c6c8;
+
+  /* ── System Tint Colors ────────────────────────────────── */
+  --system-blue: #007aff;
+  --system-green: #34c759;
+  --system-indigo: #5856d6;
+  --system-orange: #ff9500;
+  --system-pink: #ff2d55;
+  --system-purple: #af52de;
+  --system-red: #ff3b30;
+  --system-teal: #5ac8fa;
+  --system-yellow: #ffcc00;
+
+  /* ── Semantic Aliases ──────────────────────────────────── */
+  --bg-base: var(--system-bg-primary);
+  --bg-elevated: rgba(255, 255, 255, 0.72);
+  --surface: var(--grouped-bg-secondary);
+  --surface-strong: var(--system-bg-secondary);
+  --surface-secondary: var(--grouped-bg-tertiary);
+  --text-main: var(--label-primary);
+  --text-soft: var(--label-secondary);
+  --text-faint: var(--label-tertiary);
+  --line-soft: var(--separator);
+  --line-strong: rgba(60, 60, 67, 0.36);
+  --accent: var(--system-blue);
+  --accent-deep: #0063cc;
+  --success: var(--system-green);
+  --danger: var(--system-red);
+  --apple-fill: var(--fill-primary);
+  --apple-fill-strong: rgba(120, 120, 128, 0.28);
+
+  /* ── Semantic Fills ────────────────────────────────────── */
+  --warning-fill: rgba(255, 159, 10, 0.14);
+  --success-fill: rgba(52, 199, 89, 0.14);
+  --danger-fill: rgba(255, 59, 48, 0.12);
+  --info-fill: rgba(0, 122, 255, 0.10);
+
+  /* ── Badge Text Colors ─────────────────────────────────── */
+  --badge-success-color: #1a7f37;
+  --badge-danger-color: #cf222e;
+  --badge-warning-color: #9a6700;
+  --badge-info-color: #0550ae;
+
+  /* ── Material Backgrounds ──────────────────────────────── */
+  --material-ultra-thin: rgba(255, 255, 255, 0.45);
+  --material-thin: rgba(255, 255, 255, 0.55);
+  --material-regular: rgba(255, 255, 255, 0.72);
+  --material-thick: rgba(255, 255, 255, 0.85);
+  --material-ultra-thick: rgba(255, 255, 255, 0.94);
+  --material-chrome: rgba(255, 255, 255, 0.78);
+
+  /* ── Typography ────────────────────────────────────────── */
+  --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", SFMono-Regular, ui-monospace, Menlo, monospace;
+
+  --fs-large-title: 34px;
+  --fs-title1: 28px;
+  --fs-title2: 22px;
+  --fs-title3: 20px;
+  --fs-headline: 17px;
+  --fs-body: 17px;
+  --fs-callout: 16px;
+  --fs-subheadline: 15px;
+  --fs-footnote: 13px;
+  --fs-caption1: 12px;
+  --fs-caption2: 11px;
+
+  /* ── Spacing (8-pt grid) ───────────────────────────────── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 28px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* ── Corner Radii ──────────────────────────────────────── */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-3xl: 28px;
+  --radius-full: 9999px;
+
+  /* ── Layout ────────────────────────────────────────────── */
+  --sidebar-width: 260px;
+  --toolbar-height: 52px;
+  --touch-target: 44px;
+
+  /* ── Motion ────────────────────────────────────────────── */
+  --duration-micro: 100ms;
+  --duration-short: 200ms;
+  --duration-medium: 350ms;
+  --duration-long: 500ms;
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
+
+  /* ── Blur ──────────────────────────────────────────────── */
+  --blur-sm: 16px;
+  --blur-md: 24px;
+  --blur-lg: 48px;
+  --blur-xl: 60px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Dark Mode
+   ═══════════════════════════════════════════════════════════ */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --label-primary: #ffffff;
+    --label-secondary: rgba(235, 235, 245, 0.6);
+    --label-tertiary: rgba(235, 235, 245, 0.3);
+    --label-quaternary: rgba(235, 235, 245, 0.18);
+
+    --system-bg-primary: #000000;
+    --system-bg-secondary: #1c1c1e;
+    --system-bg-tertiary: #2c2c2e;
+    --grouped-bg-primary: #000000;
+    --grouped-bg-secondary: #1c1c1e;
+    --grouped-bg-tertiary: #2c2c2e;
+
+    --fill-primary: rgba(120, 120, 128, 0.36);
+    --fill-secondary: rgba(120, 120, 128, 0.32);
+    --fill-tertiary: rgba(120, 120, 128, 0.24);
+    --fill-quaternary: rgba(120, 120, 128, 0.18);
+
+    --separator: rgba(84, 84, 88, 0.65);
+    --separator-opaque: #38383a;
+
+    --system-blue: #0a84ff;
+    --system-green: #30d158;
+    --system-indigo: #5e5ce6;
+    --system-orange: #ff9f0a;
+    --system-pink: #ff375f;
+    --system-purple: #bf5af2;
+    --system-red: #ff453a;
+    --system-teal: #64d2ff;
+    --system-yellow: #ffd60a;
+
+    --bg-elevated: rgba(44, 44, 46, 0.72);
+    --surface-secondary: #2c2c2e;
+    --line-strong: rgba(84, 84, 88, 0.8);
+    --accent-deep: #409cff;
+    --apple-fill-strong: rgba(120, 120, 128, 0.44);
+
+    --warning-fill: rgba(255, 159, 10, 0.2);
+    --success-fill: rgba(48, 209, 88, 0.2);
+    --danger-fill: rgba(255, 69, 58, 0.18);
+    --info-fill: rgba(10, 132, 255, 0.15);
+
+    --badge-success-color: var(--system-green);
+    --badge-danger-color: var(--system-red);
+    --badge-warning-color: var(--system-orange);
+    --badge-info-color: var(--system-blue);
+
+    --material-ultra-thin: rgba(30, 30, 30, 0.45);
+    --material-thin: rgba(30, 30, 30, 0.55);
+    --material-regular: rgba(44, 44, 46, 0.72);
+    --material-thick: rgba(44, 44, 46, 0.85);
+    --material-ultra-thick: rgba(44, 44, 46, 0.94);
+    --material-chrome: rgba(44, 44, 46, 0.78);
+  }
+}
+
+/* ── Reduced Motion ──────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-micro: 0ms;
+    --duration-short: 0ms;
+    --duration-medium: 0ms;
+    --duration-long: 0ms;
+  }
+}

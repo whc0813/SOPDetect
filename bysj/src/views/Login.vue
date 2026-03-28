@@ -1,12 +1,8 @@
 <template>
   <div class="login-page">
-    <!-- Ambient background blobs -->
-    <div class="blob blob-blue" aria-hidden="true"></div>
-    <div class="blob blob-purple" aria-hidden="true"></div>
-    <div class="blob blob-green" aria-hidden="true"></div>
+    <AppBlobs />
 
     <div class="login-card">
-      <!-- App Icon -->
       <div class="brand-section">
         <div class="app-icon" aria-hidden="true">
           <svg width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -20,7 +16,6 @@
         <p class="app-tagline">标准操作流程管理系统</p>
       </div>
 
-      <!-- Segmented Control -->
       <div class="seg-control" role="tablist">
         <button
           role="tab"
@@ -38,21 +33,28 @@
         >注册</button>
       </div>
 
-      <!-- Login Form -->
       <form v-if="mode === 'login'" class="auth-form" @submit.prevent="handleLogin" novalidate>
         <div class="field-wrap" :class="{ 'is-error': errors.username }">
-          <input
-            v-model="loginForm.username"
-            type="text"
-            class="field-input"
-            placeholder="账号"
-            autocomplete="username"
-            @input="clearError('username')"
-          />
+          <div class="field-row">
+            <span class="field-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="5.5" r="3.5" stroke="currentColor" stroke-width="1.6"/><path d="M2.5 16.5c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </span>
+            <input
+              v-model="loginForm.username"
+              type="text"
+              class="field-input"
+              placeholder="账号"
+              autocomplete="username"
+              @input="clearError('username')"
+            />
+          </div>
           <p v-if="errors.username" class="field-err" role="alert">{{ errors.username }}</p>
         </div>
         <div class="field-wrap" :class="{ 'is-error': errors.password }">
           <div class="field-row">
+            <span class="field-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="3" y="8" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M6 8V5.5a3 3 0 0 1 6 0V8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </span>
             <input
               v-model="loginForm.password"
               :type="showLoginPwd ? 'text' : 'password'"
@@ -73,18 +75,30 @@
         </button>
       </form>
 
-      <!-- Register Form -->
       <form v-else class="auth-form" @submit.prevent="handleRegister" novalidate>
         <div class="field-wrap" :class="{ 'is-error': errors.displayName }">
-          <input v-model="registerForm.displayName" type="text" class="field-input" placeholder="昵称" autocomplete="name" @input="clearError('displayName')" />
+          <div class="field-row">
+            <span class="field-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 2l1.8 3.6L15 6.3l-3 2.9.7 4.1L9 11.5l-3.7 1.8.7-4.1-3-2.9 4.2-.7z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="none"/></svg>
+            </span>
+            <input v-model="registerForm.displayName" type="text" class="field-input" placeholder="昵称" autocomplete="name" @input="clearError('displayName')" />
+          </div>
           <p v-if="errors.displayName" class="field-err" role="alert">{{ errors.displayName }}</p>
         </div>
         <div class="field-wrap" :class="{ 'is-error': errors.username }">
-          <input v-model="registerForm.username" type="text" class="field-input" placeholder="账号" autocomplete="username" @input="clearError('username')" />
+          <div class="field-row">
+            <span class="field-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="5.5" r="3.5" stroke="currentColor" stroke-width="1.6"/><path d="M2.5 16.5c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </span>
+            <input v-model="registerForm.username" type="text" class="field-input" placeholder="账号" autocomplete="username" @input="clearError('username')" />
+          </div>
           <p v-if="errors.username" class="field-err" role="alert">{{ errors.username }}</p>
         </div>
         <div class="field-wrap" :class="{ 'is-error': errors.password }">
           <div class="field-row">
+            <span class="field-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="3" y="8" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M6 8V5.5a3 3 0 0 1 6 0V8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </span>
             <input v-model="registerForm.password" :type="showRegPwd ? 'text' : 'password'" class="field-input" placeholder="密码（至少 6 位）" autocomplete="new-password" @input="clearError('password')" />
             <button type="button" class="pwd-toggle" @click="showRegPwd = !showRegPwd">{{ showRegPwd ? '隐藏' : '显示' }}</button>
           </div>
@@ -92,6 +106,9 @@
         </div>
         <div class="field-wrap" :class="{ 'is-error': errors.confirmPassword }">
           <div class="field-row">
+            <span class="field-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="3" y="8" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M6 8V5.5a3 3 0 0 1 6 0V8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="9" cy="12.5" r="1.2" fill="currentColor"/></svg>
+            </span>
             <input v-model="registerForm.confirmPassword" :type="showRegConfirm ? 'text' : 'password'" class="field-input" placeholder="确认密码" autocomplete="new-password" @input="clearError('confirmPassword')" />
             <button type="button" class="pwd-toggle" @click="showRegConfirm = !showRegConfirm">{{ showRegConfirm ? '隐藏' : '显示' }}</button>
           </div>
@@ -113,6 +130,7 @@ import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { clearAuthSession, fetchCurrentUser, login, register, setAuthSession } from '../api/client'
+import AppBlobs from '../components/AppBlobs.vue'
 
 const router = useRouter()
 const loading = ref(false)
@@ -206,104 +224,77 @@ async function handleRegister() {
 </script>
 
 <style scoped>
-/* ─── Page Shell ─────────────────────────────────────────── */
 .login-page {
   position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  padding: 24px;
+  padding: var(--sp-6);
   overflow: hidden;
   background: var(--bg-base);
 }
 
-/* ─── Ambient Blobs ──────────────────────────────────────── */
-.blob {
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(72px);
-  pointer-events: none;
-  z-index: 0;
-}
-
-.blob-blue {
-  width: 560px;
-  height: 560px;
-  top: -120px;
-  left: -80px;
-  background: radial-gradient(circle, rgba(0, 122, 255, 0.18) 0%, transparent 70%);
-  animation: float-a 10s ease-in-out infinite alternate;
-}
-
-.blob-purple {
-  width: 480px;
-  height: 480px;
-  bottom: -100px;
-  right: -60px;
-  background: radial-gradient(circle, rgba(88, 86, 214, 0.13) 0%, transparent 70%);
-  animation: float-b 13s ease-in-out infinite alternate;
-}
-
-.blob-green {
-  width: 360px;
-  height: 360px;
-  top: 10%;
-  right: 20%;
-  background: radial-gradient(circle, rgba(52, 199, 89, 0.09) 0%, transparent 70%);
-  animation: float-c 16s ease-in-out infinite alternate;
-}
-
-@keyframes float-a {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(40px, 30px) scale(1.08); }
-}
-@keyframes float-b {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(-30px, -40px) scale(1.06); }
-}
-@keyframes float-c {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(20px, -25px) scale(1.04); }
-}
-
-/* ─── Card ───────────────────────────────────────────────── */
 .login-card {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 400px;
-  padding: 52px 40px 40px;
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.80);
-  backdrop-filter: blur(60px) saturate(180%);
-  -webkit-backdrop-filter: blur(60px) saturate(180%);
+  max-width: 380px;
+  padding: 48px 36px 36px;
+  border-radius: 30px;
+  background: var(--material-thick);
+  backdrop-filter: blur(var(--blur-xl)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--blur-xl)) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.65);
   box-shadow:
     0 0 0 0.5px rgba(0, 0, 0, 0.04),
     0 4px 16px rgba(0, 0, 0, 0.04),
     0 20px 56px rgba(0, 0, 0, 0.07),
     0 56px 96px rgba(0, 0, 0, 0.05);
+  animation: card-enter 0.5s var(--ease-spring) both;
 }
 
-/* ─── Brand / App Icon ──────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  .login-card {
+    border-color: rgba(84, 84, 88, 0.5);
+    box-shadow:
+      0 0 0 0.5px rgba(0, 0, 0, 0.2),
+      0 4px 16px rgba(0, 0, 0, 0.2),
+      0 20px 56px rgba(0, 0, 0, 0.3),
+      0 56px 96px rgba(0, 0, 0, 0.2);
+  }
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ── Brand ───────────────────────────────────────────────── */
+
 .brand-section {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  margin-bottom: 36px;
+  margin-bottom: var(--sp-8);
 }
 
 .app-icon {
-  width: 84px;
-  height: 84px;
-  border-radius: 20px;
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius-xl);
   background: linear-gradient(150deg, #1D9BF0 0%, #0077E6 45%, #005BBF 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 20px;
+  margin-bottom: var(--sp-5);
   box-shadow:
     0 6px 28px rgba(0, 122, 255, 0.40),
     0 2px 8px rgba(0, 0, 0, 0.12),
@@ -312,7 +303,7 @@ async function handleRegister() {
 }
 
 .app-name {
-  font-size: 28px;
+  font-size: var(--fs-title1);
   font-weight: 800;
   letter-spacing: -0.05em;
   color: var(--text-main);
@@ -327,14 +318,15 @@ async function handleRegister() {
   letter-spacing: -0.01em;
 }
 
-/* ─── Segmented Control ─────────────────────────────────── */
+/* ── Segmented Control ───────────────────────────────────── */
+
 .seg-control {
   display: flex;
   padding: 3px;
-  background: rgba(120, 120, 128, 0.12);
+  background: var(--fill-tertiary);
   border-radius: 11px;
   gap: 3px;
-  margin-bottom: 28px;
+  margin-bottom: var(--sp-6);
 }
 
 .seg-btn {
@@ -343,29 +335,40 @@ async function handleRegister() {
   border: none;
   background: transparent;
   color: var(--text-soft);
-  font-size: 15px;
+  font-size: var(--fs-subheadline);
   font-weight: 500;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
-  transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+  transition:
+    background var(--duration-short) var(--ease-standard),
+    color var(--duration-short) var(--ease-standard),
+    box-shadow var(--duration-short) var(--ease-standard);
 }
 
 .seg-btn.active {
-  background: #ffffff;
+  background: var(--surface);
   color: var(--text-main);
   font-weight: 600;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.10), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
 }
 
+@media (prefers-color-scheme: dark) {
+  .seg-btn.active {
+    background: var(--fill-secondary);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  }
+}
+
 .seg-btn:hover:not(.active) { color: var(--text-main); }
 .seg-btn:active { transform: scale(0.97); }
 
-/* ─── Form ──────────────────────────────────────────────── */
+/* ── Form ────────────────────────────────────────────────── */
+
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
 .field-wrap {
@@ -380,21 +383,30 @@ async function handleRegister() {
   align-items: center;
 }
 
-/* Filled input — iOS/macOS style (no border, gray fill) */
+.field-icon {
+  position: absolute;
+  left: 14px;
+  display: flex;
+  align-items: center;
+  color: var(--text-faint);
+  z-index: 1;
+  pointer-events: none;
+}
+
 .field-input {
   width: 100%;
-  height: 52px;
-  padding: 0 16px;
-  background: rgba(120, 120, 128, 0.11);
+  height: 50px;
+  padding: 0 16px 0 42px;
+  background: var(--fill-tertiary);
   border: none;
-  border-radius: 13px;
+  border-radius: var(--radius-md);
   color: var(--text-main);
-  font-size: 17px;
+  font-size: var(--fs-body);
   font-family: inherit;
   outline: none;
   -webkit-appearance: none;
   box-sizing: border-box;
-  transition: background 0.15s, box-shadow 0.15s;
+  transition: background var(--duration-short), box-shadow var(--duration-short);
 }
 
 .field-row .field-input {
@@ -406,8 +418,14 @@ async function handleRegister() {
 }
 
 .field-input:focus {
-  background: rgba(120, 120, 128, 0.07);
+  background: var(--fill-quaternary);
   box-shadow: 0 0 0 3.5px rgba(0, 122, 255, 0.30);
+}
+
+@media (prefers-color-scheme: dark) {
+  .field-input:focus {
+    box-shadow: 0 0 0 3.5px rgba(10, 132, 255, 0.40);
+  }
 }
 
 .is-error .field-input {
@@ -416,6 +434,10 @@ async function handleRegister() {
 
 .is-error .field-input:focus {
   box-shadow: 0 0 0 3.5px rgba(255, 59, 48, 0.26);
+}
+
+.is-error .field-icon {
+  color: var(--danger);
 }
 
 .pwd-toggle {
@@ -427,32 +449,33 @@ async function handleRegister() {
   border: none;
   background: none;
   color: var(--accent);
-  font-size: 13px;
+  font-size: var(--fs-footnote);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
-  min-width: 44px;
+  min-width: var(--touch-target);
   justify-content: center;
 }
 
 .field-err {
-  font-size: 13px;
+  font-size: var(--fs-footnote);
   color: var(--danger);
   margin: 0;
   padding-left: 4px;
   line-height: 1.4;
 }
 
-/* ─── Primary Button ─────────────────────────────────────── */
+/* ── Primary Button ──────────────────────────────────────── */
+
 .primary-btn {
   width: 100%;
-  height: 54px;
-  margin-top: 8px;
-  background: #007AFF;
+  height: 52px;
+  margin-top: var(--sp-2);
+  background: linear-gradient(180deg, #0A84FF, #007AFF);
   color: #fff;
   border: none;
   border-radius: 14px;
-  font-size: 17px;
+  font-size: var(--fs-body);
   font-weight: 600;
   letter-spacing: -0.01em;
   cursor: pointer;
@@ -464,15 +487,14 @@ async function handleRegister() {
     0 1px 4px rgba(0, 0, 0, 0.14),
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     inset 0 -1px 0 rgba(0, 0, 0, 0.08);
-  transition: background 0.12s, transform 0.08s, box-shadow 0.12s;
+  transition: background var(--duration-micro), transform var(--duration-micro), box-shadow var(--duration-micro);
 }
 
 .primary-btn:hover:not(:disabled) {
-  background: #0071F5;
+  background: linear-gradient(180deg, #0077EE, #006AE0);
 }
 
 .primary-btn:active:not(:disabled) {
-  background: #0064DB;
   transform: scale(0.985);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
 }
@@ -482,7 +504,6 @@ async function handleRegister() {
   cursor: not-allowed;
 }
 
-/* Loading dots */
 .dots {
   display: flex;
   gap: 5px;
@@ -507,31 +528,32 @@ async function handleRegister() {
   40% { transform: scale(1); opacity: 1; }
 }
 
-/* ─── Hint ───────────────────────────────────────────────── */
+/* ── Hint ────────────────────────────────────────────────── */
+
 .hint-text {
-  margin-top: 24px;
-  font-size: 12px;
+  margin-top: var(--sp-6);
+  font-size: var(--fs-caption1);
   color: var(--text-faint);
   text-align: center;
   line-height: 1.8;
 }
 
+/* ── Reduced Motion ──────────────────────────────────────── */
 
-/* ─── Reduced Motion ────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  .blob { animation: none; }
+  .login-card { animation: none; }
   .seg-btn, .field-input, .primary-btn { transition: none; }
   .dots i { animation: none; opacity: 0.7; }
 }
 
-/* ─── Mobile ────────────────────────────────────────────── */
+/* ── Mobile ──────────────────────────────────────────────── */
+
 @media (max-width: 480px) {
   .login-card {
-    padding: 40px 28px 32px;
-    border-radius: 24px;
+    padding: 36px 24px 28px;
+    border-radius: var(--radius-2xl);
   }
-
-  .app-icon { width: 72px; height: 72px; }
-  .app-name { font-size: 24px; }
+  .app-icon { width: 68px; height: 68px; }
+  .app-name { font-size: var(--fs-title2); }
 }
 </style>

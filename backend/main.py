@@ -1804,8 +1804,38 @@ async def retry_sop_evaluation_job(job_id: str, current_user=Depends(get_current
 
 
 @app.get("/api/history")
-async def fetch_history(current_user=Depends(get_current_user)):
-    return {"success": True, "data": [serialize_history(item) for item in list_history(current_user=current_user)]}
+async def fetch_history(
+    keyword: Optional[str] = None,
+    aiStatus: Optional[str] = None,
+    reviewStatus: Optional[str] = None,
+    sortOrder: Optional[str] = "desc",
+    current_user=Depends(get_current_user),
+):
+    keyword = (keyword or "").strip() or None
+    ai_status = (aiStatus or "").strip() or None
+    review_status = (reviewStatus or "").strip() or None
+    sort_order = ((sortOrder or "desc").strip() or "desc").lower()
+
+    if ai_status not in (None, "passed", "failed"):
+        raise HTTPException(status_code=400, detail="AI 状态筛选参数不合法")
+    if review_status not in (None, "pending", "approved", "rejected", "needs_attention"):
+        raise HTTPException(status_code=400, detail="人工复核筛选参数不合法")
+    if sort_order not in ("desc", "asc"):
+        raise HTTPException(status_code=400, detail="排序参数不合法")
+
+    return {
+        "success": True,
+        "data": [
+            serialize_history(item)
+            for item in list_history(
+                current_user=current_user,
+                keyword=keyword,
+                ai_status=ai_status,
+                review_status=review_status,
+                sort_order=sort_order,
+            )
+        ],
+    }
 
 
 @app.get("/api/history/{record_id}")

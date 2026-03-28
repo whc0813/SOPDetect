@@ -1,10 +1,9 @@
 <template>
   <div class="user-layout">
-    <div class="blob blob-blue" aria-hidden="true"></div>
-    <div class="blob blob-purple" aria-hidden="true"></div>
-    <div class="blob blob-green" aria-hidden="true"></div>
+    <AppBlobs />
 
     <header class="top-nav">
+      <div class="nav-left"></div>
       <div class="brand">
         <div class="brand-logo">
           <el-icon><Monitor /></el-icon>
@@ -31,131 +30,115 @@
           </div>
         </div>
 
-        <!-- 待执行任务 -->
-        <div v-if="!currentSop && activeTab === 'tasks'" class="view-transition">
-          <div class="hero-section">
-            <p class="hero-greeting">{{ greetingText }}，</p>
-            <h1 class="hero-name">{{ currentUserName }}</h1>
-            <p class="hero-meta">
-              <span v-if="sopList.length > 0" class="hero-count">{{ sopList.length }} 个流程可执行</span>
-              <span v-else class="hero-count">暂无待执行流程</span>
-            </p>
-          </div>
+        <!-- Tab content with slide transition -->
+        <template v-if="!currentSop">
+          <transition :name="tabTransition" mode="out-in">
 
-          <div class="section-label">可用任务</div>
+            <!-- 待执行任务 -->
+            <div v-if="activeTab === 'tasks'" key="tasks">
+              <GlassCard class="hero-section">
+                <p class="hero-greeting">{{ greetingText }}，</p>
+                <h1 class="hero-name">{{ currentUserName }}</h1>
+                <p class="hero-meta">
+                  <span v-if="sopList.length > 0" class="hero-count">{{ sopList.length }} 个流程可执行</span>
+                  <span v-else class="hero-count">暂无待执行流程</span>
+                </p>
+              </GlassCard>
 
-          <div class="grid-container">
-            <div v-for="sop in sopList" :key="sop.id" class="task-card" @click="startSop(sop)">
-              <div class="card-content">
-                <h3 class="task-title">{{ sop.name }}</h3>
-                <div class="task-meta">
-                  <span class="meta-item"><el-icon><Location /></el-icon> {{ sop.scene }}</span>
-                  <span class="meta-item"><el-icon><List /></el-icon> {{ sop.stepCount }} 步</span>
-                </div>
-              </div>
-              <div class="card-action">
-                <span>开始执行</span>
-                <el-icon><ArrowRight /></el-icon>
-              </div>
-            </div>
-          </div>
+              <div class="section-label">可用任务</div>
 
-          <div v-if="sopList.length === 0" class="empty-state">
-            <div class="empty-icon">📋</div>
-            <p class="empty-title">暂无可用流程</p>
-            <p class="empty-desc">请联系管理员创建标准操作流程</p>
-          </div>
-        </div>
-
-        <!-- 评测任务 -->
-        <div v-if="!currentSop && activeTab === 'jobs'" class="view-transition">
-          <div class="page-header">
-            <h2>评测任务</h2>
-            <p class="subtitle">查看排队、处理中、失败和已完成的评测任务状态</p>
-          </div>
-
-          <div class="table-card">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>SOP 名称</th>
-                  <th>提交时间</th>
-                  <th style="text-align:center">状态</th>
-                  <th>进度</th>
-                  <th style="text-align:center">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in jobList" :key="row.id">
-                  <td>{{ row.taskName }}</td>
-                  <td>{{ row.createdAt }}</td>
-                  <td style="text-align:center">
-                    <span :class="['badge', `badge-${getJobStatusTagType(row.status)}`]">
-                      {{ getJobStatusText(row.status) }}
-                    </span>
-                  </td>
-                  <td>
-                    <div class="progress-cell">
-                      <span class="progress-pct">{{ row.progressPercent }}%</span>
-                      <span class="muted-text">{{ getJobStageText(row.stage) }}</span>
+              <GroupedList :data="sopList">
+                <template #item="{ row }">
+                  <div class="task-item" @click="startSop(row)">
+                    <div class="task-item-info">
+                      <h3 class="task-item-name">{{ row.name }}</h3>
+                      <div class="task-item-meta">
+                        <span class="meta-item"><el-icon><Location /></el-icon> {{ row.scene }}</span>
+                        <span class="meta-item"><el-icon><List /></el-icon> {{ row.stepCount }} 步</span>
+                      </div>
                     </div>
-                  </td>
-                  <td style="text-align:center">
-                    <button class="text-btn" @click="openJobDetail(row)">查看详情</button>
-                  </td>
-                </tr>
-                <tr v-if="jobList.length === 0">
-                  <td colspan="5" class="empty-row">暂无评测任务</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+                    <div class="task-item-action">
+                      <span>开始执行</span>
+                      <el-icon><ArrowRight /></el-icon>
+                    </div>
+                  </div>
+                </template>
+                <template #empty>
+                  <div class="empty-state">
+                    <svg class="empty-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="8" y="6" width="32" height="36" rx="4" stroke="currentColor" stroke-width="2"/>
+                      <line x1="14" y1="16" x2="34" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                      <line x1="14" y1="22" x2="28" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                      <line x1="14" y1="28" x2="24" y2="28" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <p class="empty-title">暂无可用流程</p>
+                    <p class="empty-desc">请联系管理员创建标准操作流程</p>
+                  </div>
+                </template>
+              </GroupedList>
+            </div>
 
-        <!-- 历史记录 -->
-        <div v-if="!currentSop && activeTab === 'history'" class="view-transition">
-          <div class="page-header">
-            <h2>执行历史</h2>
-            <p class="subtitle">查看你过去完成的流程记录和复核结果</p>
-          </div>
+            <!-- 评测任务 (list view) -->
+            <div v-else-if="activeTab === 'jobs'" key="jobs">
+              <GlassCard class="page-header">
+                <h2>评测任务</h2>
+                <p class="subtitle">查看排队、处理中、失败和已完成的评测任务状态</p>
+              </GlassCard>
 
-          <div class="table-card">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>SOP 名称</th>
-                  <th>完成时间</th>
-                  <th style="text-align:center">AI 结论</th>
-                  <th style="text-align:center">人工复核</th>
-                  <th style="text-align:center">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in historyList" :key="row.id">
-                  <td>{{ row.taskName }}</td>
-                  <td>{{ row.finishTime }}</td>
-                  <td style="text-align:center">
-                    <span :class="['badge', row.status === 'passed' ? 'badge-success' : 'badge-danger']">
-                      {{ getStatusText(row.status) }}
-                    </span>
-                  </td>
-                  <td style="text-align:center">
-                    <span class="badge badge-default">{{ getManualReviewText(row.manualReview?.status) }}</span>
-                  </td>
-                  <td style="text-align:center">
-                    <button class="text-btn" @click="openHistoryDetail(row)">查看详情</button>
-                  </td>
-                </tr>
-                <tr v-if="historyList.length === 0">
-                  <td colspan="5" class="empty-row">暂无执行记录</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+              <GroupedList :data="jobList" empty-text="暂无评测任务">
+                <template #item="{ row }">
+                  <div class="list-item" @click="openJobDetail(row)">
+                    <div class="list-item-main">
+                      <span class="list-item-name">{{ row.taskName }}</span>
+                      <StatusBadge :type="getJobStatusTagType(row.status)">
+                        {{ getJobStatusText(row.status) }}
+                      </StatusBadge>
+                    </div>
+                    <div class="list-item-sub">
+                      <span class="list-item-time">{{ row.createdAt }}</span>
+                      <span class="list-item-detail">{{ row.progressPercent }}% · {{ getJobStageText(row.stage) }}</span>
+                    </div>
+                  </div>
+                </template>
+              </GroupedList>
+            </div>
+
+            <!-- 历史记录 (list view) -->
+            <div v-else key="history">
+              <GlassCard class="page-header">
+                <h2>执行历史</h2>
+                <p class="subtitle">查看你过去完成的流程记录和复核结果</p>
+              </GlassCard>
+
+              <GroupedList :data="historyList" empty-text="暂无执行记录">
+                <template #item="{ row }">
+                  <div class="list-item history-item" @click="openHistoryDetail(row)">
+                    <div class="history-item-main">
+                      <span class="list-item-name">{{ row.taskName }}</span>
+                      <span class="list-item-time">{{ row.finishTime }}</span>
+                    </div>
+                    <div class="history-item-badges">
+                      <StatusBadge :type="row.status === 'passed' ? 'success' : 'danger'">
+                        {{ getStatusText(row.status) }}
+                      </StatusBadge>
+                      <StatusBadge type="default">
+                        {{ getManualReviewText(row.manualReview?.status) }}
+                      </StatusBadge>
+                    </div>
+                    <div class="history-item-action">
+                      <span class="history-item-link">查看详情</span>
+                      <el-icon><ArrowRight /></el-icon>
+                    </div>
+                  </div>
+                </template>
+              </GroupedList>
+            </div>
+
+          </transition>
+        </template>
 
         <!-- 执行视图 -->
-        <div v-else-if="currentSop" class="execution-view">
+        <div v-else class="execution-view">
           <div class="execution-header">
             <button class="back-btn" @click="backToList">
               <el-icon><ArrowLeft /></el-icon>
@@ -167,77 +150,112 @@
             </div>
           </div>
 
-          <div class="progress-section">
-            <div class="progress-label">共 {{ currentSop.stepCount }} 个步骤</div>
+          <GlassCard class="progress-card">
+            <div class="progress-card-top">
+              <div class="progress-copy">
+                <div class="progress-label">执行进度</div>
+                <div class="progress-headline">{{ progressState.title }}</div>
+                <div class="progress-caption">{{ progressState.description }}</div>
+              </div>
+              <div class="progress-side">
+                <StatusBadge :type="progressState.type">{{ progressState.label }}</StatusBadge>
+                <div class="progress-value">{{ executionProgress }}%</div>
+              </div>
+            </div>
             <div class="progress-track">
               <div
                 class="progress-fill"
-                :style="{ width: `${currentJob ? currentJob.progressPercent : (evaluationResult ? 100 : 45)}%` }"
+                :style="{ width: `${executionProgress}%` }"
               ></div>
             </div>
-          </div>
+            <div class="progress-meta">
+              <span>{{ progressState.meta }}</span>
+              <span>{{ executionProgress }}%</span>
+            </div>
+          </GlassCard>
 
-          <div class="step-container">
-            <div class="step-section-label">操作流程</div>
-
-            <div class="timeline">
-              <div v-for="(step, si) in currentSop.steps" :key="step.stepNo" class="tl-item">
-                <div class="tl-rail">
-                  <div class="tl-dot">{{ step.stepNo }}</div>
-                  <div v-if="si < currentSop.steps.length - 1" class="tl-line" aria-hidden="true"></div>
+          <GlassCard class="step-container">
+            <div class="step-layout">
+              <div class="step-flow">
+                <SectionHeader
+                  title="操作流程"
+                  subtitle="根据下方步骤完成本次 SOP 操作，并上传完整录制视频"
+                />
+                <div class="step-list">
+                  <div v-for="step in currentSop.steps" :key="step.stepNo" class="step-card">
+                    <div class="step-badge">{{ step.stepNo }}</div>
+                    <div class="step-card-content">
+                      <p class="step-desc">{{ step.description }}</p>
+                      <div class="step-sub">
+                        {{ step.referenceMode === 'text' ? '仅按文字规则校验，无示范视频' : (step.referenceSummary || '已生成该步骤的参考信息') }}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div class="tl-body">
-                  <p class="step-desc">{{ step.description }}</p>
-                  <div class="step-sub">
-                    {{ step.referenceMode === 'text' ? '仅按文字规则校验，无示范视频' : (step.referenceSummary || '已生成该步骤的参考信息') }}
+              </div>
+
+              <div class="upload-panel" v-if="!currentJob || currentJob.status === 'failed'">
+                <div class="upload-section">
+                  <SectionHeader
+                    title="上传操作视频"
+                    subtitle="选择完整录制视频后提交评测，支持重新选择文件。"
+                  >
+                    <span class="upload-section-tip">{{ currentVideo ? '已选择视频' : '等待上传' }}</span>
+                  </SectionHeader>
+
+                  <div class="upload-checklist">
+                    <div class="upload-check-item" :class="{ done: !!currentVideo }">1. 选择本次 SOP 的完整操作视频</div>
+                    <div class="upload-check-item" :class="{ done: !!currentVideo }">2. 确认画面清晰、步骤完整</div>
+                    <div class="upload-check-item" :class="{ done: !!currentVideo }">3. 提交后开始评测并刷新进度</div>
+                  </div>
+
+                  <el-upload
+                    class="apple-upload"
+                    drag
+                    action="#"
+                    :auto-upload="false"
+                    :on-change="handleVideoChange"
+                    :show-file-list="false"
+                    accept="video/*"
+                  >
+                    <div class="upload-content">
+                      <el-icon class="upload-icon"><VideoCamera /></el-icon>
+                      <div class="upload-text">
+                        <span class="bold">点击上传</span> 或将文件拖拽到此处
+                      </div>
+                      <div class="upload-hint-text">支持 MP4 / MOV / AVI 格式视频</div>
+                    </div>
+                  </el-upload>
+
+                  <div v-if="currentVideo" class="file-preview">
+                    <div class="file-info">
+                      <el-icon><VideoPlay /></el-icon>
+                      <span>{{ currentVideo.name }}</span>
+                    </div>
+                    <div class="file-actions">
+                      <span class="file-status">已选择完成，提交后开始评测</span>
+                      <el-button type="primary" class="submit-action-btn" @click="submitVideo" :loading="isEvaluating">
+                        提交评测任务
+                      </el-button>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
+          </GlassCard>
 
-            <div class="upload-section" v-if="!currentJob || currentJob.status === 'failed'">
-              <el-upload
-                class="minimal-upload"
-                drag
-                action="#"
-                :auto-upload="false"
-                :on-change="handleVideoChange"
-                :show-file-list="false"
-                accept="video/*"
-              >
-                <div class="upload-content">
-                  <el-icon class="upload-icon"><VideoCamera /></el-icon>
-                  <div class="upload-text">
-                    <span class="bold">点击上传</span> 或将文件拖拽到此处
-                  </div>
-                  <div class="upload-hint">支持 MP4 / MOV / AVI 格式视频</div>
-                </div>
-              </el-upload>
-
-              <div v-if="currentVideo" class="file-preview">
-                <div class="file-info">
-                  <el-icon><VideoPlay /></el-icon>
-                  <span>{{ currentVideo.name }}</span>
-                </div>
-                <el-button type="primary" class="submit-action-btn" @click="submitVideo" :loading="isEvaluating">
-                  提交评测任务
-                </el-button>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="currentJob" class="job-status-card">
+          <GlassCard v-if="currentJob" class="job-status-card">
             <div class="result-header">
               <el-icon class="result-icon" v-if="currentJob.status === 'succeeded'"><CircleCheckFilled /></el-icon>
               <el-icon class="result-icon" v-else><WarningFilled /></el-icon>
               <h3>任务状态：{{ getJobStatusText(currentJob.status) }}</h3>
             </div>
             <div class="job-status-meta">
-              <span :class="['badge', `badge-${getJobStatusTagType(currentJob.status)}`]">
+              <StatusBadge :type="getJobStatusTagType(currentJob.status)">
                 {{ getJobStageText(currentJob.stage) }}
-              </span>
-              <span>任务编号：{{ currentJob.id }}</span>
-              <span>进度：{{ currentJob.progressPercent }}%</span>
+              </StatusBadge>
+              <span class="job-meta-pill">任务编号：{{ currentJob.id }}</span>
+              <span class="job-meta-pill">进度：{{ currentJob.progressPercent }}%</span>
             </div>
             <div v-if="currentJob.failureReason" class="job-failure-box">
               <div class="detail-title">失败原因</div>
@@ -258,9 +276,9 @@
                 重试任务
               </el-button>
             </div>
-          </div>
+          </GlassCard>
 
-          <div class="result-card" v-if="evaluationResult" :class="evaluationResult.passed ? 'success' : 'error'">
+          <GlassCard class="result-card" v-if="evaluationResult" :class="evaluationResult.passed ? 'success' : 'error'">
             <div class="result-header">
               <el-icon class="result-icon" v-if="evaluationResult.passed"><CircleCheckFilled /></el-icon>
               <el-icon class="result-icon" v-else><WarningFilled /></el-icon>
@@ -280,7 +298,7 @@
               <div v-for="item in evaluationResult.stepResults" :key="item.stepNo" class="step-result-item">
                 <div class="step-result-top">
                   <div class="step-result-title">步骤 {{ item.stepNo }}: {{ item.description }}</div>
-                  <div class="step-result-status">{{ getStepResultText(item.passed) }}</div>
+                  <StatusBadge :type="item.passed ? 'success' : 'danger'">{{ getStepResultText(item.passed) }}</StatusBadge>
                 </div>
                 <div class="step-result-meta">得分 {{ formatScore(item.score, '-') }} / 置信度 {{ formatConfidence(item.confidence) }}</div>
                 <div class="detail-text">{{ item.evidence }}</div>
@@ -292,13 +310,13 @@
               <el-button v-if="currentJob?.status === 'failed'" class="action-btn-secondary" @click="retryCurrentJob" :loading="isRetryingJob">重试任务</el-button>
               <el-button v-if="currentJob?.status === 'failed'" class="action-btn-secondary" @click="retrySop">重新上传</el-button>
             </div>
-          </div>
+          </GlassCard>
         </div>
 
       </div>
     </main>
 
-    <el-dialog v-model="historyDetailVisible" title="执行记录详情" width="820px">
+    <el-dialog v-model="historyDetailVisible" title="执行记录详情" width="820px" class="apple-dialog">
       <div v-if="selectedHistoryRecord" class="detail-wrap">
         <div class="summary">{{ selectedHistoryRecord.taskName }} / {{ selectedHistoryRecord.finishTime }}</div>
         <div class="detail-box">
@@ -323,7 +341,7 @@
           <div v-for="item in selectedHistoryRecord.detail.stepResults" :key="item.stepNo" class="step-result-item">
             <div class="step-result-top">
               <div class="step-result-title">步骤 {{ item.stepNo }}: {{ item.description }}</div>
-              <div class="step-result-status">{{ getStepResultText(item.passed) }}</div>
+              <StatusBadge :type="item.passed ? 'success' : 'danger'">{{ getStepResultText(item.passed) }}</StatusBadge>
             </div>
             <div class="step-result-meta">得分 {{ formatScore(item.score, '-') }}</div>
             <div class="detail-text">{{ item.evidence }}</div>
@@ -335,7 +353,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, CircleCheckFilled, List, Location, Monitor, VideoCamera, VideoPlay, WarningFilled } from '@element-plus/icons-vue'
@@ -354,12 +372,22 @@ import {
   retryEvaluationJob,
   fetchAuthorizedMediaBlobUrl
 } from '../api/client'
+import AppBlobs from '../components/AppBlobs.vue'
+import GroupedList from '../components/GroupedList.vue'
+import StatusBadge from '../components/StatusBadge.vue'
+import GlassCard from '../components/GlassCard.vue'
+import SectionHeader from '../components/SectionHeader.vue'
 
 const router = useRouter()
 const sopList = ref([])
 const jobList = ref([])
 const historyList = ref([])
 const activeTab = ref('tasks')
+const tabTransition = ref('tab-slide-left')
+const tabOrder = ['tasks', 'jobs', 'history']
+watch(activeTab, (newTab, oldTab) => {
+  tabTransition.value = tabOrder.indexOf(newTab) > tabOrder.indexOf(oldTab) ? 'tab-slide-left' : 'tab-slide-right'
+})
 const currentSop = ref(null)
 const currentVideo = ref(null)
 const isEvaluating = ref(false)
@@ -385,6 +413,53 @@ const greetingText = computed(() => {
   if (hour >= 11 && hour < 14) return '中午好'
   if (hour >= 14 && hour < 18) return '下午好'
   return '晚上好'
+})
+
+const executionProgress = computed(() => {
+  if (currentJob.value) return Number(currentJob.value.progressPercent || 0)
+  return evaluationResult.value ? 100 : 0
+})
+
+const progressState = computed(() => {
+  if (evaluationResult.value) {
+    return {
+      type: evaluationResult.value.passed ? 'success' : 'danger',
+      label: evaluationResult.value.passed ? '已完成' : '已结束',
+      title: evaluationResult.value.passed ? '评测已完成' : '评测已结束',
+      description: '可以查看评测结果、问题明细和步骤得分。',
+      meta: '结果已生成'
+    }
+  }
+
+  if (currentJob.value) {
+    return {
+      type: currentJob.value.status === 'failed' ? 'danger' : 'info',
+      label: currentJob.value.status === 'failed' ? '异常' : '进行中',
+      title: currentJob.value.status === 'failed' ? '评测任务异常中断' : '评测任务处理中',
+      description: currentJob.value.status === 'failed'
+        ? '请检查失败原因，必要时重新上传视频后再试。'
+        : '系统正在分析上传视频，进度会随任务状态自动刷新。',
+      meta: getJobStageText(currentJob.value.stage)
+    }
+  }
+
+  if (currentVideo.value) {
+    return {
+      type: 'warning',
+      label: '待提交',
+      title: '视频已就绪，等待提交',
+      description: '确认文件无误后点击提交评测任务，系统才会开始计算进度。',
+      meta: '尚未开始评测'
+    }
+  }
+
+  return {
+    type: 'default',
+    label: '未开始',
+    title: '等待上传操作视频',
+    description: `共 ${currentSop.value?.stepCount || 0} 个步骤，上传并提交后才会开始评测。`,
+    meta: '尚未开始评测'
+  }
 })
 
 function showErrorMessage(error, fallback) {
@@ -692,87 +767,44 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* ─── Layout ─────────────────────────────────────────────── */
+/* ── Layout ──────────────────────────────────────────────── */
+
 .user-layout {
   position: relative;
   min-height: 100vh;
   background-color: var(--bg-base);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  font-family: var(--font-family);
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
 }
 
-/* ─── Ambient Blobs ──────────────────────────────────────── */
-.blob {
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(72px);
-  pointer-events: none;
-  z-index: 0;
-}
+/* ── Top Nav ─────────────────────────────────────────────── */
 
-.blob-blue {
-  width: 560px;
-  height: 560px;
-  top: -120px;
-  left: -80px;
-  background: radial-gradient(circle, rgba(0, 122, 255, 0.16) 0%, transparent 70%);
-  animation: float-a 10s ease-in-out infinite alternate;
-}
-
-.blob-purple {
-  width: 480px;
-  height: 480px;
-  bottom: -100px;
-  right: -60px;
-  background: radial-gradient(circle, rgba(88, 86, 214, 0.11) 0%, transparent 70%);
-  animation: float-b 13s ease-in-out infinite alternate;
-}
-
-.blob-green {
-  width: 360px;
-  height: 360px;
-  top: 10%;
-  right: 20%;
-  background: radial-gradient(circle, rgba(52, 199, 89, 0.08) 0%, transparent 70%);
-  animation: float-c 16s ease-in-out infinite alternate;
-}
-
-@keyframes float-a {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(40px, 30px) scale(1.08); }
-}
-@keyframes float-b {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(-30px, -40px) scale(1.06); }
-}
-@keyframes float-c {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(20px, -25px) scale(1.04); }
-}
-
-/* ─── Top Nav ─────────────────────────────────────────────── */
 .top-nav {
   position: sticky;
   top: 0;
   z-index: 100;
   height: var(--toolbar-height);
-  background: rgba(255, 255, 255, 0.72);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(48px) saturate(160%);
-  -webkit-backdrop-filter: blur(48px) saturate(160%);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05), 0 2px 12px rgba(0, 0, 0, 0.04);
-  display: flex;
-  justify-content: space-between;
+  background: var(--material-regular);
+  border-bottom: 1px solid var(--separator);
+  backdrop-filter: blur(var(--blur-lg)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(160%);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  padding: 0 32px;
+  padding: 0 var(--sp-8);
+}
+
+.nav-left {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   font-size: 18px;
   font-weight: 600;
   color: var(--text-main);
@@ -782,7 +814,7 @@ onUnmounted(() => {
   width: 32px;
   height: 32px;
   background: linear-gradient(150deg, var(--accent), var(--accent-deep));
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -794,7 +826,8 @@ onUnmounted(() => {
 .nav-right {
   display: flex;
   align-items: center;
-  gap: 20px;
+  justify-content: flex-end;
+  gap: var(--sp-5);
 }
 
 .user-info {
@@ -831,8 +864,8 @@ onUnmounted(() => {
   font-weight: 500;
   cursor: pointer;
   font-family: inherit;
-  min-height: 44px;
-  padding: 8px 14px;
+  min-height: var(--touch-target);
+  padding: var(--sp-2) 14px;
   border-radius: 10px;
   transition:
     background-color var(--duration-short) var(--ease-standard),
@@ -840,7 +873,7 @@ onUnmounted(() => {
 }
 
 .logout-btn:hover {
-  background: var(--apple-fill);
+  background: var(--fill-quaternary);
   color: var(--text-main);
 }
 
@@ -848,53 +881,64 @@ onUnmounted(() => {
   transform: scale(0.96);
 }
 
-/* ─── Main ─────────────────────────────────────────────── */
+/* ── Main Content ────────────────────────────────────────── */
+
 .main-content {
   position: relative;
   z-index: 1;
   flex: 1;
-  padding: 28px 32px;
+  padding: var(--sp-8) var(--sp-8);
 }
 
 .content-wrapper {
-  max-width: 900px;
+  max-width: 1040px;
   margin: 0 auto;
 }
 
-/* ─── Tab Bar ─────────────────────────────────────────────── */
+/* ── Tab Bar ─────────────────────────────────────────────── */
+
 .tab-bar {
   display: flex;
   justify-content: center;
-  margin-bottom: 32px;
+  margin-bottom: var(--sp-8);
 }
 
 .segmented-control {
   display: inline-flex;
   padding: 3px;
   background: var(--apple-fill);
-  border-radius: 9999px;
+  border-radius: var(--radius-full);
 }
 
 .segment {
-  padding: 9px 28px;
+  padding: 9px var(--sp-7);
   border: none;
   background: transparent;
   color: var(--text-soft);
-  font-size: 15px;
+  font-size: var(--fs-subheadline);
   font-weight: 500;
-  border-radius: 9999px;
+  border-radius: var(--radius-full);
   cursor: pointer;
   font-family: inherit;
   white-space: nowrap;
   transition:
     background-color var(--duration-short) var(--ease-standard),
-    color var(--duration-short) var(--ease-standard);
+    color var(--duration-short) var(--ease-standard),
+    box-shadow var(--duration-short) var(--ease-standard);
 }
 
 .segment.active {
-  background: var(--surface-strong);
+  background: var(--surface);
   color: var(--text-main);
   font-weight: 600;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  .segment.active {
+    background: var(--fill-secondary);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  }
 }
 
 .segment:hover:not(.active) {
@@ -905,24 +949,26 @@ onUnmounted(() => {
   transform: scale(0.97);
 }
 
-/* ─── Hero Section ────────────────────────────────────────── */
+/* ── Hero Section ────────────────────────────────────────── */
+
 .hero-section {
-  padding: 40px 0 32px;
+  padding: var(--sp-8) var(--sp-7);
+  margin-bottom: var(--sp-6);
 }
 
 .hero-greeting {
-  font-size: 17px;
+  font-size: var(--fs-headline);
   color: var(--text-soft);
-  margin: 0 0 4px;
+  margin: 0 0 var(--sp-1);
   font-weight: 500;
 }
 
 .hero-name {
-  font-size: 44px;
+  font-size: var(--fs-large-title);
   font-weight: 800;
-  letter-spacing: -0.06em;
+  letter-spacing: -0.04em;
   color: var(--text-main);
-  margin: 0 0 12px;
+  margin: 0 0 var(--sp-3);
   line-height: 1;
 }
 
@@ -934,14 +980,14 @@ onUnmounted(() => {
   display: inline-block;
   font-size: 14px;
   color: var(--text-faint);
-  background: var(--apple-fill);
-  padding: 4px 12px;
-  border-radius: 9999px;
+  background: var(--fill-quaternary);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-full);
   font-weight: 500;
 }
 
 .section-label {
-  font-size: 12px;
+  font-size: var(--fs-caption1);
   font-weight: 700;
   color: var(--text-faint);
   text-transform: uppercase;
@@ -949,215 +995,209 @@ onUnmounted(() => {
   margin-bottom: 14px;
 }
 
-/* ─── Page Header ─────────────────────────────────────────── */
+/* ── Page Header ─────────────────────────────────────────── */
+
 .page-header {
-  margin-bottom: 28px;
+  margin-bottom: var(--sp-7);
+  padding: var(--sp-6) var(--sp-7);
 }
 
 .page-header h2 {
-  font-size: 34px;
+  font-size: var(--fs-large-title);
   font-weight: 700;
   color: var(--text-main);
-  margin: 0 0 8px;
+  margin: 0 0 var(--sp-2);
   letter-spacing: -0.04em;
   line-height: 1.1;
 }
 
 .subtitle {
-  font-size: 15px;
+  font-size: var(--fs-subheadline);
   color: var(--text-soft);
   margin: 0;
 }
 
-/* ─── Task Cards ─────────────────────────────────────────── */
-.grid-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
+/* ── Task Cards ──────────────────────────────────────────── */
 
-.task-card {
-  position: relative;
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(28px) saturate(150%);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.60);
-  border-radius: 18px;
-  padding: 20px 24px 20px;
-  cursor: pointer;
+/* ── Task List Items ─────────────────────────────────────── */
+
+.task-item {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   justify-content: space-between;
-  overflow: hidden;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.04);
-  transition:
-    transform 0.15s cubic-bezier(.34,1.56,.64,1),
-    box-shadow 0.18s ease,
-    border-color 0.12s ease;
+  padding: var(--sp-4) var(--sp-5);
+  cursor: pointer;
+  transition: background var(--duration-micro);
 }
 
-.task-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.11), 0 4px 12px rgba(0, 0, 0, 0.06);
-  border-color: rgba(255, 255, 255, 0.80);
+.task-item:hover {
+  background: var(--fill-quaternary);
 }
 
-.task-card:active {
-  transform: scale(0.97) translateY(0);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+.task-item:active {
+  background: var(--fill-tertiary);
 }
 
+.task-item-info {
+  flex: 1;
+  min-width: 0;
+}
 
-.task-title {
-  font-size: 19px;
+.task-item-name {
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text-main);
-  margin: 0 0 14px;
-  line-height: 1.3;
+  margin: 0 0 6px;
 }
 
-.task-meta {
+.task-item-meta {
   display: flex;
-  gap: 16px;
+  gap: var(--sp-4);
 }
 
 .meta-item {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 13px;
+  font-size: var(--fs-footnote);
   color: var(--text-soft);
 }
 
-.card-action {
-  margin-top: 20px;
+.task-item-action {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 6px;
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-main);
-  padding-top: 14px;
-  border-top: 1px solid var(--line-soft);
-}
-
-/* ─── Empty State ─────────────────────────────────────────── */
-.empty-state {
-  text-align: center;
-  padding: 60px 20px;
-}
-
-.empty-icon {
-  font-size: 40px;
-  margin-bottom: 16px;
-  opacity: 0.5;
-}
-
-.empty-title {
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--text-soft);
-  margin: 0 0 6px;
-}
-
-.empty-desc {
-  font-size: 14px;
-  color: var(--text-faint);
-  margin: 0;
-}
-
-/* ─── Data Table ─────────────────────────────────────────── */
-.table-card {
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(32px) saturate(150%);
-  -webkit-backdrop-filter: blur(32px) saturate(150%);
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05), 0 8px 32px rgba(0, 0, 0, 0.04);
-  overflow: hidden;
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.data-table thead th {
-  text-align: left;
-  padding: 13px 16px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--line-soft);
-  background: transparent;
-  white-space: nowrap;
-}
-
-.data-table tbody td {
-  padding: 15px 16px;
-  font-size: 15px;
-  color: var(--text-main);
-  border-bottom: 1px solid var(--line-soft);
-  vertical-align: middle;
-}
-
-.data-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.data-table tbody tr:hover td {
-  background: rgba(120, 120, 128, 0.04);
-}
-
-.empty-row {
-  text-align: center;
-  color: var(--text-faint);
-  padding: 48px 16px !important;
-  font-size: 14px;
-}
-
-/* ─── Badges ─────────────────────────────────────────────── */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 10px;
-  border-radius: 9999px;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.badge-success { background: rgba(52, 199, 89, 0.12); color: #2f9b47; }
-.badge-danger  { background: rgba(255, 59, 48, 0.10); color: #d9342b; }
-.badge-warning { background: rgba(255, 159, 10, 0.12); color: #b26a00; }
-.badge-info    { background: rgba(0, 122, 255, 0.10); color: #0066cc; }
-.badge-default { background: rgba(120, 120, 128, 0.12); color: var(--text-soft); }
-
-/* ─── Text Button ─────────────────────────────────────────── */
-.text-btn {
-  border: none;
-  background: none;
   color: var(--accent);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 6px 10px;
-  border-radius: 8px;
-  min-height: 44px;
-  font-family: inherit;
-  transition: background-color var(--duration-short) var(--ease-standard);
+  flex-shrink: 0;
+  margin-left: var(--sp-4);
 }
 
-.text-btn:hover { background: rgba(0, 122, 255, 0.08); }
-.text-btn:active { background: rgba(0, 122, 255, 0.14); }
+/* ── List Items (Jobs / History) ─────────────────────────── */
 
-/* Progress Cell */
-.progress-cell {
+.list-item {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
+  padding: var(--sp-4) var(--sp-5);
+  cursor: pointer;
+  transition: background var(--duration-micro);
+}
+
+.list-item:hover {
+  background: var(--fill-quaternary);
+}
+
+.list-item:active {
+  background: var(--fill-tertiary);
+}
+
+.list-item-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.list-item-name {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-main);
+  flex: 1;
+  min-width: 0;
+}
+
+.list-item-badges {
+  display: flex;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+.list-item-sub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.list-item-time {
+  font-size: var(--fs-footnote);
+  color: var(--text-soft);
+}
+
+.list-item-detail {
+  font-size: var(--fs-footnote);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.history-item-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-item-badges {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.history-item-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 88px;
+  color: var(--accent);
+}
+
+.history-item-link {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+}
+
+/* ── Tab Slide Transitions ───────────────────────────────── */
+
+.tab-slide-left-enter-active,
+.tab-slide-left-leave-active,
+.tab-slide-right-enter-active,
+.tab-slide-right-leave-active {
+  transition:
+    transform var(--duration-medium) var(--ease-standard),
+    opacity var(--duration-medium) var(--ease-standard);
+}
+
+.tab-slide-left-enter-from {
+  transform: translateX(30px);
+  opacity: 0;
+}
+
+.tab-slide-left-leave-to {
+  transform: translateX(-30px);
+  opacity: 0;
+}
+
+.tab-slide-right-enter-from {
+  transform: translateX(-30px);
+  opacity: 0;
+}
+
+.tab-slide-right-leave-to {
+  transform: translateX(30px);
+  opacity: 0;
 }
 
 .progress-pct {
@@ -1166,13 +1206,14 @@ onUnmounted(() => {
 }
 
 .muted-text {
-  font-size: 12px;
+  font-size: var(--fs-caption1);
   color: var(--text-faint);
 }
 
-/* ─── Execution View ─────────────────────────────────────── */
+/* ── Execution View ──────────────────────────────────────── */
+
 .execution-header {
-  margin-bottom: 36px;
+  margin-bottom: var(--sp-8);
 }
 
 .back-btn {
@@ -1182,13 +1223,13 @@ onUnmounted(() => {
   border: none;
   background: none;
   color: var(--accent);
-  font-size: 15px;
+  font-size: var(--fs-subheadline);
   font-weight: 500;
   cursor: pointer;
   font-family: inherit;
-  min-height: 44px;
-  padding: 8px 0;
-  margin-bottom: 16px;
+  min-height: var(--touch-target);
+  padding: var(--sp-2) 0;
+  margin-bottom: var(--sp-4);
   transition:
     color var(--duration-short) var(--ease-standard),
     transform var(--duration-micro) var(--ease-standard);
@@ -1205,7 +1246,7 @@ onUnmounted(() => {
 }
 
 .header-titles h2 {
-  font-size: 34px;
+  font-size: var(--fs-large-title);
   font-weight: 700;
   color: var(--text-main);
   margin: 0;
@@ -1214,21 +1255,36 @@ onUnmounted(() => {
 }
 
 .scene-tag {
-  background: var(--apple-fill);
+  background: var(--fill-quaternary);
   color: var(--text-soft);
-  padding: 5px 12px;
-  border-radius: 9999px;
-  font-size: 13px;
+  padding: 5px var(--sp-3);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-footnote);
   font-weight: 500;
 }
 
-/* ─── Progress Bar ─────────────────────────────────────────── */
-.progress-section {
-  margin-bottom: 36px;
+/* ── Progress Bar ────────────────────────────────────────── */
+
+.progress-card {
+  margin-bottom: var(--sp-8);
+  padding: var(--sp-6) var(--sp-7);
+}
+
+.progress-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+
+.progress-copy {
+  min-width: 0;
+  flex: 1;
 }
 
 .progress-label {
-  font-size: 12px;
+  font-size: var(--fs-caption1);
   font-weight: 600;
   color: var(--text-faint);
   text-transform: uppercase;
@@ -1236,153 +1292,304 @@ onUnmounted(() => {
   margin-bottom: 10px;
 }
 
+.progress-card > .progress-label {
+  display: none;
+}
+
+.progress-headline {
+  font-size: clamp(24px, 3vw, 30px);
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-main);
+  margin-bottom: var(--sp-2);
+}
+
+.progress-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--sp-3);
+  flex-shrink: 0;
+}
+
+.progress-value {
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: -0.04em;
+}
+
+.progress-caption {
+  font-size: var(--fs-footnote);
+  line-height: 1.7;
+  color: var(--text-soft);
+  margin-bottom: var(--sp-4);
+}
+
 .progress-track {
   height: 5px;
-  background: var(--apple-fill);
-  border-radius: 9999px;
+  background: var(--fill-tertiary);
+  border-radius: var(--radius-full);
   overflow: hidden;
+  margin-bottom: var(--sp-3);
 }
 
 .progress-fill {
   height: 100%;
   background: var(--accent);
-  border-radius: 9999px;
+  border-radius: var(--radius-full);
   transition: width var(--duration-medium) var(--ease-standard);
 }
 
-/* ─── Step Container ─────────────────────────────────────── */
+.progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  font-size: var(--fs-footnote);
+  color: var(--text-soft);
+}
+
+/* ── Step Container ──────────────────────────────────────── */
+
 .step-container {
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(32px) saturate(150%);
-  -webkit-backdrop-filter: blur(32px) saturate(150%);
-  border-radius: 20px;
+  background: var(--material-chrome);
+  backdrop-filter: blur(var(--blur-lg)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(150%);
+  border-radius: var(--radius-xl);
   border: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05), 0 8px 32px rgba(0, 0, 0, 0.04);
-  padding: 28px 32px;
-  margin-bottom: 20px;
+  padding: var(--sp-7) var(--sp-8);
+  margin-bottom: var(--sp-5);
+}
+
+.step-container > .step-section-label {
+  display: none;
+}
+
+.step-container :deep(.section-header) {
+  align-items: flex-start;
+  margin-bottom: var(--sp-7);
+}
+
+.step-container :deep(.section-header-text) {
+  gap: var(--sp-2);
+  max-width: 56ch;
+}
+
+.step-container :deep(.section-header-subtitle) {
+  line-height: 1.75;
+}
+
+.step-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-6);
+  align-items: start;
+}
+
+.step-flow {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-6);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.58) 0%, rgba(255, 255, 255, 0.36) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.step-flow :deep(.section-header),
+.upload-section :deep(.section-header) {
+  align-items: flex-start;
+  margin-bottom: var(--sp-6);
+}
+
+.step-flow :deep(.section-header-text),
+.upload-section :deep(.section-header-text) {
+  gap: var(--sp-2);
+  max-width: 34rem;
+}
+
+.step-flow :deep(.section-header-subtitle),
+.upload-section :deep(.section-header-subtitle) {
+  line-height: 1.7;
+}
+
+.upload-section :deep(.section-header-trailing) {
+  align-self: flex-start;
+}
+
+@media (prefers-color-scheme: dark) {
+  .step-flow {
+    background: rgba(44, 44, 46, 0.32);
+    border-color: rgba(84, 84, 88, 0.28);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .step-container {
+    border-color: rgba(84, 84, 88, 0.4);
+  }
 }
 
 .step-section-label {
-  font-size: 12px;
+  font-size: var(--fs-caption1);
   font-weight: 600;
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin-bottom: 16px;
+  margin-bottom: var(--sp-4);
 }
 
-/* ─── Timeline ───────────────────────────────────────────── */
-.timeline {
+/* ── Timeline ────────────────────────────────────────────── */
+
+.step-list {
   display: flex;
   flex-direction: column;
+  gap: var(--sp-4);
 }
 
-.tl-item {
-  display: flex;
-  gap: 0;
+.step-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--sp-4);
+  padding: var(--sp-5);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  border: 1px solid var(--line-soft);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
-.tl-rail {
-  display: flex;
-  flex-direction: column;
+.step-badge {
+  display: inline-flex;
   align-items: center;
-  width: 36px;
-  flex-shrink: 0;
-}
-
-.tl-dot {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  display: flex;
   justify-content: center;
-  align-items: center;
-  font-size: 12px;
-  font-weight: 700;
-  flex-shrink: 0;
-  z-index: 1;
-  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.35);
-}
-
-.tl-line {
-  flex: 1;
-  width: 2px;
-  background: var(--line-soft);
-  margin: 4px 0;
-  min-height: 16px;
-}
-
-.tl-body {
-  flex: 1;
-  padding: 2px 0 24px 16px;
-}
-
-/* Legacy alias for older step markup (unused but safe) */
-.step-item {
-  display: flex;
-  gap: 14px;
-  margin-top: 18px;
-}
-
-.step-index {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: var(--fill-quaternary);
+  border: 1px solid var(--line-soft);
+  color: var(--text-soft);
   font-size: 13px;
-  font-weight: 600;
-  flex-shrink: 0;
-  margin-top: 2px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1;
 }
 
-.step-main { flex: 1; }
+.step-card-content {
+  min-width: 0;
+}
 
 .step-desc {
-  font-size: 16px;
+  font-size: var(--fs-callout);
   line-height: 1.6;
   color: var(--text-main);
   margin: 0;
+  font-weight: 650;
 }
 
 .step-sub {
-  font-size: 13px;
+  font-size: var(--fs-footnote);
   color: var(--text-soft);
-  margin-top: 5px;
+  margin-top: var(--sp-2);
   line-height: 1.5;
 }
 
-/* ─── Upload Section ─────────────────────────────────────── */
-.upload-section {
-  margin-top: 28px;
-  padding-top: 28px;
-  border-top: 1px solid var(--line-soft);
+/* ── Upload Section ──────────────────────────────────────── */
+
+.upload-panel {
+  min-width: 0;
+  display: block;
 }
 
-:deep(.minimal-upload .el-upload-dragger) {
+.upload-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-6);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.58) 0%, rgba(255, 255, 255, 0.36) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+@media (prefers-color-scheme: dark) {
+  .upload-section {
+    background: rgba(44, 44, 46, 0.42);
+    border-color: rgba(84, 84, 88, 0.35);
+    box-shadow: none;
+  }
+}
+
+.upload-section-tip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--fill-quaternary);
+  color: var(--text-soft);
+  font-size: var(--fs-caption1);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.upload-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.upload-check-item {
+  position: relative;
+  padding-left: 18px;
+  font-size: var(--fs-footnote);
+  line-height: 1.5;
+  color: var(--text-soft);
+}
+
+.upload-check-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fill-secondary);
+}
+
+.upload-check-item.done::before {
+  background: var(--system-green);
+}
+
+:deep(.apple-upload .el-upload-dragger) {
   background-color: var(--surface-secondary);
   border: 1.5px dashed var(--line-strong);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   transition:
     border-color var(--duration-short) var(--ease-standard),
     background-color var(--duration-short) var(--ease-standard);
 }
 
-:deep(.minimal-upload .el-upload-dragger:hover) {
+:deep(.apple-upload .el-upload-dragger:hover) {
   border-color: rgba(0, 122, 255, 0.4);
-  background-color: rgba(0, 122, 255, 0.03);
+  background-color: var(--info-fill);
 }
 
 .upload-content {
-  padding: 40px 20px;
+  min-height: 164px;
+  padding: var(--sp-6) var(--sp-5);
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
 }
 
 .upload-icon {
@@ -1392,7 +1599,7 @@ onUnmounted(() => {
 }
 
 .upload-text {
-  font-size: 15px;
+  font-size: var(--fs-subheadline);
   color: var(--text-soft);
   margin-bottom: 6px;
 }
@@ -1402,21 +1609,33 @@ onUnmounted(() => {
   color: var(--text-main);
 }
 
-.upload-hint {
-  font-size: 13px;
+.upload-hint-text {
+  font-size: var(--fs-footnote);
   color: var(--text-faint);
 }
 
 .file-preview {
-  margin-top: 16px;
   background: var(--surface-secondary);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--line-soft);
-  padding: 14px 16px;
+  padding: 14px var(--sp-4);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
+}
+
+.file-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-left: auto;
+}
+
+.file-status {
+  font-size: var(--fs-footnote);
+  color: var(--text-soft);
+  white-space: nowrap;
 }
 
 .file-info {
@@ -1438,9 +1657,9 @@ onUnmounted(() => {
 .submit-action-btn {
   background-color: var(--accent) !important;
   border-color: var(--accent) !important;
-  border-radius: 9999px !important;
-  padding: 8px 20px !important;
-  min-height: 44px !important;
+  border-radius: var(--radius-full) !important;
+  padding: var(--sp-2) var(--sp-5) !important;
+  min-height: var(--touch-target) !important;
   flex-shrink: 0;
 }
 
@@ -1449,16 +1668,23 @@ onUnmounted(() => {
   border-color: var(--accent-deep) !important;
 }
 
-/* ─── Job Status Card ─────────────────────────────────────── */
+/* ── Job Status Card ─────────────────────────────────────── */
+
 .job-status-card {
-  margin-top: 20px;
-  border-radius: 20px;
-  padding: 24px;
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(32px) saturate(150%);
-  -webkit-backdrop-filter: blur(32px) saturate(150%);
+  margin-top: var(--sp-5);
+  border-radius: var(--radius-xl);
+  padding: var(--sp-6);
+  background: var(--material-chrome);
+  backdrop-filter: blur(var(--blur-lg)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(150%);
   border: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05), 0 8px 32px rgba(0, 0, 0, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  .job-status-card {
+    border-color: rgba(84, 84, 88, 0.4);
+  }
 }
 
 .job-status-meta {
@@ -1466,15 +1692,25 @@ onUnmounted(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--fs-footnote);
   color: var(--text-faint);
-  margin-bottom: 16px;
+  margin-bottom: var(--sp-4);
+}
+
+.job-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  background: var(--fill-quaternary);
+  color: var(--text-soft);
 }
 
 .job-failure-box {
-  margin-bottom: 16px;
-  padding: 14px 16px;
-  border-radius: 12px;
+  margin-bottom: var(--sp-4);
+  padding: 14px var(--sp-4);
+  border-radius: var(--radius-md);
   background: var(--danger-fill);
   border: 1px solid rgba(255, 59, 48, 0.18);
 }
@@ -1482,14 +1718,14 @@ onUnmounted(() => {
 .job-log-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .job-log-item {
   display: flex;
-  gap: 12px;
+  gap: var(--sp-3);
   align-items: flex-start;
-  font-size: 13px;
+  font-size: var(--fs-footnote);
   line-height: 1.6;
   color: var(--text-soft);
 }
@@ -1502,11 +1738,12 @@ onUnmounted(() => {
 
 .job-log-text { flex: 1; }
 
-/* ─── Result Card ─────────────────────────────────────────── */
+/* ── Result Card ─────────────────────────────────────────── */
+
 .result-card {
-  margin-top: 20px;
-  border-radius: 20px;
-  padding: 28px 32px;
+  margin-top: var(--sp-5);
+  border-radius: var(--radius-xl);
+  padding: var(--sp-7) var(--sp-8);
   border: 1px solid transparent;
 }
 
@@ -1523,83 +1760,89 @@ onUnmounted(() => {
 .result-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-3);
   margin-bottom: 14px;
 }
 
 .result-icon { font-size: 24px; }
 
-.success .result-icon { color: #34C759; }
-.error .result-icon { color: #FF3B30; }
+.success .result-icon { color: var(--system-green); }
+.error .result-icon { color: var(--system-red); }
 
 .result-header h3 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-title3);
   font-weight: 700;
   color: var(--text-main);
   letter-spacing: -0.02em;
 }
 
 .result-score {
-  font-size: 15px;
+  font-size: var(--fs-subheadline);
   font-weight: 600;
   color: var(--text-main);
-  margin-bottom: 12px;
+  margin-bottom: var(--sp-3);
 }
 
 .result-note {
   margin-bottom: 14px;
-  padding: 12px 16px;
-  border-radius: 12px;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--radius-md);
   background: var(--warning-fill);
-  color: #9a6700;
+  color: var(--badge-warning-color);
   font-size: 14px;
   line-height: 1.7;
 }
 
 .result-feedback {
-  font-size: 15px;
+  font-size: var(--fs-subheadline);
   line-height: 1.6;
-  margin: 0 0 20px;
+  margin: 0 0 var(--sp-5);
   color: var(--text-soft);
 }
 
 .issues-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 20px;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-5);
 }
 
 .issue-chip {
   display: inline-flex;
   align-items: center;
-  padding: 5px 12px;
-  background: var(--apple-fill);
-  border-radius: 9999px;
-  font-size: 13px;
+  padding: 5px var(--sp-3);
+  background: var(--fill-quaternary);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-footnote);
   color: var(--text-soft);
 }
 
-/* ─── Step Results ─────────────────────────────────────────── */
+/* ── Step Results ────────────────────────────────────────── */
+
 .step-result-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-5);
 }
 
-.step-result-item,
-.detail-box {
-  background: rgba(120, 120, 128, 0.07);
+.step-result-item {
+  background: var(--fill-quaternary);
   border: 1px solid rgba(255, 255, 255, 0.60);
-  border-radius: 16px;
-  padding: 16px 20px;
+  border-radius: var(--radius-lg);
+  padding: var(--sp-4) var(--sp-5);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
 }
 
+@media (prefers-color-scheme: dark) {
+  .step-result-item {
+    border-color: rgba(84, 84, 88, 0.3);
+  }
+}
+
 .step-results-box {
-  padding: 18px 20px 16px;
+  padding: 18px var(--sp-5) var(--sp-4);
 }
 
 .step-results-box .detail-title {
@@ -1617,40 +1860,23 @@ onUnmounted(() => {
 .step-result-top {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--sp-4);
   align-items: flex-start;
   margin-bottom: 10px;
 }
 
-.step-result-title,
-.detail-title {
-  font-size: 15px;
+.step-result-title {
+  font-size: var(--fs-subheadline);
   font-weight: 600;
   color: var(--text-main);
   line-height: 1.5;
-}
-
-.step-result-title {
   max-width: calc(100% - 80px);
-}
-
-.step-result-status {
-  flex-shrink: 0;
-  min-height: 22px;
-  padding: 2px 10px;
-  border-radius: 9999px;
-  background: rgba(120, 120, 128, 0.1);
-  color: var(--text-soft);
-  font-size: 12px;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
 }
 
 .step-result-meta {
   display: block;
-  font-size: 12px;
-  margin-bottom: 8px;
+  font-size: var(--fs-caption1);
+  margin-bottom: var(--sp-2);
   color: var(--text-faint);
   line-height: 1.5;
 }
@@ -1659,168 +1885,81 @@ onUnmounted(() => {
   line-height: 1.8;
 }
 
-/* ─── Detail Dialog Content ───────────────────────────────── */
-.detail-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
+/* ── Result Actions ──────────────────────────────────────── */
 
-.summary {
-  display: inline-flex;
-  align-self: flex-start;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-soft);
-  background: rgba(120, 120, 128, 0.10);
-  padding: 6px 14px;
-  border-radius: 9999px;
-  border: 1px solid rgba(120, 120, 128, 0.14);
-  letter-spacing: -0.01em;
-}
-
-.detail-text {
-  color: var(--text-soft);
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.video {
-  width: 100%;
-  max-height: 360px;
-  background: #000;
-  border-radius: 16px;
-  display: block;
-}
-
-/* ─── Action Buttons ─────────────────────────────────────── */
 .result-actions {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.action-btn-primary {
-  background: #007AFF !important;
-  background-color: #007AFF !important;
-  border: none !important;
-  border-radius: 13px !important;
-  min-height: 44px !important;
-  font-weight: 600 !important;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14), inset 0 1px 0 rgba(255,255,255,0.18) !important;
-}
+/* ── Responsive ──────────────────────────────────────────── */
 
-.action-btn-primary:hover {
-  background: #0071F5 !important;
-  background-color: #0071F5 !important;
-}
-
-.action-btn-primary:active {
-  background: #0064DB !important;
-  background-color: #0064DB !important;
-  transform: scale(0.985) !important;
-}
-
-.action-btn-secondary {
-  border-radius: 13px !important;
-  border: 1px solid rgba(120, 120, 128, 0.22) !important;
-  border-color: rgba(120, 120, 128, 0.22) !important;
-  color: var(--text-main) !important;
-  background: rgba(120, 120, 128, 0.10) !important;
-  background-color: rgba(120, 120, 128, 0.10) !important;
-  min-height: 44px !important;
-  font-weight: 500 !important;
-}
-
-.action-btn-secondary:hover {
-  background: rgba(120, 120, 128, 0.16) !important;
-  background-color: rgba(120, 120, 128, 0.16) !important;
-}
-
-/* ─── Dialog Overrides ─────────────────────────────────────── */
-:deep(.el-dialog) {
-  border-radius: 24px !important;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.70) !important;
-  background: rgba(255, 255, 255, 0.94) !important;
-  backdrop-filter: blur(60px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(60px) saturate(180%) !important;
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.04),
-    0 8px 32px rgba(0, 0, 0, 0.08),
-    0 32px 80px rgba(0, 0, 0, 0.10) !important;
-}
-
-:deep(.el-dialog__header) {
-  padding: 24px 28px 18px;
-  margin-right: 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-  background: transparent;
-}
-
-:deep(.el-dialog__title) {
-  font-size: 20px;
-  font-weight: 750;
-  color: var(--text-main);
-  letter-spacing: -0.03em;
-}
-
-:deep(.el-dialog__headerbtn) {
-  top: 22px;
-  right: 22px;
-  width: 30px;
-  height: 30px;
-  background: rgba(120, 120, 128, 0.12);
-  border-radius: 50%;
-}
-
-:deep(.el-dialog__headerbtn .el-dialog__close) {
-  font-size: 13px;
-  color: var(--text-soft);
-}
-
-:deep(.el-dialog__headerbtn:hover) {
-  background: rgba(120, 120, 128, 0.20);
-}
-
-:deep(.el-dialog__body) { padding: 22px 28px; }
-:deep(.el-dialog__footer) { padding: 0 28px 24px; }
-
-
-/* ─── Reduced Motion blob override ─────────────────────────── */
-@media (prefers-reduced-motion: reduce) {
-  .blob { animation: none; }
-}
-
-/* ─── Reduced Motion ─────────────────────────────────────── */
-@media (prefers-reduced-motion: reduce) {
-  .logout-btn,
-  .task-card,
-  .back-btn,
-  .segment,
-  .progress-fill,
-  :deep(.minimal-upload .el-upload-dragger) {
-    transition: none;
-  }
-}
-
-/* ─── Responsive ─────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .main-content { padding: 20px 16px; }
+  .main-content { padding: var(--sp-5) var(--sp-4); }
 
   .top-nav {
-    padding: 0 16px;
+    padding: 0 var(--sp-4);
     height: auto;
     min-height: var(--toolbar-height);
   }
 
-  .header-titles { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .header-titles { flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
   .header-titles h2 { font-size: 26px; }
-  .grid-container { grid-template-columns: 1fr; }
+  .hero-section,
+  .page-header { padding: var(--sp-5) var(--sp-4); }
+  .progress-card,
+  .step-container,
+  .job-status-card,
+  .result-card {
+    padding: var(--sp-5) var(--sp-4);
+  }
+  .step-container :deep(.section-header) {
+    margin-bottom: var(--sp-5);
+  }
+  .step-flow,
+  .upload-section {
+    padding: var(--sp-5);
+  }
+  .history-item {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+  }
+  .history-item-badges,
+  .history-item-action {
+    justify-content: flex-start;
+  }
+  .progress-card-top {
+    flex-direction: column;
+  }
+  .progress-side {
+    align-items: flex-start;
+  }
+  .step-layout {
+    grid-template-columns: 1fr;
+  }
+  .upload-section-tip {
+    align-self: flex-start;
+  }
   .result-actions { flex-direction: column; }
-  .file-preview { flex-direction: column; align-items: flex-start; }
+  .file-preview,
+  .file-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
   .step-result-top { flex-direction: column; }
+  .segment { padding: var(--sp-2) 18px; font-size: 14px; }
+}
 
-  .segment { padding: 8px 18px; font-size: 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .logout-btn,
+  .task-item,
+  .list-item,
+  .back-btn,
+  .segment,
+  .progress-fill,
+  :deep(.apple-upload .el-upload-dragger) {
+    transition: none;
+  }
 }
 </style>

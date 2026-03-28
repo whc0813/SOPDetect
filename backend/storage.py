@@ -1622,7 +1622,15 @@ def retry_evaluation_job(job_id, current_user=None):
     )
 
 
-def _fetch_history_rows(connection, execution_codes=None, current_user=None):
+def _fetch_history_rows(
+    connection,
+    execution_codes=None,
+    current_user=None,
+    keyword=None,
+    ai_status=None,
+    review_status=None,
+    sort_order="desc",
+):
     sql = """
         SELECT e.id, e.execution_code, e.sop_id, e.user_id, e.uploaded_video_media_id, e.finish_time,
                e.score, e.ai_status, e.feedback, e.sequence_assessment, e.prerequisite_violated,
@@ -1642,17 +1650,63 @@ def _fetch_history_rows(connection, execution_codes=None, current_user=None):
     if current_user and current_user.get("role") != "admin":
         conditions.append("e.user_id = %s")
         params.append(current_user.get("id"))
+    if keyword:
+        conditions.append("s.name LIKE %s")
+        params.append(f"%{keyword}%")
+    if ai_status:
+        conditions.append("e.ai_status = %s")
+        params.append(ai_status)
+    if review_status == "pending":
+        conditions.append(
+            """
+            NOT EXISTS (
+                SELECT 1
+                FROM manual_reviews mr2
+                WHERE mr2.execution_id = e.id
+                  AND COALESCE(TRIM(mr2.review_status), '') <> ''
+            )
+            """
+        )
+    elif review_status:
+        conditions.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM manual_reviews mr2
+                WHERE mr2.execution_id = e.id
+                  AND mr2.review_status = %s
+            )
+            """
+        )
+        params.append(review_status)
     if conditions:
         sql += " WHERE " + " AND ".join(conditions)
-    sql += " ORDER BY e.created_at DESC"
+    final_sort_order = "ASC" if str(sort_order).lower() == "asc" else "DESC"
+    sql += f" ORDER BY e.finish_time {final_sort_order}, e.created_at {final_sort_order}"
 
     with connection.cursor() as cursor:
         cursor.execute(sql, params)
         return cursor.fetchall()
 
 
-def _build_history_records(connection, execution_codes=None, current_user=None):
-    rows = _fetch_history_rows(connection, execution_codes, current_user=current_user)
+def _build_history_records(
+    connection,
+    execution_codes=None,
+    current_user=None,
+    keyword=None,
+    ai_status=None,
+    review_status=None,
+    sort_order="desc",
+):
+    rows = _fetch_history_rows(
+        connection,
+        execution_codes,
+        current_user=current_user,
+        keyword=keyword,
+        ai_status=ai_status,
+        review_status=review_status,
+        sort_order=sort_order,
+    )
     if not rows:
         return []
 
@@ -1797,9 +1851,16 @@ def _build_history_records(connection, execution_codes=None, current_user=None):
     return records
 
 
-def list_history(current_user=None):
+def list_history(current_user=None, keyword=None, ai_status=None, review_status=None, sort_order="desc"):
     with _get_connection() as connection:
-        return _build_history_records(connection, current_user=current_user)
+        return _build_history_records(
+            connection,
+            current_user=current_user,
+            keyword=keyword,
+            ai_status=ai_status,
+            review_status=review_status,
+            sort_order=sort_order,
+        )
 
 
 def get_history(record_id, current_user=None):
