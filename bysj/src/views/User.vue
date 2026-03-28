@@ -346,6 +346,7 @@ import {
   getCurrentUser,
   getEvaluationJobDetail,
   getHistoryDetail,
+  isAuthSessionError,
   listEvaluationJobs,
   listHistory,
   listSops,
@@ -385,6 +386,11 @@ const greetingText = computed(() => {
   if (hour >= 14 && hour < 18) return '下午好'
   return '晚上好'
 })
+
+function showErrorMessage(error, fallback) {
+  if (isAuthSessionError(error)) return
+  ElMessage.error(error.message || fallback)
+}
 
 const currentSopHasNoDemoVideo = computed(() => {
   const steps = currentSop.value?.steps || []
@@ -480,7 +486,7 @@ async function refreshCurrentJob(jobId, silent = false) {
     }
   } catch (error) {
     if (!silent) {
-      ElMessage.error(error.message || '任务状态刷新失败')
+      showErrorMessage(error, '任务状态刷新失败')
     }
     stopJobPolling()
   }
@@ -544,7 +550,7 @@ async function submitVideo() {
     startJobPolling(job.id)
     ElMessage.success('评测任务已提交，系统正在后台处理')
   } catch (error) {
-    ElMessage.error(error.message || '提交评测任务失败')
+    showErrorMessage(error, '提交评测任务失败')
   } finally {
     isEvaluating.value = false
   }
@@ -561,7 +567,7 @@ async function openHistoryDetailById(recordId) {
     }
     historyDetailVisible.value = true
   } catch (error) {
-    ElMessage.error(error.message || '加载详情失败')
+    showErrorMessage(error, '加载详情失败')
   }
 }
 
@@ -584,7 +590,7 @@ async function retryCurrentJob() {
     startJobPolling(job.id)
     ElMessage.success('已重新提交评测任务')
   } catch (error) {
-    ElMessage.error(error.message || '重试任务失败')
+    showErrorMessage(error, '重试任务失败')
   } finally {
     isRetryingJob.value = false
   }
@@ -675,7 +681,7 @@ function getJobStageText(stage) {
 
 onMounted(() => {
   Promise.all([loadSops(), loadJobs(), loadHistory()]).catch((error) => {
-    ElMessage.error(error.message || '初始化失败')
+    showErrorMessage(error, '初始化失败')
   })
 })
 

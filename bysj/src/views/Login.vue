@@ -59,7 +59,6 @@
               class="field-input"
               placeholder="密码"
               autocomplete="current-password"
-              @keyup.enter="handleLogin"
               @input="clearError('password')"
             />
             <button type="button" class="pwd-toggle" @click="showLoginPwd = !showLoginPwd">
@@ -93,7 +92,7 @@
         </div>
         <div class="field-wrap" :class="{ 'is-error': errors.confirmPassword }">
           <div class="field-row">
-            <input v-model="registerForm.confirmPassword" :type="showRegConfirm ? 'text' : 'password'" class="field-input" placeholder="确认密码" autocomplete="new-password" @keyup.enter="handleRegister" @input="clearError('confirmPassword')" />
+            <input v-model="registerForm.confirmPassword" :type="showRegConfirm ? 'text' : 'password'" class="field-input" placeholder="确认密码" autocomplete="new-password" @input="clearError('confirmPassword')" />
             <button type="button" class="pwd-toggle" @click="showRegConfirm = !showRegConfirm">{{ showRegConfirm ? '隐藏' : '显示' }}</button>
           </div>
           <p v-if="errors.confirmPassword" class="field-err" role="alert">{{ errors.confirmPassword }}</p>
@@ -113,7 +112,7 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { login, register, setAuthSession } from '../api/client'
+import { clearAuthSession, fetchCurrentUser, login, register, setAuthSession } from '../api/client'
 
 const router = useRouter()
 const loading = ref(false)
@@ -165,9 +164,16 @@ async function handleLogin() {
     const result = await login({ username: loginForm.username.trim(), password: loginForm.password })
     const auth = result.data
     setAuthSession(auth)
-    ElMessage.success(`欢迎回来，${auth.user.displayName}`)
-    router.push(auth.user.role === 'admin' ? '/admin' : '/user')
+    const currentUserResult = await fetchCurrentUser()
+    const currentUser = currentUserResult.data
+    setAuthSession({
+      ...auth,
+      user: currentUser
+    })
+    ElMessage.success(`欢迎回来，${currentUser.displayName}`)
+    router.push(currentUser.role === 'admin' ? '/admin' : '/user')
   } catch (error) {
+    clearAuthSession()
     ElMessage.error(error.message || '登录失败')
   } finally {
     loading.value = false

@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import json
 import mimetypes
 import os
@@ -314,6 +315,22 @@ def _password_matches(password, stored_hash):
         return True
     if stored_hash == hashlib.sha256(password.encode("utf-8")).hexdigest():
         return True
+    if stored_hash.startswith("pbkdf2_sha256$"):
+        parts = stored_hash.split("$", 3)
+        if len(parts) != 4:
+            return False
+        _, iterations_raw, salt, expected_hash = parts
+        try:
+            iterations = int(iterations_raw)
+        except (TypeError, ValueError):
+            return False
+        derived_hash = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt.encode("utf-8"),
+            iterations,
+        ).hex()
+        return hmac.compare_digest(derived_hash, expected_hash)
     return False
 
 

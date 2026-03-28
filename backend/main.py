@@ -349,6 +349,16 @@ def require_admin(current_user=Depends(get_current_user)):
     return current_user
 
 
+def serialize_auth_user(user: dict) -> dict:
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "role": user["role"],
+        "displayName": user["displayName"],
+        "status": user.get("status"),
+    }
+
+
 def split_data_url(data_url: str):
     if not data_url or "," not in data_url:
         raise HTTPException(status_code=400, detail="Invalid data URL")
@@ -1429,14 +1439,14 @@ async def login(req: LoginRequest):
             accessToken=access_token,
             tokenType="Bearer",
             expiresIn=TOKEN_EXPIRES_IN,
-            user={
-                "id": user["id"],
-                "username": user["username"],
-                "role": user["role"],
-                "displayName": user["displayName"],
-            },
+            user=serialize_auth_user(user),
         ).model_dump(),
     }
+
+
+@app.get("/api/auth/me")
+async def fetch_current_auth_user(current_user=Depends(get_current_user)):
+    return {"success": True, "data": serialize_auth_user(current_user)}
 
 
 @app.post("/api/auth/register")

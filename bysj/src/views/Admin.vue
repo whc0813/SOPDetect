@@ -407,7 +407,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataLine, Document, Monitor, Plus, SwitchButton } from '@element-plus/icons-vue'
-import { clearAuthSession, createSop, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getConfig, getCurrentUser, getHistoryDetail, getSopDetail, getStats, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateConfig, updateSopStepDemoVideo, updateSopStepSegmentation, updateUserStatus } from '../api/client'
+import { clearAuthSession, createSop, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getConfig, getCurrentUser, getHistoryDetail, getSopDetail, getStats, isAuthSessionError, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateConfig, updateSopStepDemoVideo, updateSopStepSegmentation, updateUserStatus } from '../api/client'
 
 const router = useRouter()
 const activeMenu = ref('manage')
@@ -459,6 +459,11 @@ const panelHeaderSubtitle = computed(() => {
   return '查看整体执行情况，并处理需要人工确认的记录'
 })
 
+function showErrorMessage(error, fallback) {
+  if (isAuthSessionError(error)) return
+  ElMessage.error(error.message || fallback)
+}
+
 function createEmptyStep() {
   return { description: '', video: null }
 }
@@ -473,7 +478,7 @@ async function openConfigDialog() {
     await loadApiConfig()
     configVisible.value = true
   } catch (error) {
-    ElMessage.error(error.message || '加载配置失败')
+    showErrorMessage(error, '加载配置失败')
   }
 }
 
@@ -483,7 +488,7 @@ async function saveApiConfig() {
     configVisible.value = false
     ElMessage.success('配置已保存')
   } catch (error) {
-    ElMessage.error(error.message || '保存配置失败')
+    showErrorMessage(error, '保存配置失败')
   }
 }
 
@@ -539,7 +544,7 @@ async function reloadCurrentView() {
 
 function handleMenuSelect(index) {
   activeMenu.value = index
-  reloadCurrentView().catch((error) => ElMessage.error(error.message || '加载失败'))
+  reloadCurrentView().catch((error) => showErrorMessage(error, '加载失败'))
 }
 
 async function handleLogout() {
@@ -592,7 +597,7 @@ async function saveSop() {
     ElMessage.success('SOP 已保存')
     if (result.warnings?.length) ElMessage.warning(result.warnings[0])
   } catch (error) {
-    ElMessage.error(error.message || '保存失败')
+    showErrorMessage(error, '保存失败')
   } finally {
     isSaving.value = false
   }
@@ -604,7 +609,7 @@ async function openDebugSop(row) {
   try {
     selectedSopDebug.value = buildDebugSopState((await getSopDetail(row.id)).data)
   } catch (error) {
-    ElMessage.error(error.message || '加载详情失败')
+    showErrorMessage(error, '加载详情失败')
     debugVisible.value = false
   } finally {
     debugLoading.value = false
@@ -618,7 +623,7 @@ async function deleteCurrentSop(row) {
     await Promise.all([reloadCurrentView(), loadStats()])
     ElMessage.success('删除成功')
   } catch (error) {
-    if (error !== 'cancel') ElMessage.error(error.message || '删除失败')
+    if (error !== 'cancel') showErrorMessage(error, '删除失败')
   }
 }
 
@@ -632,7 +637,7 @@ async function openHistoryDetail(row) {
     }
     historyDetailVisible.value = true
   } catch (error) {
-    ElMessage.error(error.message || '加载详情失败')
+    showErrorMessage(error, '加载详情失败')
   }
 }
 
@@ -648,7 +653,7 @@ async function openReviewDialog(row) {
     reviewForm.note = reviewTarget.value.manualReview?.note || ''
     reviewDialogVisible.value = true
   } catch (error) {
-    ElMessage.error(error.message || '加载复核对象失败')
+    showErrorMessage(error, '加载复核对象失败')
   }
 }
 
@@ -660,7 +665,7 @@ async function saveManualReview() {
     await Promise.all([loadHistoryList(), loadStats()])
     ElMessage.success('复核已保存')
   } catch (error) {
-    ElMessage.error(error.message || '保存复核失败')
+    showErrorMessage(error, '保存复核失败')
   }
 }
 
@@ -672,7 +677,7 @@ async function toggleUserStatus(row) {
     await loadUserList()
     ElMessage.success(nextStatus === 'active' ? '用户已启用' : '用户已禁用')
   } catch (error) {
-    ElMessage.error(error.message || '更新用户状态失败')
+    showErrorMessage(error, '更新用户状态失败')
   }
 }
 
@@ -720,7 +725,7 @@ async function applyManualSegmentation(step) {
     await loadSopList()
     ElMessage.success('关键帧已按手动时间点重建')
   } catch (error) {
-    ElMessage.error(error.message || '重建关键帧失败')
+    showErrorMessage(error, '重建关键帧失败')
   } finally {
     step.manualSegmentationLoading = false
   }
@@ -746,7 +751,7 @@ async function replaceStepDemoVideo(step) {
     await loadSopList()
     ElMessage.success('示范视频已更新，并重新生成参考结果')
   } catch (error) {
-    ElMessage.error(error.message || '更新示范视频失败')
+    showErrorMessage(error, '更新示范视频失败')
   } finally {
     step.demoVideoUploadLoading = false
   }
@@ -792,7 +797,7 @@ function formatSubsteps(list) {
 }
 
 onMounted(() => {
-  reloadCurrentView().catch((error) => ElMessage.error(error.message || '初始化失败'))
+  reloadCurrentView().catch((error) => showErrorMessage(error, '初始化失败'))
 })
 
 onUnmounted(() => {

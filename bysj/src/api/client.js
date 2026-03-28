@@ -1,5 +1,7 @@
 const API_BASE_URL = process.env.VUE_APP_API_BASE_URL || 'http://localhost:8000'
 const AUTH_STORAGE_KEY = 'authSession'
+const AUTH_SYNC_STORAGE_KEY = 'authSessionSyncEvent'
+const AUTH_SESSION_ERROR_CODE = 'AUTH_SESSION_EXPIRED'
 
 async function parseJsonSafe(response) {
   try {
@@ -29,11 +31,36 @@ export function getAccessToken() {
 export function setAuthSession(payload) {
   if (!payload) return
   sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload))
+  broadcastAuthSyncEvent('login', {
+    accessToken: payload.accessToken || '',
+    userId: payload.user?.id || null,
+    username: payload.user?.username || ''
+  })
 }
 
-export function clearAuthSession() {
+export function clearAuthSession(options = {}) {
+  const { broadcast = true } = options
+  const currentUser = getCurrentUser()
+  const currentToken = getAccessToken()
   sessionStorage.removeItem(AUTH_STORAGE_KEY)
   sessionStorage.removeItem('currentUser')
+  if (broadcast && currentToken) {
+    broadcastAuthSyncEvent('logout', {
+      accessToken: currentToken,
+      userId: currentUser?.id || null,
+      username: currentUser?.username || ''
+    })
+  }
+}
+
+function createAuthSessionError(message = '登录已失效，请重新登录') {
+  const error = new Error(message)
+  error.code = AUTH_SESSION_ERROR_CODE
+  return error
+}
+
+export function isAuthSessionError(error) {
+  return error?.code === AUTH_SESSION_ERROR_CODE
 }
 
 export async function apiRequest(path, options = {}) {
@@ -54,6 +81,7 @@ export async function apiRequest(path, options = {}) {
     if (window.location.pathname !== '/login') {
       window.location.replace('/login')
     }
+    throw createAuthSessionError(payload?.detail || payload?.message || '登录已失效，请重新登录')
   }
 
   if (!response.ok || payload?.success === false) {
@@ -79,7 +107,7 @@ export async function fetchAuthorizedMediaBlobUrl(path) {
     if (window.location.pathname !== '/login') {
       window.location.replace('/login')
     }
-    throw new Error('登录已失效，请重新登录')
+    throw createAuthSessionError('登录已失效，请重新登录')
   }
 
   if (!response.ok) {
@@ -110,6 +138,10 @@ export async function login(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   })
+}
+
+export async function fetchCurrentUser() {
+  return apiRequest('/api/auth/me')
 }
 
 export async function register(payload) {
@@ -242,5 +274,61 @@ export async function updateUserStatus(userId, payload) {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
+  })
+}
+
+function broadcastAuthSyncEvent(type, payload = {}) {
+  try {
+    localStorage.setItem(
+      AUTH_SYNC_STORAGE_KEY,
+      JSON.stringify({
+        type,
+        accessToken: payload.accessToken || '',
+        userId: payload.userId || null,
+        username: payload.username || '',
+        timestamp: Date.now(),
+        nonce: Math.random().toString(36).slice(2)
+      })
+    )
+  } catch {
+    // Ignore storage write failures to avoid blocking auth flow.
+  }
+}
+
+export function initializeAuthSessionSync(router) {
+  if (typeof window === 'undefined') return
+
+  window.addEventListener('storage', (event) => {
+    if (event.key !== AUTH_SYNC_STORAGE_KEY || !event.newValue) return
+
+    let syncEvent = null
+    try {
+      syncEvent = JSON.parse(event.newValue)
+    } catch {
+      return
+    }
+
+    const currentUser = getCurrentUser()
+    const currentToken = getAccessToken()
+    if (!currentToken || !currentUser) return
+
+    const incomingToken = syncEvent?.accessToken || ''
+    const sameUser = (
+      syncEvent?.userId != null && currentUser.id != null
+        ? String(syncEvent.userId) === String(currentUser.id)
+        : Boolean(syncEvent?.username) && syncEvent.username === currentUser.username
+    )
+
+    if (!sameUser) return
+
+    const isRemoteLogin = syncEvent?.type === 'login' && incomingToken && incomingToken !== currentToken
+    const isRemoteLogout = syncEvent?.type === 'logout' && incomingToken === currentToken
+
+    if (!isRemoteLogin && !isRemoteLogout) return
+
+    clearAuthSession({ broadcast: false })
+    if (router.currentRoute.value.path !== '/login') {
+      router.replace('/login')
+    }
   })
 }
