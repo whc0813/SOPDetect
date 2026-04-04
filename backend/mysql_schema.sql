@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS sops (
   description TEXT NULL,
   step_count INT NOT NULL DEFAULT 0,
   demo_video_count INT NOT NULL DEFAULT 0,
+  penalty_config JSON NULL,
   status ENUM('draft', 'published', 'archived') NOT NULL DEFAULT 'published',
   created_by BIGINT UNSIGNED NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -77,6 +78,9 @@ CREATE TABLE IF NOT EXISTS sop_steps (
   sop_id BIGINT UNSIGNED NOT NULL,
   step_no INT NOT NULL,
   description TEXT NOT NULL,
+  step_type ENUM('required', 'optional', 'conditional') NOT NULL DEFAULT 'required',
+  step_weight DECIMAL(4,1) NOT NULL DEFAULT 1.0,
+  condition_text TEXT NULL,
   reference_mode ENUM('text', 'video') NOT NULL DEFAULT 'text',
   reference_summary TEXT NULL,
   roi_hint VARCHAR(255) NULL,
@@ -157,6 +161,18 @@ CREATE TABLE IF NOT EXISTS sop_step_substeps (
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS sop_step_prerequisites (
+  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  sop_step_id BIGINT UNSIGNED NOT NULL,
+  prerequisite_step_no INT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sop_step_prerequisites_pair (sop_step_id, prerequisite_step_no),
+  KEY idx_sop_step_prerequisites_step (sop_step_id),
+  CONSTRAINT fk_sop_step_prerequisites_step
+    FOREIGN KEY (sop_step_id) REFERENCES sop_steps (id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS sop_executions (
   id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   execution_code VARCHAR(64) NOT NULL,
@@ -209,10 +225,16 @@ CREATE TABLE IF NOT EXISTS execution_step_results (
   passed TINYINT(1) NOT NULL,
   score DECIMAL(5,2) NOT NULL,
   confidence DECIMAL(5,2) NOT NULL,
+  applicable TINYINT(1) NOT NULL DEFAULT 1,
+  included_in_score TINYINT(1) NOT NULL DEFAULT 1,
   issue_type VARCHAR(100) NULL,
   completion_level VARCHAR(100) NULL,
   order_issue TINYINT(1) NOT NULL DEFAULT 0,
   prerequisite_violated TINYINT(1) NOT NULL DEFAULT 0,
+  detected_start_sec DECIMAL(8,3) NULL,
+  detected_end_sec DECIMAL(8,3) NULL,
+  step_weight_snapshot DECIMAL(4,1) NOT NULL DEFAULT 1.0,
+  step_type_snapshot VARCHAR(20) NOT NULL DEFAULT 'required',
   evidence TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_execution_step_results_no (execution_id, step_no),

@@ -28,10 +28,14 @@ DEFAULT_CONFIG = {
     "apiKey": "",
     "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "model": "qwen3.5-plus",
-    "fps": 2,
+    "fps": 6,
     "temperature": 0.1,
     "timeoutMs": 120000,
 }
+
+STEP_TYPE_VALUES = {"required", "optional", "conditional"}
+DEFAULT_STEP_TYPE = "required"
+DEFAULT_STEP_WEIGHT = 1.0
 
 
 def _load_env_file():
@@ -162,7 +166,7 @@ def _mysql_connection(database=None, autocommit=False):
 
 def _load_schema_sql():
     if not SCHEMA_SQL_PATH.exists():
-        raise RuntimeError(f"???????????: {SCHEMA_SQL_PATH}")
+        raise RuntimeError(f"未找到数据库建表脚本: {SCHEMA_SQL_PATH}")
     sql = SCHEMA_SQL_PATH.read_text(encoding="utf-8")
     default_database = "sop_eval_system"
     target_database = MYSQL_SETTINGS["database"]
@@ -200,6 +204,135 @@ def _split_sql_statements(sql_text):
     if tail:
         statements.append(tail)
     return statements
+
+
+def _table_exists(connection, table_name):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = %s AND table_name = %s
+            LIMIT 1
+            """,
+            (MYSQL_SETTINGS["database"], table_name),
+        )
+        return cursor.fetchone() is not None
+
+
+def _column_exists(connection, table_name, column_name):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s AND column_name = %s
+            LIMIT 1
+            """,
+            (MYSQL_SETTINGS["database"], table_name, column_name),
+        )
+        return cursor.fetchone() is not None
+
+
+def _run_schema_migrations(connection):
+    column_statements = {
+        ("sop_steps", "step_type"): "ALTER TABLE sop_steps ADD COLUMN step_type ENUM('required', 'optional', 'conditional') NOT NULL DEFAULT 'required' AFTER description",
+        ("sop_steps", "step_weight"): "ALTER TABLE sop_steps ADD COLUMN step_weight DECIMAL(4,1) NOT NULL DEFAULT 1.0 AFTER step_type",
+        ("sop_steps", "condition_text"): "ALTER TABLE sop_steps ADD COLUMN condition_text TEXT NULL AFTER step_weight",
+        ("execution_step_results", "applicable"): "ALTER TABLE execution_step_results ADD COLUMN applicable TINYINT(1) NOT NULL DEFAULT 1 AFTER confidence",
+        ("execution_step_results", "included_in_score"): "ALTER TABLE execution_step_results ADD COLUMN included_in_score TINYINT(1) NOT NULL DEFAULT 1 AFTER applicable",
+        ("execution_step_results", "detected_start_sec"): "ALTER TABLE execution_step_results ADD COLUMN detected_start_sec DECIMAL(8,3) NULL AFTER prerequisite_violated",
+        ("execution_step_results", "detected_end_sec"): "ALTER TABLE execution_step_results ADD COLUMN detected_end_sec DECIMAL(8,3) NULL AFTER detected_start_sec",
+        ("execution_step_results", "step_weight_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN step_weight_snapshot DECIMAL(4,1) NOT NULL DEFAULT 1.0 AFTER detected_end_sec",
+        ("execution_step_results", "step_type_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN step_type_snapshot VARCHAR(20) NOT NULL DEFAULT 'required' AFTER step_weight_snapshot",
+        ("sops", "penalty_config"): "ALTER TABLE sops ADD COLUMN penalty_config JSON NULL AFTER demo_video_count",
+    }
+
+    for (table_name, column_name), statement in column_statements.items():
+        if _table_exists(connection, table_name) and not _column_exists(connection, table_name, column_name):
+            with connection.cursor() as cursor:
+                cursor.execute(statement)
+
+    drop_column_statements = {
+        ("sop_steps", "risk_level"): "ALTER TABLE sop_steps DROP COLUMN risk_level",
+        ("sop_steps", "time_anchor_type"): "ALTER TABLE sop_steps DROP COLUMN time_anchor_type",
+        ("sop_steps", "time_window_start_sec"): "ALTER TABLE sop_steps DROP COLUMN time_window_start_sec",
+        ("sop_steps", "time_window_end_sec"): "ALTER TABLE sop_steps DROP COLUMN time_window_end_sec",
+        ("execution_step_results", "timing_status"): "ALTER TABLE execution_step_results DROP COLUMN timing_status",
+        ("execution_step_results", "risk_level_snapshot"): "ALTER TABLE execution_step_results DROP COLUMN risk_level_snapshot",
+    }
+
+    for (table_name, column_name), statement in drop_column_statements.items():
+        if _table_exists(connection, table_name) and _column_exists(connection, table_name, column_name):
+            with connection.cursor() as cursor:
+                cursor.execute(statement)
+
+    if not _table_exists(connection, "sop_step_prerequisites"):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sop_step_prerequisites (
+                  id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+                  sop_step_id BIGINT UNSIGNED NOT NULL,
+                  prerequisite_step_no INT NOT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE KEY uk_sop_step_prerequisites_pair (sop_step_id, prerequisite_step_no),
+                  KEY idx_sop_step_prerequisites_step (sop_step_id),
+                  CONSTRAINT fk_sop_step_prerequisites_step
+                    FOREIGN KEY (sop_step_id) REFERENCES sop_steps (id)
+                    ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """
+            )
+
+
+def _normalize_step_type(value):
+    text = str(value or "").strip().lower()
+    return text if text in STEP_TYPE_VALUES else DEFAULT_STEP_TYPE
+
+
+def _normalize_step_weight(value):
+    try:
+        weight = round(float(value), 1)
+    except Exception:
+        return DEFAULT_STEP_WEIGHT
+    return min(5.0, max(0.5, weight))
+
+
+def _normalize_optional_float(value):
+    if value in (None, ""):
+        return None
+    try:
+        return round(float(value), 3)
+    except Exception:
+        return None
+
+
+def _normalize_prerequisite_step_nos(values, current_step_no=None):
+    items = []
+    for raw in values or []:
+        try:
+            step_no = int(raw)
+        except Exception:
+            continue
+        if step_no <= 0:
+            continue
+        if current_step_no is not None and step_no >= int(current_step_no):
+            continue
+        if step_no not in items:
+            items.append(step_no)
+    return sorted(items)
+
+
+def _normalize_step_record(step):
+    step_no = int(step.get("stepNo") or 0)
+    return {
+        **step,
+        "stepType": _normalize_step_type(step.get("stepType")),
+        "stepWeight": _normalize_step_weight(step.get("stepWeight")),
+        "conditionText": (step.get("conditionText") or "").strip(),
+        "prerequisiteStepNos": _normalize_prerequisite_step_nos(step.get("prerequisiteStepNos"), step_no or None),
+    }
 
 def _ensure_seed_data(connection):
     with connection.cursor() as cursor:
@@ -266,6 +399,7 @@ def ensure_schema():
             with connection.cursor() as cursor:
                 for statement in _split_sql_statements(_load_schema_sql()):
                     cursor.execute(statement)
+            _run_schema_migrations(connection)
             _ensure_seed_data(connection)
             connection.commit()
             SCHEMA_READY = True
@@ -770,6 +904,7 @@ def _build_sop_records(connection, sop_codes=None):
     media_map = _fetch_media_for_steps(connection, step_ids)
     keyframe_map = {}
     substep_map = {}
+    prerequisite_map = {}
 
     if step_ids:
         step_placeholders = ", ".join(["%s"] * len(step_ids))
@@ -798,6 +933,18 @@ def _build_sop_records(connection, sop_codes=None):
             for row in cursor.fetchall():
                 substep_map.setdefault(row["sop_step_id"], []).append(row)
 
+            cursor.execute(
+                f"""
+                SELECT *
+                FROM sop_step_prerequisites
+                WHERE sop_step_id IN ({step_placeholders})
+                ORDER BY sop_step_id ASC, prerequisite_step_no ASC
+                """,
+                step_ids,
+            )
+            for row in cursor.fetchall():
+                prerequisite_map.setdefault(row["sop_step_id"], []).append(int(row.get("prerequisite_step_no") or 0))
+
     steps_by_sop = {}
     for step in step_rows:
         frames = keyframe_map.get(step["id"], [])
@@ -810,13 +957,26 @@ def _build_sop_records(connection, sop_codes=None):
         ]
         media_row = media_map.get(step["id"])
         demo_video = _media_row_to_api(media_row)
+        normalized_step = _normalize_step_record(
+            {
+                "stepNo": int(step.get("step_no") or 0),
+                "stepType": step.get("step_type"),
+                "stepWeight": step.get("step_weight"),
+                "conditionText": step.get("condition_text"),
+                "prerequisiteStepNos": prerequisite_map.get(step["id"], []),
+            }
+        )
 
         steps_by_sop.setdefault(step["sop_id"], []).append(
             {
-                "stepNo": int(step.get("step_no") or 0),
+                "stepNo": normalized_step["stepNo"],
                 "description": step.get("description") or "",
                 "videoMeta": demo_video,
                 "demoVideo": demo_video,
+                "stepType": normalized_step["stepType"],
+                "stepWeight": normalized_step["stepWeight"],
+                "conditionText": normalized_step["conditionText"],
+                "prerequisiteStepNos": normalized_step["prerequisiteStepNos"],
                 "referenceMode": step.get("reference_mode") or ("video" if reference_frames else "text"),
                 "referenceFrames": reference_frames,
                 "analysisFrames": analysis_frames,
@@ -891,6 +1051,7 @@ def _fetch_step_row(connection, sop_id, step_no):
 
 
 def _insert_step_children(connection, step_id, step):
+    step = _normalize_step_record(step)
     reference_frames = step.get("referenceFrames") or []
     analysis_frames = step.get("analysisFrames") or []
     reference_timestamps = ((step.get("referenceFeatures") or {}).get("sampleTimestamps")) or []
@@ -922,6 +1083,15 @@ def _insert_step_children(connection, step_id, step):
                 VALUES (%s, %s, %s, %s)
                 """,
                 (step_id, index + 1, item.get("title") or "", item.get("timestampSec") or 0),
+            )
+
+        for prerequisite_step_no in step.get("prerequisiteStepNos") or []:
+            cursor.execute(
+                """
+                INSERT INTO sop_step_prerequisites (sop_step_id, prerequisite_step_no)
+                VALUES (%s, %s)
+                """,
+                (step_id, prerequisite_step_no),
             )
 
 
@@ -977,19 +1147,24 @@ def _upsert_sop_content(connection, sop_data, created_by_id=None):
             sop_id = cursor.lastrowid
 
     for step in steps:
+        step = _normalize_step_record(step)
         reference_features = step.get("referenceFeatures") or {}
         with connection.cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO sop_steps (
-                  sop_id, step_no, description, reference_mode, reference_summary, roi_hint, ai_used,
-                  reference_duration_sec, reference_fps, reference_frame_count, raw_ai_result
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                  sop_id, step_no, description, step_type, step_weight, condition_text, reference_mode,
+                  reference_summary, roi_hint, ai_used, reference_duration_sec, reference_fps,
+                  reference_frame_count, raw_ai_result
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     sop_id,
                     step.get("stepNo") or 0,
                     step.get("description") or "",
+                    step.get("stepType") or DEFAULT_STEP_TYPE,
+                    step.get("stepWeight") or DEFAULT_STEP_WEIGHT,
+                    step.get("conditionText") or "",
                     step.get("referenceMode") or ("video" if step.get("referenceFrames") else "text"),
                     step.get("referenceSummary") or "",
                     step.get("roiHint") or "",
@@ -1076,6 +1251,7 @@ def delete_sop(sop_id):
             return False
 
         media_paths = []
+        step_ids = []
         cleanup_dirs = [
             str(ADMIN_MEDIA_DIR / "sop_step_demo" / sop_id),
         ]
@@ -1087,33 +1263,42 @@ def delete_sop(sop_id):
         with connection.cursor() as cursor:
             cursor.execute("SELECT id FROM sop_executions WHERE sop_id = %s", (sop_row["id"],))
             execution_ids = [row["id"] for row in cursor.fetchall()]
+            cursor.execute("SELECT id FROM sop_steps WHERE sop_id = %s", (sop_row["id"],))
+            step_ids = [row["id"] for row in cursor.fetchall()]
+
+            media_filters = ["related_sop_id = %s"]
+            media_params = [sop_row["id"]]
+
+            if step_ids:
+                step_placeholders = ", ".join(["%s"] * len(step_ids))
+                media_filters.append(f"related_step_id IN ({step_placeholders})")
+                media_params.extend(step_ids)
 
             if execution_ids:
-                placeholders = ", ".join(["%s"] * len(execution_ids))
-                cursor.execute(
-                    f"""
-                    SELECT storage_path
-                    FROM media_files
-                    WHERE related_sop_id = %s OR related_execution_id IN ({placeholders})
-                    """,
-                    [sop_row["id"], *execution_ids],
-                )
-            else:
-                cursor.execute(
-                    "SELECT storage_path FROM media_files WHERE related_sop_id = %s",
-                    (sop_row["id"],),
-                )
+                execution_placeholders = ", ".join(["%s"] * len(execution_ids))
+                media_filters.append(f"related_execution_id IN ({execution_placeholders})")
+                media_params.extend(execution_ids)
+
+            cursor.execute(
+                f"""
+                SELECT storage_path
+                FROM media_files
+                WHERE {" OR ".join(media_filters)}
+                """,
+                media_params,
+            )
             media_paths = [row["storage_path"] for row in cursor.fetchall()]
 
+            cursor.execute(
+                f"DELETE FROM media_files WHERE {' OR '.join(media_filters)}",
+                media_params,
+            )
+
             if execution_ids:
-                placeholders = ", ".join(["%s"] * len(execution_ids))
                 cursor.execute(
-                    f"DELETE FROM media_files WHERE related_sop_id = %s OR related_execution_id IN ({placeholders})",
-                    [sop_row["id"], *execution_ids],
+                    "DELETE FROM sop_executions WHERE sop_id = %s",
+                    (sop_row["id"],),
                 )
-                cursor.execute("DELETE FROM sop_executions WHERE sop_id = %s", (sop_row["id"],))
-            else:
-                cursor.execute("DELETE FROM media_files WHERE related_sop_id = %s", (sop_row["id"],))
 
             cursor.execute("DELETE FROM evaluation_jobs WHERE sop_id = %s", (sop_row["id"],))
             cursor.execute(
@@ -1785,10 +1970,16 @@ def _build_history_records(
                 "passed": bool(row.get("passed")),
                 "score": float(row.get("score") or 0),
                 "confidence": float(row.get("confidence") or 0),
+                "applicable": bool(row.get("applicable")) if row.get("applicable") is not None else True,
+                "includedInScore": bool(row.get("included_in_score")) if row.get("included_in_score") is not None else True,
                 "issueType": row.get("issue_type") or "",
                 "completionLevel": row.get("completion_level") or "",
                 "orderIssue": bool(row.get("order_issue")),
                 "prerequisiteViolated": bool(row.get("prerequisite_violated")),
+                "detectedStartSec": float(row.get("detected_start_sec")) if row.get("detected_start_sec") is not None else None,
+                "detectedEndSec": float(row.get("detected_end_sec")) if row.get("detected_end_sec") is not None else None,
+                "stepWeight": _normalize_step_weight(row.get("step_weight_snapshot")),
+                "stepType": _normalize_step_type(row.get("step_type_snapshot")),
                 "evidence": row.get("evidence") or "",
             }
         )
@@ -1929,9 +2120,10 @@ def add_history(record, current_user=None):
                 cursor.execute(
                     """
                     INSERT INTO execution_step_results (
-                      execution_id, sop_step_id, step_no, description, passed, score, confidence, issue_type,
-                      completion_level, order_issue, prerequisite_violated, evidence
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                      execution_id, sop_step_id, step_no, description, passed, score, confidence, applicable,
+                      included_in_score, issue_type, completion_level, order_issue, prerequisite_violated,
+                      detected_start_sec, detected_end_sec, step_weight_snapshot, step_type_snapshot, evidence
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         execution_id,
@@ -1941,10 +2133,16 @@ def add_history(record, current_user=None):
                         1 if item.get("passed") else 0,
                         item.get("score") or 0,
                         item.get("confidence") or 0,
+                        1 if item.get("applicable", True) else 0,
+                        1 if item.get("includedInScore", True) else 0,
                         item.get("issueType") or "",
                         item.get("completionLevel") or "",
                         1 if item.get("orderIssue") else 0,
                         1 if item.get("prerequisiteViolated") else 0,
+                        item.get("detectedStartSec"),
+                        item.get("detectedEndSec"),
+                        _normalize_step_weight(item.get("stepWeight")),
+                        _normalize_step_type(item.get("stepType")),
                         item.get("evidence") or "",
                     ),
                 )
@@ -2024,6 +2222,10 @@ def serialize_sop_summary(sop):
                 "description": step.get("description") or "",
                 "videoMeta": serialize_media_reference(step.get("demoVideo")),
                 "demoVideo": serialize_media_reference(step.get("demoVideo")),
+                "stepType": _normalize_step_type(step.get("stepType")),
+                "stepWeight": _normalize_step_weight(step.get("stepWeight")),
+                "conditionText": (step.get("conditionText") or "").strip(),
+                "prerequisiteStepNos": _normalize_prerequisite_step_nos(step.get("prerequisiteStepNos"), step.get("stepNo")),
                 "referenceMode": step.get("referenceMode") or ("video" if step.get("referenceFrames") else "text"),
                 "referenceSummary": step.get("referenceSummary") or "",
                 "referenceFeatures": step.get("referenceFeatures"),
@@ -2088,6 +2290,12 @@ def build_stats():
             item["scoreCount"] += 1
         bucket[key] = item
 
+    issue_bucket = {}
+    for record in history:
+        for step in (record.get("detail") or {}).get("stepResults") or []:
+            issue_type = step.get("issueType") or "未知"
+            issue_bucket[issue_type] = issue_bucket.get(issue_type, 0) + 1
+
     sop_stats_list = []
     for item in bucket.values():
         total = item["totalCount"]
@@ -2105,6 +2313,11 @@ def build_stats():
         )
 
     sop_stats_list.sort(key=lambda item: item["totalCount"], reverse=True)
+    issue_type_stats = [
+        {"issueType": issue_type, "count": count}
+        for issue_type, count in sorted(issue_bucket.items(), key=lambda item: item[1], reverse=True)
+    ]
+
     return {
         "summaryStats": {
             "totalSops": len(sops),
@@ -2113,4 +2326,5 @@ def build_stats():
             "passRate": (passed_count / total_executions * 100) if total_executions else 0,
         },
         "sopStatsList": sop_stats_list,
+        "issueTypeStats": issue_type_stats,
     }

@@ -179,7 +179,7 @@ export async function getSopDetail(sopId) {
 }
 
 export async function updateSopStepSegmentation(sopId, stepNo, payload) {
-  return apiRequest(`/api/sops/${sopId}/steps/${stepNo}/manual-segmentation`, {
+  return apiRequest(`/api/sops/${sopId}/steps/${stepNo}/manual-segmentation-override`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -188,6 +188,14 @@ export async function updateSopStepSegmentation(sopId, stepNo, payload) {
 
 export async function updateSopStepDemoVideo(sopId, stepNo, payload) {
   return apiRequest(`/api/sops/${sopId}/steps/${stepNo}/demo-video`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+}
+
+export async function updateSopStepReferenceMetadata(sopId, stepNo, payload) {
+  return apiRequest(`/api/sops/${sopId}/steps/${stepNo}/reference-metadata`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)

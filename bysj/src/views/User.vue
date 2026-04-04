@@ -294,13 +294,28 @@
               <span v-for="(issue, index) in evaluationResult.issues" :key="index" class="issue-chip">{{ issue }}</span>
             </div>
 
+            <!-- Timeline visualization (Phase 5) -->
+            <EvalTimeline
+              v-if="evaluationResult.stepResults?.length"
+              :step-results="evaluationResult.stepResults"
+              :video-duration-sec="evaluationResult.overviewPreview?.durationSec || 0"
+            />
+
+            <!-- Score radar chart (Phase 5) -->
+            <div class="viz-row" v-if="evaluationResult.stepResults?.length >= 3">
+              <ScoreRadar :step-results="evaluationResult.stepResults" :size="220" />
+            </div>
+
             <div v-if="evaluationResult.stepResults?.length" class="step-result-list">
               <div v-for="item in evaluationResult.stepResults" :key="item.stepNo" class="step-result-item">
                 <div class="step-result-top">
                   <div class="step-result-title">步骤 {{ item.stepNo }}: {{ item.description }}</div>
-                  <StatusBadge :type="item.passed ? 'success' : 'danger'">{{ getStepResultText(item.passed) }}</StatusBadge>
+                  <StatusBadge :type="item.includedInScore === false ? 'default' : (item.passed ? 'success' : 'danger')">{{ item.includedInScore === false ? '未计分' : getStepResultText(item.passed) }}</StatusBadge>
                 </div>
                 <div class="step-result-meta">得分 {{ formatScore(item.score, '-') }} / 置信度 {{ formatConfidence(item.confidence) }}</div>
+                <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }} / 权重 {{ formatStepWeight(item.stepWeight) }}</div>
+                <div class="step-result-meta">适用 {{ item.applicable === false ? '否' : '是' }} / 前置依赖 {{ item.prerequisiteViolated ? '违反' : '正常' }}</div>
+                <div class="step-result-meta">检测区间 {{ formatDetectedRange(item.detectedStartSec, item.detectedEndSec) }}</div>
                 <div class="detail-text">{{ item.evidence }}</div>
               </div>
             </div>
@@ -338,12 +353,22 @@
         </div>
         <div class="detail-box step-results-box" v-if="selectedHistoryRecord.detail.stepResults?.length">
           <div class="detail-title">步骤结果</div>
+          <EvalTimeline
+            :step-results="selectedHistoryRecord.detail.stepResults"
+            :video-duration-sec="selectedHistoryRecord.detail.overviewPreview?.durationSec || 0"
+          />
+          <div v-if="selectedHistoryRecord.detail.stepResults.length >= 3" class="viz-row">
+            <ScoreRadar :step-results="selectedHistoryRecord.detail.stepResults" :size="200" />
+          </div>
           <div v-for="item in selectedHistoryRecord.detail.stepResults" :key="item.stepNo" class="step-result-item">
             <div class="step-result-top">
               <div class="step-result-title">步骤 {{ item.stepNo }}: {{ item.description }}</div>
-              <StatusBadge :type="item.passed ? 'success' : 'danger'">{{ getStepResultText(item.passed) }}</StatusBadge>
+              <StatusBadge :type="item.includedInScore === false ? 'default' : (item.passed ? 'success' : 'danger')">{{ item.includedInScore === false ? '未计分' : getStepResultText(item.passed) }}</StatusBadge>
             </div>
             <div class="step-result-meta">得分 {{ formatScore(item.score, '-') }}</div>
+            <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }} / 权重 {{ formatStepWeight(item.stepWeight) }}</div>
+            <div class="step-result-meta">适用 {{ item.applicable === false ? '否' : '是' }} / 前置依赖 {{ item.prerequisiteViolated ? '违反' : '正常' }}</div>
+            <div class="step-result-meta">检测区间 {{ formatDetectedRange(item.detectedStartSec, item.detectedEndSec) }}</div>
             <div class="detail-text">{{ item.evidence }}</div>
           </div>
         </div>
@@ -377,6 +402,8 @@ import GroupedList from '../components/GroupedList.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import GlassCard from '../components/GlassCard.vue'
 import SectionHeader from '../components/SectionHeader.vue'
+import EvalTimeline from '../components/EvalTimeline.vue'
+import ScoreRadar from '../components/ScoreRadar.vue'
 
 const router = useRouter()
 const sopList = ref([])
@@ -432,6 +459,9 @@ const progressState = computed(() => {
   }
 
   if (currentJob.value) {
+    const stage = currentJob.value.stage
+    const stepCount = currentSop.value?.stepCount || 3
+    const timeHint = getEstimatedTimeHint(stage, stepCount)
     return {
       type: currentJob.value.status === 'failed' ? 'danger' : 'info',
       label: currentJob.value.status === 'failed' ? '异常' : '进行中',
@@ -439,7 +469,7 @@ const progressState = computed(() => {
       description: currentJob.value.status === 'failed'
         ? '请检查失败原因，必要时重新上传视频后再试。'
         : '系统正在分析上传视频，进度会随任务状态自动刷新。',
-      meta: getJobStageText(currentJob.value.stage)
+      meta: timeHint ? `${getJobStageText(stage)} · ${timeHint}` : getJobStageText(stage),
     }
   }
 
@@ -484,7 +514,9 @@ function normalizeHistory(record = {}) {
       payloadPreview: record.detail?.payloadPreview || null,
       rawModelResult: record.detail?.rawModelResult || null,
       sequenceAssessment: record.detail?.sequenceAssessment || '',
-      prerequisiteViolated: !!record.detail?.prerequisiteViolated
+      prerequisiteViolated: !!record.detail?.prerequisiteViolated,
+      segmentPreview: Array.isArray(record.detail?.segmentPreview) ? record.detail.segmentPreview : [],
+      overviewPreview: record.detail?.overviewPreview || null,
     },
     manualReview: record.manualReview || null
   }
@@ -509,7 +541,9 @@ function buildEvaluationResultFromHistory(record = {}) {
     prerequisiteViolated: !!record.detail?.prerequisiteViolated,
     stepResults: Array.isArray(record.detail?.stepResults) ? record.detail.stepResults : [],
     payloadPreview: record.detail?.payloadPreview || null,
-    rawModelResult: record.detail?.rawModelResult || null
+    rawModelResult: record.detail?.rawModelResult || null,
+    segmentPreview: Array.isArray(record.detail?.segmentPreview) ? record.detail.segmentPreview : [],
+    overviewPreview: record.detail?.overviewPreview || null,
   }
 }
 
@@ -709,6 +743,29 @@ function formatTokenUsage(usage) {
   return `输入 ${input} / 输出 ${output} / 总计 ${total}`
 }
 
+function formatStepType(stepType) {
+  const mapping = {
+    required: '必做',
+    optional: '可选',
+    conditional: '条件触发'
+  }
+  return mapping[stepType] || stepType || '-'
+}
+
+function formatStepWeight(value) {
+  const num = Number(value)
+  return Number.isFinite(num) ? num.toFixed(1) : '1.0'
+}
+
+function formatDetectedRange(startSec, endSec) {
+  const start = Number(startSec)
+  const end = Number(endSec)
+  if (!Number.isFinite(start) && !Number.isFinite(end)) return '-'
+  const startText = Number.isFinite(start) ? `${start.toFixed(1)}s` : '-'
+  const endText = Number.isFinite(end) ? `${end.toFixed(1)}s` : '-'
+  return `${startText} ~ ${endText}`
+}
+
 function getStatusText(status) {
   return status === 'passed' ? '通过' : '异常'
 }
@@ -746,12 +803,25 @@ function getJobStageText(stage) {
     preparing_video: '准备视频资源',
     building_prompt: '构建评测上下文',
     calling_model: '调用多模态模型',
+    stage1_segmentation: '分析视频时序结构',
+    stage2_step_eval: '逐步精细评估中',
+    stage3_validation: '全局顺序校验',
     parsing_result: '解析评测结果',
     saving_result: '保存评测结果',
     done: '任务已完成',
-    error: '任务处理失败'
+    error: '任务处理失败',
   }
   return stageMap[stage] || '处理中'
+}
+
+function getEstimatedTimeHint(stage, stepCount) {
+  if (stage === 'stage1_segmentation') return '预计 30–60 秒'
+  if (stage === 'stage2_step_eval') {
+    const remaining = Math.max(1, stepCount || 3)
+    return `预计 ${remaining * 15}–${remaining * 25} 秒`
+  }
+  if (stage === 'stage3_validation') return '预计 10–20 秒'
+  return ''
 }
 
 onMounted(() => {
@@ -1816,6 +1886,12 @@ onUnmounted(() => {
   border-radius: var(--radius-full);
   font-size: var(--fs-footnote);
   color: var(--text-soft);
+}
+
+.viz-row {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0 12px;
 }
 
 /* ── Step Results ────────────────────────────────────────── */

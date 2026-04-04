@@ -147,6 +147,11 @@
           </div>
 
           <div class="section-block">
+            <SectionHeader title="问题类型统计" subtitle="查看模型命中的主要问题类型" />
+            <GroupedList :columns="issueTypeColumns" :data="issueTypeStats" empty-text="暂无问题类型统计" />
+          </div>
+
+          <div class="section-block">
             <SectionHeader title="执行记录列表" subtitle="从这里查看明细并处理人工复核" />
             <div class="filter-toolbar">
               <div class="filter-form">
@@ -237,16 +242,95 @@
           <el-input-number v-model="sopForm.stepCount" :min="1" :max="20" @change="handleStepCountChange" />
         </el-form-item>
 
+        <el-form-item label="流程完整示范视频">
+          <el-upload action="#" :auto-upload="false" :show-file-list="false" accept="video/*" :on-change="handleWorkflowVideoChange">
+            <el-button class="upload-btn">{{ sopForm.workflowVideo ? sopForm.workflowVideo.name : '上传整个流程的完整示范视频' }}</el-button>
+          </el-upload>
+          <div class="step-hint">管理员先定义全部步骤说明，再上传一条覆盖整个流程的完整示范视频。系统会根据整条流程视频自动为每一步切帧、定位关键时刻并生成 ROI 提示。</div>
+        </el-form-item>
+
         <div class="steps-section">
           <div class="section-title">步骤详情</div>
           <div v-for="(step, index) in sopForm.steps" :key="index" class="step-card">
             <div class="step-header">步骤 {{ index + 1 }}</div>
             <el-input v-model="step.description" type="textarea" :rows="2" resize="none" placeholder="请描述该步骤的标准动作，大模型将以此为比对依据..." />
-            <el-upload action="#" :auto-upload="false" :show-file-list="false" accept="video/*" :on-change="(file) => handleStepVideoChange(index, file)">
-              <el-button class="upload-btn">{{ step.video ? step.video.name : '可选：上传示范视频' }}</el-button>
-            </el-upload>
-            <div class="step-hint">不上传视频时，该步骤会按文字 SOP 规则参与模型评估。</div>
+            <div class="form-row">
+              <el-form-item label="步骤类型" class="flex-1">
+                <el-select v-model="step.stepType" @change="handleStepTypeChange(step)">
+                  <el-option v-for="option in STEP_TYPE_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="步骤权重" class="flex-1">
+                <el-input-number v-model="step.stepWeight" :min="0.5" :max="5" :step="0.5" />
+              </el-form-item>
+            </div>
+            <el-form-item v-if="step.stepType === 'conditional'" label="条件触发说明">
+              <el-input v-model="step.conditionText" type="textarea" :rows="2" resize="none" placeholder="说明什么情况下该步骤需要执行" />
+            </el-form-item>
+            <el-form-item label="前置依赖步骤">
+              <el-select v-model="step.prerequisiteStepNos" multiple collapse-tags collapse-tags-tooltip placeholder="可不选">
+                <el-option
+                  v-for="stepNo in index"
+                  :key="`pre-${index}-${stepNo}`"
+                  :label="`步骤 ${stepNo}`"
+                  :value="stepNo"
+                />
+              </el-select>
+            </el-form-item>
           </div>
+        </div>
+
+        <!-- ─── 罚分参数配置 ─────────────────────────── -->
+        <div class="penalty-section">
+          <button type="button" class="penalty-toggle" @click="showPenaltyConfig = !showPenaltyConfig">
+            <span class="penalty-toggle-left">
+              <svg class="penalty-chevron" :class="{ open: showPenaltyConfig }" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M3 5l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span>自定义罚分参数</span>
+              <span v-if="customizedPenaltyCount > 0" class="penalty-modified-badge">{{ customizedPenaltyCount }} 项已调整</span>
+            </span>
+            <span class="penalty-optional-tag">可选</span>
+          </button>
+          <Transition name="penalty-expand">
+            <div v-if="showPenaltyConfig" class="penalty-grid">
+              <div class="penalty-hint">
+                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style="flex-shrink:0;margin-top:1px"><circle cx="6.5" cy="6.5" r="6" stroke="currentColor" stroke-width="1"/><path d="M6.5 5.5v4M6.5 3.5v1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                默认使用系统内置罚分权重，可按场景需求调整。修改后仅对本 SOP 生效。
+              </div>
+              <div class="penalty-columns">
+                <div
+                  v-for="item in PENALTY_ISSUE_TYPES"
+                  :key="item.key"
+                  class="penalty-item"
+                  :class="{ 'is-modified': sopForm.penaltyConfig[item.key] !== undefined }"
+                >
+                  <span class="severity-dot" :style="{ background: getPenaltySeverityColor(DEFAULT_PENALTY_VALUES[item.key]) }"></span>
+                  <div class="penalty-label">
+                    <span class="penalty-name">{{ item.label }}</span>
+                    <span class="penalty-desc">{{ item.description }}</span>
+                  </div>
+                  <div class="penalty-control">
+                    <el-input-number
+                      :model-value="sopForm.penaltyConfig[item.key] ?? DEFAULT_PENALTY_VALUES[item.key]"
+                      @update:model-value="val => { if (val !== DEFAULT_PENALTY_VALUES[item.key]) sopForm.penaltyConfig[item.key] = val; else delete sopForm.penaltyConfig[item.key] }"
+                      :min="0" :max="100" :step="5" size="small"
+                    />
+                    <button
+                      v-if="sopForm.penaltyConfig[item.key] !== undefined"
+                      type="button"
+                      class="penalty-reset-btn"
+                      title="还原默认值"
+                      @click="delete sopForm.penaltyConfig[item.key]"
+                    >↺</button>
+                  </div>
+                </div>
+              </div>
+              <div v-if="customizedPenaltyCount > 0" class="penalty-footer">
+                <button type="button" class="penalty-reset-all" @click="sopForm.penaltyConfig = {}">还原全部默认值</button>
+              </div>
+            </div>
+          </Transition>
         </div>
       </el-form>
       <template #footer>
@@ -303,23 +387,40 @@
             <div class="detail-text">预处理 Token：{{ formatTokenUsage(step.tokenUsage) }}</div>
             <div class="detail-text">ROI：{{ step.roiHint || '暂无' }}</div>
             <div class="detail-text">关键时刻：{{ formatSubsteps(step.substeps) }}</div>
-            <div class="detail-text">参考模式：{{ step.referenceMode === 'text' ? '仅文字 SOP' : '示范视频关键帧' }}</div>
+            <div class="detail-text">参考模式：{{ step.referenceMode === 'text' ? '仅文字 SOP' : '完整步骤视频自动抽帧' }}</div>
             <div v-if="step.demoVideo?.url" class="manual-segmentation-box">
-              <div class="manual-title">手动关键帧时间点</div>
-              <div class="manual-subtitle">用英文逗号分隔秒数，例如：0.8, 1.6, 3.2</div>
-              <el-input v-model="step.manualTimestampInput" placeholder="输入时间点" />
-              <el-button type="primary" plain class="manual-btn" :loading="step.manualSegmentationLoading" @click="applyManualSegmentation(step)">重新生成关键帧</el-button>
+              <div class="manual-title">手动修正关键帧</div>
+              <div class="manual-subtitle">系统会先基于完整步骤视频自动生成关键帧、关键时刻和 ROI。若结果不理想，可输入秒数手动重建关键帧。</div>
+              <el-input v-model="step.manualTimestampInput" placeholder="输入时间点，例如：0.8, 1.6, 3.2" />
+              <el-button type="primary" plain class="manual-btn" :loading="step.manualSegmentationLoading" @click="applyManualSegmentation(step)">按时间点重建关键帧</el-button>
             </div>
-            <div v-else-if="step.referenceMode === 'video'" class="detail-text muted-text">该步骤已有示范关键帧，但原始示范视频引用缺失，暂时无法手动切帧。重新上传示范视频后可恢复。</div>
-            <div v-else class="detail-text muted-text">该步骤当前仅按文字 SOP 评估，未绑定示范视频。</div>
-            <div v-if="!step.demoVideo?.url" class="demo-video-box">
-              <div class="manual-title">补传示范视频</div>
-              <div class="manual-subtitle">补传后会重新生成该步骤的参考关键帧、关键时刻和 ROI 信息。</div>
+            <div v-else class="detail-text muted-text">该步骤当前缺少完整示范视频，建议补传后再由系统自动生成参考关键帧、关键时刻和 ROI。</div>
+            <div class="demo-video-box">
+              <div class="manual-title">{{ step.demoVideo?.url ? '替换流程示范视频' : '上传流程示范视频' }}</div>
+              <div class="manual-subtitle">上传后系统会重新基于整条流程完整视频分析当前步骤，并自动生成参考关键帧、关键时刻和 ROI 信息。</div>
               <el-upload action="#" :auto-upload="false" :show-file-list="false" accept="video/*" :on-change="(file) => handleDebugStepVideoChange(step, file)">
-                <el-button class="upload-btn">{{ step.reuploadVideo ? step.reuploadVideo.name : '选择示范视频' }}</el-button>
+                <el-button class="upload-btn">{{ step.reuploadVideo ? step.reuploadVideo.name : (step.demoVideo?.url ? '重新选择整条流程视频' : '选择整条流程视频') }}</el-button>
               </el-upload>
-              <el-button type="primary" plain class="manual-btn" :loading="step.demoVideoUploadLoading" @click="replaceStepDemoVideo(step)">上传并重建参考</el-button>
+              <el-button type="primary" plain class="manual-btn" :loading="step.demoVideoUploadLoading" @click="replaceStepDemoVideo(step)">上传并自动重建参考</el-button>
             </div>
+            <div class="preprocess-editor-box">
+              <div class="manual-title">编辑预处理信息</div>
+              <div class="manual-subtitle">可手动修正该步骤的摘要、ROI 提示和关键时刻，保存后会直接覆盖当前预处理结果。</div>
+              <el-form-item label="参考摘要">
+                <el-input v-model="step.referenceSummaryDraft" type="textarea" :rows="2" resize="none" />
+              </el-form-item>
+              <el-form-item label="ROI 提示">
+                <el-input v-model="step.roiHintDraft" type="textarea" :rows="2" resize="none" />
+              </el-form-item>
+              <el-form-item label="关键时刻">
+                <el-input v-model="step.substepsDraft" type="textarea" :rows="3" resize="none" placeholder="每行一条，格式：标题@秒数" />
+              </el-form-item>
+              <el-button type="primary" plain class="manual-btn" :loading="step.referenceMetadataSaving" @click="saveStepReferenceMetadata(step)">保存预处理信息</el-button>
+            </div>
+            <div class="detail-text">步骤类型：{{ formatStepType(step.stepType) }}</div>
+            <div class="detail-text">步骤权重：{{ Number(step.stepWeight || 1).toFixed(1) }}</div>
+            <div class="detail-text">条件说明：{{ step.conditionText || '无' }}</div>
+            <div class="detail-text">前置依赖：{{ (step.prerequisiteStepNos || []).length ? step.prerequisiteStepNos.join(', ') : '无' }}</div>
             <div class="frame-grid">
               <img v-for="(frame, index) in step.referenceFrames || []" :key="`${step.stepNo}-${index}`" :src="frame" class="frame" />
             </div>
@@ -345,6 +446,26 @@
           <div class="detail-title">问题列表</div>
           <div class="tag-list">
             <el-tag v-for="(item, index) in selectedHistoryRecord.detail.issues" :key="index">{{ item }}</el-tag>
+          </div>
+        </div>
+        <div class="detail-box step-results-box" v-if="selectedHistoryRecord.detail.stepResults?.length">
+          <div class="detail-title">步骤结果</div>
+          <EvalTimeline
+            :step-results="selectedHistoryRecord.detail.stepResults"
+            :video-duration-sec="selectedHistoryRecord.detail.overviewPreview?.durationSec || 0"
+          />
+          <div v-if="selectedHistoryRecord.detail.stepResults.length >= 3" class="viz-row">
+            <ScoreRadar :step-results="selectedHistoryRecord.detail.stepResults" :size="200" />
+          </div>
+          <div v-for="item in selectedHistoryRecord.detail.stepResults" :key="item.stepNo" class="step-result-item">
+            <div class="step-result-top">
+              <div class="step-result-title">步骤 {{ item.stepNo }}: {{ item.description }}</div>
+              <StatusBadge :type="item.includedInScore === false ? 'default' : (item.passed ? 'success' : 'danger')">{{ item.includedInScore === false ? '未计分' : (item.passed ? '通过' : '异常') }}</StatusBadge>
+            </div>
+            <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }} / 权重 {{ Number(item.stepWeight || 1).toFixed(1) }}</div>
+            <div class="step-result-meta">适用 {{ item.applicable === false ? '否' : '是' }} / 前置依赖 {{ item.prerequisiteViolated ? '违反' : '正常' }}</div>
+            <div class="step-result-meta">检测区间 {{ item.detectedStartSec ?? '-' }}s ~ {{ item.detectedEndSec ?? '-' }}s / 得分 {{ item.score ?? '-' }}</div>
+            <div class="detail-text">{{ item.evidence || '暂无证据说明' }}</div>
           </div>
         </div>
       </div>
@@ -384,11 +505,13 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataLine, Document, Fold, Monitor, Plus, SwitchButton } from '@element-plus/icons-vue'
-import { clearAuthSession, createSop, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getConfig, getCurrentUser, getHistoryDetail, getSopDetail, getStats, isAuthSessionError, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateConfig, updateSopStepDemoVideo, updateSopStepSegmentation, updateUserStatus } from '../api/client'
+import { clearAuthSession, createSop, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getConfig, getCurrentUser, getHistoryDetail, getSopDetail, getStats, isAuthSessionError, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateConfig, updateSopStepDemoVideo, updateSopStepReferenceMetadata, updateSopStepSegmentation, updateUserStatus } from '../api/client'
 import AppBlobs from '../components/AppBlobs.vue'
 import GroupedList from '../components/GroupedList.vue'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import EvalTimeline from '../components/EvalTimeline.vue'
+import ScoreRadar from '../components/ScoreRadar.vue'
 
 const router = useRouter()
 const sidebarOpen = ref(false)
@@ -399,6 +522,7 @@ const historyList = ref([])
 const historyLoading = ref(false)
 const summaryStats = ref({ totalSops: 0, totalExecutions: 0, pendingReviewCount: 0, passRate: 0 })
 const sopStatsList = ref([])
+const issueTypeStats = ref([])
 const dialogVisible = ref(false)
 const isSaving = ref(false)
 const configVisible = ref(false)
@@ -418,15 +542,48 @@ const historyFilters = reactive({
   reviewStatus: '',
   sortOrder: 'desc'
 })
-const sopForm = reactive({ name: '', scene: '', stepCount: 1, steps: [{ description: '', video: null }] })
+const sopForm = reactive({ name: '', scene: '', stepCount: 1, workflowVideo: null, steps: [], penaltyConfig: {} })
 const currentUser = ref(getCurrentUser())
 const DEFAULT_API_CONFIG = {
   apiKey: '',
   baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   model: 'qwen3.5-plus',
-  fps: 2,
+  fps: 6,
   temperature: 0.1,
   timeoutMs: 120000
+}
+const STEP_TYPE_OPTIONS = [
+  { label: '必做', value: 'required' },
+  { label: '可选', value: 'optional' },
+  { label: '条件触发', value: 'conditional' }
+]
+
+const PENALTY_ISSUE_TYPES = [
+  { key: '正常', label: '正常', description: '操作符合标准' },
+  { key: '证据不足', label: '证据不足', description: '操作存在但画面不清晰' },
+  { key: '重复操作', label: '重复操作', description: '同一步骤多次执行' },
+  { key: '部分完成', label: '部分完成', description: '步骤仅完成一部分' },
+  { key: '过早执行', label: '过早执行', description: '在规定时机之前执行' },
+  { key: '延后执行', label: '延后执行', description: '在规定时机之后执行' },
+  { key: '动作错误', label: '动作错误', description: '执行了错误的操作' },
+  { key: '顺序颠倒', label: '顺序颠倒', description: '步骤执行顺序错误' },
+  { key: '前置条件缺失', label: '前置条件缺失', description: '前置步骤未完成即执行' },
+  { key: '缺失', label: '缺失', description: '该步骤未被执行' }
+]
+const DEFAULT_PENALTY_VALUES = {
+  '正常': 0, '证据不足': 15, '重复操作': 10, '部分完成': 20,
+  '过早执行': 25, '延后执行': 25, '动作错误': 35,
+  '顺序颠倒': 40, '前置条件缺失': 45, '缺失': 60
+}
+
+const showPenaltyConfig = ref(false)
+const customizedPenaltyCount = computed(() => Object.keys(sopForm.penaltyConfig).length)
+
+function getPenaltySeverityColor(value) {
+  if (value === 0) return 'var(--system-green)'
+  if (value <= 15) return 'var(--system-yellow)'
+  if (value <= 30) return 'var(--system-orange)'
+  return 'var(--system-red)'
 }
 const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 
@@ -494,8 +651,21 @@ function showErrorMessage(error, fallback) {
   ElMessage.error(error.message || fallback)
 }
 
+
+const issueTypeColumns = [
+  { key: 'issueType', label: '问题类型' },
+  { key: 'count', label: '命中次数', align: 'center' }
+]
+
 function createEmptyStep() {
-  return { description: '', video: null }
+  return {
+    description: '',
+    video: { __workflowPlaceholder: true },
+    stepType: 'required',
+    stepWeight: 1,
+    conditionText: '',
+    prerequisiteStepNos: []
+  }
 }
 
 async function loadApiConfig() {
@@ -539,7 +709,10 @@ function normalizeHistory(record = {}) {
     detail: {
       feedback: record.detail?.feedback || '',
       issues: Array.isArray(record.detail?.issues) ? record.detail.issues : [],
-      uploadedVideo: record.detail?.uploadedVideo || null
+      uploadedVideo: record.detail?.uploadedVideo || null,
+      stepResults: Array.isArray(record.detail?.stepResults) ? record.detail.stepResults : [],
+      overviewPreview: record.detail?.overviewPreview || null,
+      segmentPreview: record.detail?.segmentPreview || null
     },
     manualReview: record.manualReview || null
   }
@@ -571,6 +744,7 @@ async function loadStats() {
   const result = await getStats()
   summaryStats.value = result.data?.summaryStats || summaryStats.value
   sopStatsList.value = result.data?.sopStatsList || []
+  issueTypeStats.value = result.data?.issueTypeStats || []
 }
 
 function applyHistoryFilters() {
@@ -625,27 +799,72 @@ function openCreateDialog() {
   sopForm.name = ''
   sopForm.scene = ''
   sopForm.stepCount = 1
+  sopForm.workflowVideo = null
   sopForm.steps = [createEmptyStep()]
+  sopForm.penaltyConfig = {}
+  showPenaltyConfig.value = false
   dialogVisible.value = true
 }
 
 function handleStepCountChange(value) {
   while (sopForm.steps.length < value) sopForm.steps.push(createEmptyStep())
   if (sopForm.steps.length > value) sopForm.steps.splice(value)
+  if (sopForm.workflowVideo) {
+    sopForm.steps.forEach((item) => {
+      item.video = sopForm.workflowVideo
+    })
+  }
 }
 
-function handleStepVideoChange(index, file) {
-  sopForm.steps[index].video = file?.raw || file
+function handleWorkflowVideoChange(file) {
+  sopForm.workflowVideo = file?.raw || file
+  sopForm.steps.forEach((item) => {
+    item.video = sopForm.workflowVideo
+  })
+}
+
+function handleStepTypeChange(step) {
+  if (step.stepType !== 'conditional') {
+    step.conditionText = ''
+  }
+}
+
+function validateStepConfig(step, index) {
+  const stepNo = index + 1
+  const weight = Number(step.stepWeight)
+  if (!Number.isFinite(weight) || weight < 0.5 || weight > 5) {
+    return `步骤 ${stepNo} 的权重必须在 0.5 到 5.0 之间`
+  }
+  if (step.stepType === 'conditional' && !String(step.conditionText || '').trim()) {
+    return `步骤 ${stepNo} 是条件触发步骤，必须填写触发说明`
+  }
+  const invalidPrerequisite = (step.prerequisiteStepNos || []).some((value) => Number(value) >= stepNo || Number(value) <= 0)
+  if (invalidPrerequisite) {
+    return `步骤 ${stepNo} 的前置依赖只能选择前面的步骤`
+  }
+  return ''
 }
 
 async function saveSop() {
   if (!sopForm.name.trim()) return ElMessage.warning('请输入 SOP 名称')
   if (sopForm.steps.some((item) => !item.description.trim())) return ElMessage.warning('请补全步骤描述')
 
+  if (sopForm.steps.some((item) => !item.video)) return ElMessage.warning('请为每个步骤上传完整示范视频')
+  if (!sopForm.workflowVideo) return ElMessage.warning('请上传整个流程的完整示范视频')
+  sopForm.steps.forEach((item) => {
+    item.video = sopForm.workflowVideo
+  })
+  const stepConfigError = sopForm.steps.map((item, index) => validateStepConfig(item, index)).find(Boolean)
+  if (stepConfigError) return ElMessage.warning(stepConfigError)
+
   isSaving.value = true
   try {
     const steps = await Promise.all(sopForm.steps.map(async (item) => ({
       description: item.description.trim(),
+      stepType: item.stepType,
+      stepWeight: Number(item.stepWeight),
+      conditionText: String(item.conditionText || '').trim(),
+      prerequisiteStepNos: (item.prerequisiteStepNos || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
       videoDataUrl: item.video ? await fileToDataUrl(item.video) : '',
       videoMeta: item.video ? {
         name: item.video.name || '',
@@ -654,7 +873,19 @@ async function saveSop() {
         lastModified: item.video.lastModified ?? null
       } : null
     })))
-    const result = await createSop({ name: sopForm.name.trim(), scene: sopForm.scene.trim(), steps })
+    const result = await createSop({
+      name: sopForm.name.trim(),
+      scene: sopForm.scene.trim(),
+      steps,
+      workflowVideoDataUrl: await fileToDataUrl(sopForm.workflowVideo),
+      workflowVideoMeta: {
+        name: sopForm.workflowVideo.name || '',
+        type: sopForm.workflowVideo.type || '',
+        size: sopForm.workflowVideo.size ?? null,
+        lastModified: sopForm.workflowVideo.lastModified ?? null
+      },
+      penaltyConfig: Object.keys(sopForm.penaltyConfig).length > 0 ? sopForm.penaltyConfig : null
+    })
     dialogVisible.value = false
     await reloadCurrentView()
     ElMessage.success('SOP 已保存')
@@ -749,10 +980,15 @@ function buildDebugSopState(data) {
     ...data,
     steps: (data.steps || []).map((step) => ({
       ...step,
+      prerequisiteStepNos: Array.isArray(step.prerequisiteStepNos) ? step.prerequisiteStepNos : [],
+      referenceSummaryDraft: step.referenceSummary || '',
+      roiHintDraft: step.roiHint || '',
+      substepsDraft: Array.isArray(step.substeps) ? step.substeps.map((item) => `${item.title || '关键时刻'}@${Number(item.timestampSec || 0)}`).join('\n') : '',
       manualTimestampInput: Array.isArray(step.referenceFeatures?.sampleTimestamps) ? step.referenceFeatures.sampleTimestamps.join(', ') : '',
       manualSegmentationLoading: false,
       reuploadVideo: null,
-      demoVideoUploadLoading: false
+      demoVideoUploadLoading: false,
+      referenceMetadataSaving: false
     }))
   }
 }
@@ -768,12 +1004,30 @@ function parseTimestampInput(value) {
     .filter((item) => Number.isFinite(item) && item >= 0)
 }
 
+function parseSubstepsDraft(value) {
+  return String(value || '')
+    .split(/\r?\n+/)
+    .map((line) => String(line || '').trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const parts = line.split('@')
+      const timestamp = Number(parts.pop())
+      const title = parts.join('@').trim() || `关键时刻 ${index + 1}`
+      return Number.isFinite(timestamp) && timestamp >= 0 ? { title, timestampSec: timestamp } : null
+    })
+    .filter(Boolean)
+}
+
 function formatTokenUsage(usage) {
   if (!usage) return '暂无'
   const input = Number.isFinite(Number(usage.inputTokens)) ? Number(usage.inputTokens) : '-'
   const output = Number.isFinite(Number(usage.outputTokens)) ? Number(usage.outputTokens) : '-'
   const total = Number.isFinite(Number(usage.totalTokens)) ? Number(usage.totalTokens) : '-'
   return `输入 ${input} / 输出 ${output} / 总计 ${total}`
+}
+
+function formatStepType(stepType) {
+  return STEP_TYPE_OPTIONS.find((item) => item.value === stepType)?.label || stepType || '-'
 }
 
 async function applyManualSegmentation(step) {
@@ -791,6 +1045,27 @@ async function applyManualSegmentation(step) {
     showErrorMessage(error, '重建关键帧失败')
   } finally {
     step.manualSegmentationLoading = false
+  }
+}
+
+async function saveStepReferenceMetadata(step) {
+  if (!selectedSopDebug.value?.id) return
+
+  const substeps = parseSubstepsDraft(step.substepsDraft)
+  step.referenceMetadataSaving = true
+  try {
+    const result = await updateSopStepReferenceMetadata(selectedSopDebug.value.id, step.stepNo, {
+      referenceSummary: String(step.referenceSummaryDraft || '').trim(),
+      roiHint: String(step.roiHintDraft || '').trim(),
+      substeps
+    })
+    selectedSopDebug.value = buildDebugSopState(result.data)
+    await loadSopList()
+    ElMessage.success('预处理信息已更新')
+  } catch (error) {
+    showErrorMessage(error, '更新预处理信息失败')
+  } finally {
+    step.referenceMetadataSaving = false
   }
 }
 
@@ -1241,6 +1516,267 @@ onUnmounted(() => {
   padding: var(--sp-5) 22px;
 }
 
+/* ─── Penalty Config Section ──────────────────────── */
+.penalty-section {
+  margin-top: var(--sp-5);
+}
+
+.penalty-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 11px var(--sp-4);
+  background: var(--fill-quaternary);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--fs-callout);
+  color: var(--text-main);
+  font-weight: 500;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.penalty-toggle:hover {
+  background: var(--fill-tertiary);
+  border-color: var(--accent);
+}
+
+.penalty-toggle-left {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.penalty-chevron {
+  color: var(--text-soft);
+  transition: transform 0.2s var(--ease-standard);
+  flex-shrink: 0;
+}
+
+.penalty-chevron.open {
+  transform: rotate(180deg);
+}
+
+.penalty-modified-badge {
+  padding: 2px 8px;
+  background: rgba(0, 122, 255, 0.12);
+  color: var(--accent);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+}
+
+.penalty-optional-tag {
+  font-size: var(--fs-footnote);
+  color: var(--text-soft);
+  background: var(--fill-tertiary);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-weight: 400;
+}
+
+.penalty-grid {
+  margin-top: var(--sp-2);
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
+  background: var(--fill-quaternary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--separator);
+  overflow: hidden;
+}
+
+.penalty-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: var(--fs-footnote);
+  color: var(--text-soft);
+  margin-bottom: var(--sp-4);
+  line-height: 1.6;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--fill-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.penalty-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px var(--sp-4);
+}
+
+.penalty-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 7px var(--sp-2);
+  border-radius: var(--radius-sm);
+  transition: background 0.12s;
+}
+
+.penalty-item:hover {
+  background: var(--fill-tertiary);
+}
+
+.penalty-item.is-modified {
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.severity-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.06);
+}
+
+.penalty-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.penalty-name {
+  font-size: var(--fs-subheadline);
+  font-weight: 500;
+  color: var(--text-main);
+  white-space: nowrap;
+}
+
+.penalty-desc {
+  font-size: 11px;
+  color: var(--text-soft);
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.penalty-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 122px;
+  justify-content: flex-end;
+}
+
+.penalty-control :deep(.el-input-number) {
+  width: 98px;
+  flex: 0 0 98px;
+}
+
+.penalty-control :deep(.el-input-number__decrease),
+.penalty-control :deep(.el-input-number__increase) {
+  width: 24px;
+}
+
+.penalty-control :deep(.el-input-number .el-input__wrapper) {
+  padding-left: 28px;
+  padding-right: 28px;
+}
+
+.penalty-control :deep(.el-input-number .el-input__inner) {
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.penalty-reset-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: var(--fill-secondary);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  color: var(--text-soft);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s;
+  padding: 0;
+}
+
+.penalty-reset-btn:hover {
+  background: var(--fill-primary);
+  color: var(--text-main);
+}
+
+.penalty-footer {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--separator);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.penalty-reset-all {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: var(--fs-footnote);
+  color: var(--text-soft);
+  font-family: inherit;
+  padding: 4px var(--sp-2);
+  border-radius: var(--radius-xs);
+  transition: color 0.12s, background 0.12s;
+}
+
+.penalty-reset-all:hover {
+  color: var(--danger);
+  background: rgba(255, 59, 48, 0.08);
+}
+
+/* expand / collapse transition */
+.penalty-expand-enter-active,
+.penalty-expand-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  transform-origin: top;
+}
+
+.penalty-expand-enter-from,
+.penalty-expand-leave-to {
+  opacity: 0;
+  transform: scaleY(0.95);
+}
+
+/* ─── Viz Row ─────────────────────────────────────── */
+.viz-row {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0 12px;
+}
+
+/* ─── Step Result Items ────────────────────────────── */
+.step-result-item {
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--separator-light, var(--separator));
+}
+
+.step-result-item:last-child {
+  border-bottom: none;
+}
+
+.step-result-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.step-result-title {
+  font-size: var(--fs-callout);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.step-result-meta {
+  font-size: var(--fs-footnote);
+  color: var(--text-soft);
+  line-height: 1.7;
+}
+
 .debug-step-box + .debug-step-box {
   margin-top: var(--sp-1);
 }
@@ -1256,7 +1792,8 @@ onUnmounted(() => {
 }
 
 .manual-segmentation-box,
-.demo-video-box {
+.demo-video-box,
+.preprocess-editor-box {
   margin-top: var(--sp-4);
   padding: 18px var(--sp-5);
   border-radius: 14px;
