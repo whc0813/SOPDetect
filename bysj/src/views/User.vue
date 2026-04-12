@@ -116,6 +116,9 @@
                     <div class="history-item-main">
                       <span class="list-item-name">{{ row.taskName }}</span>
                       <span class="list-item-time">{{ row.finishTime }}</span>
+                      <span v-if="row.detail?.tokenUsage" class="history-item-token">
+                        Token：{{ formatTokenUsage(row.detail.tokenUsage) }}
+                      </span>
                     </div>
                     <div class="history-item-badges">
                       <StatusBadge :type="row.status === 'passed' ? 'success' : 'danger'">
@@ -288,6 +291,9 @@
             <div v-if="currentSopHasNoDemoVideo" class="result-note">
               当前 SOP 没有上传示范视频，本次仅依据步骤文字和你上传的视频进行判断。
             </div>
+            <div v-if="evaluationResult.tokenUsage" class="result-token">
+              Token：{{ formatTokenUsage(evaluationResult.tokenUsage) }}
+            </div>
             <p class="result-feedback">{{ evaluationResult.feedback }}</p>
 
             <div v-if="evaluationResult.issues?.length" class="issues-list">
@@ -334,6 +340,14 @@
     <el-dialog v-model="historyDetailVisible" title="执行记录详情" width="820px" class="apple-dialog">
       <div v-if="selectedHistoryRecord" class="detail-wrap">
         <div class="summary">{{ selectedHistoryRecord.taskName }} / {{ selectedHistoryRecord.finishTime }}</div>
+        <div
+          v-if="selectedHistoryRecord.detail.evaluationProcess?.stages?.length"
+          class="detail-actions"
+        >
+          <el-button class="action-btn-secondary" @click="toggleHistoryProcess">
+            {{ historyProcessVisible ? '收起评测过程' : '评测过程' }}
+          </el-button>
+        </div>
         <div class="detail-box">
           <div class="detail-title">综合反馈</div>
           <div class="detail-text">{{ selectedHistoryRecord.detail.feedback || '暂无反馈' }}</div>
@@ -350,6 +364,89 @@
           <div class="detail-title">人工复核</div>
           <div class="detail-text">{{ getManualReviewText(selectedHistoryRecord.manualReview.status) }}</div>
           <div class="detail-text">{{ selectedHistoryRecord.manualReview.note || '暂无复核意见' }}</div>
+        </div>
+        <div
+          v-if="historyProcessVisible && selectedHistoryRecord.detail.evaluationProcess?.stages?.length"
+          class="detail-box process-box"
+        >
+          <div class="detail-title">评测过程</div>
+          <el-collapse v-model="historyProcessActiveNames" class="process-collapse">
+            <el-collapse-item
+              v-for="stage in selectedHistoryRecord.detail.evaluationProcess.stages"
+              :key="stage.key"
+              :name="stage.key"
+            >
+              <template #title>
+                <div class="process-stage-header">
+                  <div class="process-stage-title">{{ stage.label }}</div>
+                  <div class="process-stage-header-meta">
+                    <span v-if="stage.tokenUsage" class="process-stage-token">
+                      Token：{{ formatTokenUsage(stage.tokenUsage) }}
+                    </span>
+                    <span v-if="stage.media.images.length" class="process-stage-chip">
+                      图片 {{ stage.media.images.length }}
+                    </span>
+                    <span v-if="stage.media.videos.length" class="process-stage-chip">
+                      视频 {{ stage.media.videos.length }}
+                    </span>
+                  </div>
+                </div>
+              </template>
+
+              <div class="process-stage-body">
+                <div
+                  v-if="stage.media.images.length || stage.media.videos.length"
+                  class="process-block"
+                >
+                  <div class="process-block-title">发送给 AI 的媒体</div>
+                  <div v-if="stage.media.images.length" class="process-image-grid">
+                    <div
+                      v-for="(image, index) in stage.media.images"
+                      :key="`${stage.key}-image-${index}`"
+                      class="process-image-card"
+                    >
+                      <img
+                        v-if="canRenderProcessImage(image.url)"
+                        :src="image.url"
+                        :alt="`${stage.label} 图片 ${index + 1}`"
+                        class="process-image"
+                      />
+                      <div v-else class="process-media-placeholder">
+                        图片 {{ index + 1 }}
+                        <span>历史记录未保留原图，仅保留发送痕迹</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-if="stage.media.videos.length" class="process-video-list">
+                    <div
+                      v-for="(_video, index) in stage.media.videos"
+                      :key="`${stage.key}-video-${index}`"
+                      class="process-video-item"
+                    >
+                      <span class="process-stage-chip">{{ _video.label || `视频 ${index + 1}` }}</span>
+                      <span class="detail-text">
+                        该阶段向 AI 发送了整段用户视频，详情视频可在上方“上传视频”中查看。
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="stage.promptText" class="process-block">
+                  <div class="process-block-title">提示词</div>
+                  <pre class="process-text">{{ stage.promptText }}</pre>
+                </div>
+
+                <div v-if="stage.responseText" class="process-block">
+                  <div class="process-block-title">AI 回复</div>
+                  <pre class="process-text process-response">{{ stage.responseText }}</pre>
+                </div>
+
+                <div v-if="!stage.promptText && !stage.responseText" class="detail-text">
+                  该阶段未记录可展示的过程内容。
+                </div>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
         </div>
         <div class="detail-box step-results-box" v-if="selectedHistoryRecord.detail.stepResults?.length">
           <div class="detail-title">步骤结果</div>
@@ -404,6 +501,11 @@ import GlassCard from '../components/GlassCard.vue'
 import SectionHeader from '../components/SectionHeader.vue'
 import EvalTimeline from '../components/EvalTimeline.vue'
 import ScoreRadar from '../components/ScoreRadar.vue'
+import {
+  buildEvaluationResultFromHistory,
+  formatTokenUsage,
+  normalizeHistory,
+} from '../utils/user-history.mjs'
 
 const router = useRouter()
 const sopList = ref([])
@@ -424,8 +526,17 @@ const evaluationResult = ref(null)
 const historyDetailVisible = ref(false)
 const selectedHistoryRecord = ref(null)
 const selectedHistoryVideoUrl = ref('')
+const historyProcessVisible = ref(false)
+const historyProcessActiveNames = ref([])
 const currentUser = ref(getCurrentUser())
 let jobPollingTimer = null
+
+watch(historyDetailVisible, (visible) => {
+  if (!visible) {
+    historyProcessVisible.value = false
+    historyProcessActiveNames.value = []
+  }
+})
 
 const currentUserName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '用户')
 
@@ -502,48 +613,12 @@ const currentSopHasNoDemoVideo = computed(() => {
   return steps.length > 0 && steps.every((step) => step.referenceMode === 'text')
 })
 
-function normalizeHistory(record = {}) {
-  return {
-    ...record,
-    detail: {
-      feedback: record.detail?.feedback || '',
-      issues: Array.isArray(record.detail?.issues) ? record.detail.issues : [],
-      stepResults: Array.isArray(record.detail?.stepResults) ? record.detail.stepResults : [],
-      uploadedVideo: record.detail?.uploadedVideo || null,
-      tokenUsage: record.detail?.tokenUsage || null,
-      payloadPreview: record.detail?.payloadPreview || null,
-      rawModelResult: record.detail?.rawModelResult || null,
-      sequenceAssessment: record.detail?.sequenceAssessment || '',
-      prerequisiteViolated: !!record.detail?.prerequisiteViolated,
-      segmentPreview: Array.isArray(record.detail?.segmentPreview) ? record.detail.segmentPreview : [],
-      overviewPreview: record.detail?.overviewPreview || null,
-    },
-    manualReview: record.manualReview || null
-  }
-}
-
 function normalizeJob(record = {}) {
   return {
     ...record,
     progressPercent: Number(record.progressPercent || 0),
     logs: Array.isArray(record.logs) ? record.logs : [],
     uploadedVideo: record.uploadedVideo || null
-  }
-}
-
-function buildEvaluationResultFromHistory(record = {}) {
-  return {
-    passed: record.status === 'passed',
-    score: record.score,
-    feedback: record.detail?.feedback || '',
-    issues: Array.isArray(record.detail?.issues) ? record.detail.issues : [],
-    sequenceAssessment: record.detail?.sequenceAssessment || '',
-    prerequisiteViolated: !!record.detail?.prerequisiteViolated,
-    stepResults: Array.isArray(record.detail?.stepResults) ? record.detail.stepResults : [],
-    payloadPreview: record.detail?.payloadPreview || null,
-    rawModelResult: record.detail?.rawModelResult || null,
-    segmentPreview: Array.isArray(record.detail?.segmentPreview) ? record.detail.segmentPreview : [],
-    overviewPreview: record.detail?.overviewPreview || null,
   }
 }
 
@@ -571,6 +646,27 @@ function revokeSelectedHistoryVideoUrl() {
     URL.revokeObjectURL(selectedHistoryVideoUrl.value)
     selectedHistoryVideoUrl.value = ''
   }
+}
+
+function getEvaluationProcessStages(record = selectedHistoryRecord.value) {
+  return Array.isArray(record?.detail?.evaluationProcess?.stages)
+    ? record.detail.evaluationProcess.stages
+    : []
+}
+
+function getEvaluationProcessPanelNames(record = selectedHistoryRecord.value) {
+  return getEvaluationProcessStages(record).map((stage) => stage.key)
+}
+
+function toggleHistoryProcess() {
+  historyProcessVisible.value = !historyProcessVisible.value
+  if (historyProcessVisible.value) {
+    historyProcessActiveNames.value = getEvaluationProcessPanelNames()
+  }
+}
+
+function canRenderProcessImage(url) {
+  return typeof url === 'string' && url.startsWith('data:image/') && !url.includes('<base64 omitted>')
 }
 
 async function refreshCurrentJob(jobId, silent = false) {
@@ -669,6 +765,8 @@ async function openHistoryDetailById(recordId) {
   if (!recordId) return
   try {
     selectedHistoryRecord.value = normalizeHistory((await getHistoryDetail(recordId)).data)
+    historyProcessVisible.value = false
+    historyProcessActiveNames.value = getEvaluationProcessPanelNames(selectedHistoryRecord.value)
     revokeSelectedHistoryVideoUrl()
     const mediaPath = selectedHistoryRecord.value?.detail?.uploadedVideo?.url || ''
     if (mediaPath) {
@@ -733,14 +831,6 @@ function formatConfidence(value) {
 function formatScore(value, fallback = '-') {
   const num = Number(value)
   return Number.isFinite(num) ? `${num} / 100` : fallback
-}
-
-function formatTokenUsage(usage) {
-  if (!usage) return '暂无'
-  const input = Number.isFinite(Number(usage.inputTokens)) ? Number(usage.inputTokens) : '-'
-  const output = Number.isFinite(Number(usage.outputTokens)) ? Number(usage.outputTokens) : '-'
-  const total = Number.isFinite(Number(usage.totalTokens)) ? Number(usage.totalTokens) : '-'
-  return `输入 ${input} / 输出 ${output} / 总计 ${total}`
 }
 
 function formatStepType(stepType) {
@@ -1214,6 +1304,12 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.history-item-token {
+  font-size: var(--fs-footnote);
+  color: var(--text-soft);
+  line-height: 1.6;
 }
 
 .history-item-badges {
@@ -1864,6 +1960,12 @@ onUnmounted(() => {
   line-height: 1.7;
 }
 
+.result-token {
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-footnote);
+  color: var(--text-soft);
+}
+
 .result-feedback {
   font-size: var(--fs-subheadline);
   line-height: 1.6;
@@ -1969,6 +2071,157 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
+.detail-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin: 0 0 var(--sp-4);
+}
+
+.process-box {
+  padding: 18px var(--sp-5) var(--sp-4);
+}
+
+.process-collapse {
+  border-top: none;
+  border-bottom: none;
+}
+
+.process-collapse :deep(.el-collapse-item__wrap) {
+  border-bottom: none;
+}
+
+.process-collapse :deep(.el-collapse-item__header) {
+  align-items: flex-start;
+  min-height: 72px;
+  padding: 14px 0;
+  line-height: 1.5;
+}
+
+.process-stage-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  width: 100%;
+  padding-right: var(--sp-4);
+}
+
+.process-stage-title {
+  font-size: var(--fs-subheadline);
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.process-stage-header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.process-stage-token,
+.process-stage-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  background: var(--fill-quaternary);
+  color: var(--text-soft);
+  font-size: var(--fs-caption1);
+  line-height: 1.4;
+}
+
+.process-stage-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: 0 0 var(--sp-3);
+}
+
+.process-block {
+  padding: var(--sp-4);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  border: 1px solid var(--line-soft);
+}
+
+.process-block-title {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: var(--sp-3);
+}
+
+.process-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--sp-3);
+}
+
+.process-image-card {
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--fill-quaternary);
+  border: 1px solid var(--line-soft);
+  min-height: 140px;
+}
+
+.process-image {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  aspect-ratio: 4 / 3;
+}
+
+.process-media-placeholder {
+  min-height: 140px;
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: var(--fs-footnote);
+  line-height: 1.6;
+}
+
+.process-media-placeholder span {
+  color: var(--text-faint);
+}
+
+.process-video-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.process-video-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+
+.process-text {
+  margin: 0;
+  padding: var(--sp-4);
+  border-radius: var(--radius-md);
+  background: rgba(15, 23, 42, 0.04);
+  border: 1px solid var(--line-soft);
+  color: var(--text-main);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.75;
+  font-family: var(--font-mono);
+}
+
+.process-response {
+  max-height: 320px;
+  overflow: auto;
+}
+
 /* ── Responsive ──────────────────────────────────────────── */
 
 @media (max-width: 768px) {
@@ -2024,6 +2277,13 @@ onUnmounted(() => {
     align-items: flex-start;
   }
   .step-result-top { flex-direction: column; }
+  .process-stage-header,
+  .process-video-item {
+    flex-direction: column;
+  }
+  .process-stage-header-meta {
+    justify-content: flex-start;
+  }
   .segment { padding: var(--sp-2) 18px; font-size: 14px; }
 }
 

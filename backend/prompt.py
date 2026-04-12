@@ -234,41 +234,7 @@ def build_response_schema(step_count: int):
     }
 
 
-# ── Stage 1: Temporal Segmentation prompts ────────────────────
-
-def build_temporal_segmentation_system_prompt():
-    return (
-        "你是一个 SOP 视频分析助手，专门负责识别视频中各操作步骤的时间位置。"
-        "请仔细观察整段视频，然后为 SOP 的每个步骤找出其在视频中的大致起止时间。\n"
-        "注意事项：\n"
-        "- 如果某个步骤在视频中没有出现，将 detected 设为 false，startSec 和 endSec 设为 null。\n"
-        "- 时间精度以秒为单位，保留一位小数即可。\n"
-        "- 步骤可能不是严格按顺序发生的，如实反映即可。\n"
-        "只返回合法 JSON，不要输出任何额外说明。"
-    )
-
-
-def build_temporal_segmentation_blocks(sop: SopData, user_video_data_url: str, user_video_fps: float):
-    step_list = "\n".join(
-        [f"步骤 {step.stepNo}: {step.description}" for step in sop.steps]
-    )
-    return [
-        {
-            "type": "text",
-            "text": (
-                f"SOP 名称：{sop.name}\n"
-                f"适用场景：{sop.scene or '未提供'}\n\n"
-                f"该 SOP 共 {sop.stepCount} 个步骤，列表如下：\n{step_list}\n\n"
-                "请分析下面的用户操作视频，识别每个步骤在视频中的大致起止时间（秒）。\n"
-                "只返回 JSON，不要输出额外说明。"
-            ),
-        },
-        {
-            "type": "video_url",
-            "video_url": {"url": user_video_data_url},
-            "fps": max(0.1, float(user_video_fps or 2)),
-        },
-    ]
+# ── Stage 1: Temporal Segmentation schema ─────────────────────
 
 
 def build_temporal_segmentation_schema(step_count: int):
@@ -308,74 +274,7 @@ def build_temporal_segmentation_schema(step_count: int):
     }
 
 
-# ── Stage 2: Per-step evaluation prompts ──────────────────────
-
-def build_per_step_evaluation_system_prompt():
-    return (
-        "你是一个精细的 SOP 步骤评估助手。"
-        "你将基于用户操作视频对单个 SOP 步骤进行深度评估。\n"
-        "评估要点：\n"
-        "1. 该步骤是否在指定时间区间内出现？\n"
-        "2. 动作是否符合步骤说明的真实意图？\n"
-        "3. 动作完成度如何？是否完整执行？\n"
-        "4. 是否存在操作错误、遗漏关键动作或证据不足的情况？\n"
-        "- issueType 只能从以下值中选择：['正常', '缺失', '顺序颠倒', '过早执行', '延后执行', '重复操作', '动作错误', '部分完成', '证据不足', '前置条件缺失']。\n"
-        "- completionLevel 只能从以下值中选择：['完整', '部分完成', '未完成', '无法判断']。\n"
-        "- evidence 必须说明判断依据，指出具体观察到的内容。\n"
-        "只返回合法 JSON，不要输出任何额外说明。"
-    )
-
-
-def build_per_step_evaluation_blocks(
-    step, segment_info: Optional[dict], user_video_data_url: str, user_video_fps: float
-):
-    has_reference_frames = bool(step.referenceFrames)
-    substeps_text = (
-        "; ".join([f"{item.title}@{item.timestampSec:.2f}s" for item in step.substeps])
-        if step.substeps
-        else "无"
-    )
-    detected = segment_info.get("detected", False) if segment_info else False
-    start_sec = segment_info.get("startSec") if segment_info else None
-    end_sec = segment_info.get("endSec") if segment_info else None
-
-    if detected and start_sec is not None and end_sec is not None:
-        time_range_text = (
-            f"时序分析已识别该步骤出现在视频 {start_sec:.1f}s - {end_sec:.1f}s 区间，请重点关注此区间内的执行内容。"
-        )
-    else:
-        time_range_text = "时序分析未能定位该步骤的具体时间范围，请全局搜索该步骤是否出现。"
-
-    blocks = [
-        {
-            "type": "text",
-            "text": (
-                f"当前需要评估的步骤：步骤 {step.stepNo}\n"
-                f"步骤说明：{step.description}\n"
-                f"步骤类型：{step.stepType}\n"
-                f"步骤权重：{step.stepWeight}\n"
-                f"条件说明：{step.conditionText or '无'}\n"
-                f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
-                f"参考摘要：{step.referenceSummary or '无'}\n"
-                f"关注区域提示：{step.roiHint or '无'}\n"
-                f"参考子步骤时间点：{substeps_text}\n"
-                f"参考模式：{'示范视频关键帧' if has_reference_frames else '仅文字 SOP，无示范视频'}\n"
-                f"{time_range_text}\n"
-                "请仔细观察下方完整视频，评估该步骤的执行情况。"
-            ),
-        },
-    ]
-    for frame in step.referenceFrames[:6]:
-        blocks.append({"type": "image_url", "image_url": {"url": frame}})
-    blocks.append({"type": "text", "text": "下面是完整用户操作视频："})
-    blocks.append(
-        {
-            "type": "video_url",
-            "video_url": {"url": user_video_data_url},
-            "fps": max(0.1, float(user_video_fps or 2)),
-        }
-    )
-    return blocks
+# ── Stage 2: Per-step evaluation schema ───────────────────────
 
 
 def build_per_step_evaluation_schema():
@@ -411,75 +310,7 @@ def build_per_step_evaluation_schema():
     }
 
 
-# ── Stage 3: Global validation prompts ────────────────────────
-
-def build_global_validation_system_prompt():
-    return (
-        "你是一个 SOP 全局合规性验证助手。"
-        "你将基于各步骤的单独评估结果和时序信息，对整个 SOP 执行进行综合判断。\n"
-        "重点关注：\n"
-        "1. 步骤执行顺序是否与 SOP 要求一致？\n"
-        "2. 前置依赖关系是否满足？\n"
-        "3. 整体是否达到通过标准（无严重错序、漏做等问题）？\n"
-        "- sequenceAssessment 只能从以下值中选择：['顺序正确', '轻微顺序偏差', '明显顺序错误', '无法判断顺序']。\n"
-        "- feedback 和 issues 使用中文。\n"
-        "- issues 用简短短语概括最重要的问题（最多 5 个）。\n"
-        "只返回合法 JSON，不要输出任何额外说明。"
-    )
-
-
-def build_global_validation_content(sop: SopData, step_results: list, segments: dict):
-    step_results_lines = []
-    for result in step_results:
-        step_no = result.get("stepNo")
-        seg = segments.get(step_no) or {}
-        start = seg.get("startSec")
-        end = seg.get("endSec")
-        time_range = f"{start:.1f}s~{end:.1f}s" if (start is not None and end is not None) else "未定位"
-        step_results_lines.append(
-            f"步骤 {step_no}: {result.get('description', '')}\n"
-            f"  判断={'通过' if result.get('passed') else '未通过'} | "
-            f"得分={result.get('score', 0)} | 问题类型={result.get('issueType', '未知')} | "
-            f"检测区间={time_range} | 顺序问题={'是' if result.get('orderIssue') else '否'}\n"
-            f"  证据：{result.get('evidence', '无')}"
-        )
-    step_order_text = " -> ".join([f"{step.stepNo}:{step.description}" for step in sop.steps])
-    return (
-        f"SOP 名称：{sop.name}\n"
-        f"期望步骤顺序：{step_order_text}\n\n"
-        "以下是各步骤的单独评估结果：\n\n"
-        + "\n\n".join(step_results_lines)
-        + "\n\n请根据以上各步骤结果，给出整体综合判断。"
-    )
-
-
-def build_global_validation_schema():
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "sop_global_validation",
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "passed": {"type": "boolean"},
-                    "score": {"type": "integer", "minimum": 0, "maximum": 100},
-                    "feedback": {"type": "string"},
-                    "issues": {"type": "array", "items": {"type": "string"}},
-                    "sequenceAssessment": {
-                        "type": "string",
-                        "enum": ["顺序正确", "轻微顺序偏差", "明显顺序错误", "无法判断顺序"],
-                    },
-                    "prerequisiteViolated": {"type": "boolean"},
-                },
-                "required": [
-                    "passed", "score", "feedback", "issues",
-                    "sequenceAssessment", "prerequisiteViolated",
-                ],
-            },
-        },
-    }
+# ── Stage 3: Global validation schema ─────────────────────────
 
 
 def build_per_step_evaluation_system_prompt():
@@ -568,19 +399,20 @@ def build_workflow_segmentation_schema(step_count: int):
     }
 
 
-# Re-define the multistage evaluation prompts below with stronger sequence signals.
+# ── Stage 2: Per-step evaluation prompts (multistage) ────────
 
 def build_per_step_evaluation_blocks(
     step,
     segment_info: Optional[dict],
     user_video_data_url: str,
-    user_video_fps: float,
+    user_video_fps: float = 6.0,
     user_video_duration: Optional[float] = None,
     user_focus_frames: Optional[List[str]] = None,
     user_focus_timestamps: Optional[List[float]] = None,
 ):
     has_reference_frames = bool(step.referenceFrames)
-    user_focus_limit = min(len(user_focus_frames or []), 10)
+    # 聚焦帧已在候选窗口内提供高密度采样，6 帧足够覆盖 1-2s 窗口的关键动作
+    user_focus_limit = min(len(user_focus_frames or []), 6)
     duration_text = (
         f"用户视频总时长：{float(user_video_duration):.1f}s\n"
         if user_video_duration
@@ -696,8 +528,7 @@ def build_temporal_segmentation_blocks(sop: SopData, user_video_data_url: str, u
                 ),
             }
         )
-        for frame in step.referenceFrames[:2]:
-            step_blocks.append({"type": "image_url", "image_url": {"url": frame}})
+        # Stage 1 只需定位起止时间，文字描述已足够；省去参考帧以减少输入 token
 
     return [
         {

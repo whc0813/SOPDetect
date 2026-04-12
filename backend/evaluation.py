@@ -503,6 +503,102 @@ def sanitize_payload(payload):
     return walk(payload)
 
 
+def extract_payload_media_preview(payload: Optional[dict]) -> dict:
+    messages = payload.get("messages") if isinstance(payload, dict) else []
+    images = []
+    videos = []
+
+    for message in messages or []:
+        content = message.get("content") if isinstance(message, dict) else []
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "image_url":
+                url = ((item.get("image_url") or {}).get("url") or "").strip()
+                if url:
+                    images.append({"url": url, "type": "image"})
+            elif item.get("type") == "video_url":
+                videos.append({"label": "整段用户视频", "type": "video"})
+
+    return {"images": images, "videos": videos}
+
+
+def _pick_usage_number(usage: Optional[dict], *keys) -> Optional[int]:
+    if not isinstance(usage, dict):
+        return None
+    for key in keys:
+        value = usage.get(key)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def build_multistage_model_trace(stage_traces: List[dict]) -> tuple[Optional[dict], Optional[dict]]:
+    payload_stages = []
+    raw_stages = []
+    prompt_tokens = 0
+    completion_tokens = 0
+    total_tokens = 0
+    has_usage = False
+
+    for item in stage_traces or []:
+        if not isinstance(item, dict):
+            continue
+        stage_name = str(item.get("stage") or "").strip()
+        step_no = item.get("stepNo")
+        payload_preview = item.get("payloadPreview")
+        media_preview = item.get("mediaPreview")
+        raw_model_result = item.get("rawModelResult")
+
+        if payload_preview is not None:
+            stage_payload = {"stage": stage_name, "payload": payload_preview}
+            if step_no is not None:
+                stage_payload["stepNo"] = step_no
+            if isinstance(media_preview, dict) and (media_preview.get("images") or media_preview.get("videos")):
+                stage_payload["mediaPreview"] = media_preview
+            payload_stages.append(stage_payload)
+
+        if raw_model_result is not None:
+            stage_raw = {"stage": stage_name, "result": raw_model_result}
+            if step_no is not None:
+                stage_raw["stepNo"] = step_no
+            raw_stages.append(stage_raw)
+
+            usage = raw_model_result.get("usage") if isinstance(raw_model_result, dict) else None
+            prompt_value = _pick_usage_number(
+                usage, "prompt_tokens", "input_tokens", "promptTokens", "inputTokens"
+            )
+            completion_value = _pick_usage_number(
+                usage,
+                "completion_tokens",
+                "output_tokens",
+                "completionTokens",
+                "outputTokens",
+            )
+            total_value = _pick_usage_number(usage, "total_tokens", "totalTokens")
+            if prompt_value is not None or completion_value is not None or total_value is not None:
+                has_usage = True
+                prompt_tokens += prompt_value or 0
+                completion_tokens += completion_value or 0
+                total_tokens += total_value if total_value is not None else (prompt_value or 0) + (completion_value or 0)
+
+    payload_preview = {"mode": "multistage", "stages": payload_stages} if payload_stages else None
+    raw_model_result = {"mode": "multistage", "stages": raw_stages} if raw_stages else None
+    if raw_model_result and has_usage:
+        raw_model_result["usage"] = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+    return payload_preview, raw_model_result
+
+
 # ── Demo video / reference bundle helpers ─────────────────────
 
 async def build_ai_reference_plan(
@@ -870,9 +966,18 @@ async def run_temporal_segmentation(
             for seg in (parsed.get("segments") or [])
             if int(seg.get("stepNo") or 0) > 0
         }
-        return segments, parsed.get("videoDurationSec")
+        return (
+            segments,
+            parsed.get("videoDurationSec"),
+            {
+                "stage": "stage1_segmentation",
+                "payloadPreview": sanitize_payload(payload),
+                "mediaPreview": extract_payload_media_preview(payload),
+                "rawModelResult": sanitize_payload(raw_json),
+            },
+        )
     except Exception:
-        return {}, None
+        return {}, None, None
 
 
 async def run_per_step_evaluation(
@@ -918,6 +1023,9 @@ async def run_per_step_evaluation(
     )
     result["stepNo"] = step.stepNo
     result.setdefault("description", step.description)
+    result["_payloadPreview"] = sanitize_payload(payload)
+    result["_mediaPreview"] = extract_payload_media_preview(payload)
+    result["_rawModelResult"] = sanitize_payload(raw_json)
     return reconcile_order_issue_from_evidence(step, result, user_video_duration)
 
 
@@ -1020,9 +1128,13 @@ async def run_global_validation(
         "response_format": build_global_validation_schema(),
     }
     raw_json = await call_chat_completion(api_config, payload)
-    return parse_json_content(
+    result = parse_json_content(
         raw_json.get("choices", [{}])[0].get("message", {}).get("content")
     )
+    result["_payloadPreview"] = sanitize_payload(payload)
+    result["_mediaPreview"] = extract_payload_media_preview(payload)
+    result["_rawModelResult"] = sanitize_payload(raw_json)
+    return result
 
 
 async def _run_multistage_evaluation(
@@ -1043,7 +1155,7 @@ async def _run_multistage_evaluation(
 
     # Stage 1
     _log("stage1_segmentation", 20, "正在分析视频时序结构，识别各步骤起止时间...")
-    segments, detected_duration = await run_temporal_segmentation(
+    segments, detected_duration, segmentation_trace = await run_temporal_segmentation(
         api_config, sop, user_video_data_url, user_video_fps
     )
     segments = ensure_step_segments(sop, segments, user_video_path)
@@ -1067,12 +1179,44 @@ async def _run_multistage_evaluation(
     # Stage 3
     _log("stage3_validation", 80, "逐步评估完成，正在进行全局顺序校验...")
     global_result = await run_global_validation(api_config, sop, step_results, segments)
+    stage_traces = []
+    if segmentation_trace:
+        stage_traces.append(segmentation_trace)
+    for item in step_results:
+        payload_preview = item.pop("_payloadPreview", None)
+        media_preview = item.pop("_mediaPreview", None)
+        raw_model_result = item.pop("_rawModelResult", None)
+        if payload_preview is not None or raw_model_result is not None or media_preview is not None:
+            stage_traces.append(
+                {
+                    "stage": "stage2_step_eval",
+                    "stepNo": item.get("stepNo"),
+                    "payloadPreview": payload_preview,
+                    "mediaPreview": media_preview,
+                    "rawModelResult": raw_model_result,
+                }
+            )
+    global_payload_preview = global_result.pop("_payloadPreview", None)
+    global_media_preview = global_result.pop("_mediaPreview", None)
+    global_raw_model_result = global_result.pop("_rawModelResult", None)
+    if global_payload_preview is not None or global_raw_model_result is not None or global_media_preview is not None:
+        stage_traces.append(
+            {
+                "stage": "stage3_validation",
+                "payloadPreview": global_payload_preview,
+                "mediaPreview": global_media_preview,
+                "rawModelResult": global_raw_model_result,
+            }
+        )
     step_results = apply_global_validation_overrides(step_results, global_result)
+    payload_preview, raw_model_result = build_multistage_model_trace(stage_traces)
 
     # Merge step results into the global structure
     merged = {
         **global_result,
         "stepResults": step_results,
+        "payloadPreview": payload_preview,
+        "rawModelResult": raw_model_result,
     }
 
     # Apply rule-based post-processing with SOP-specific penalties

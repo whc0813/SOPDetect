@@ -157,7 +157,8 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertIn("1.2s~2.4s", content)
         self.assertNotIn("0.0s~0.5s", content)
 
-    def test_temporal_segmentation_blocks_include_reference_clues_for_similar_steps(self):
+    def test_temporal_segmentation_blocks_include_text_clues_and_no_reference_frames(self):
+        # Stage 1 只需定位时序，文字线索（参考摘要、ROI）已足够，省去参考帧以节省 token
         sop = _build_test_sop()
 
         blocks = prompt.build_temporal_segmentation_blocks(sop, "data:video/mp4;base64,ZmFrZQ==", 6)
@@ -169,7 +170,8 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
 
         self.assertIn("参考摘要", all_text)
         self.assertIn("ROI", all_text)
-        self.assertTrue(any(item.get("type") == "image_url" for item in blocks))
+        # 不再发送参考图，仅依赖文字线索
+        self.assertFalse(any(item.get("type") == "image_url" for item in blocks))
 
     def test_per_step_evaluation_blocks_include_user_focus_frames(self):
         step = _build_test_sop().steps[2]
@@ -381,6 +383,158 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertEqual(cleaned["detectedStartSec"], 0.6)
         self.assertEqual(cleaned["detectedEndSec"], 1.8)
         self.assertIn("后端已根据证据改判为顺序问题", cleaned["evidence"])
+
+    def test_run_multistage_evaluation_aggregates_token_usage_from_all_model_calls(self):
+        sop = _build_test_sop()
+        segments = {
+            1: {"stepNo": 1, "detected": True, "startSec": 1.0, "endSec": 2.0, "confidence": 0.9, "note": ""},
+            2: {"stepNo": 2, "detected": True, "startSec": 3.0, "endSec": 4.0, "confidence": 0.9, "note": ""},
+            3: {"stepNo": 3, "detected": True, "startSec": 5.0, "endSec": 6.0, "confidence": 0.9, "note": ""},
+        }
+        step_results = [
+            {
+                "stepNo": 1,
+                "description": "做出“1”手势",
+                "passed": True,
+                "score": 100,
+                "confidence": 1.0,
+                "applicable": True,
+                "issueType": "正常",
+                "completionLevel": "完整",
+                "orderIssue": False,
+                "prerequisiteViolated": False,
+                "detectedStartSec": 1.0,
+                "detectedEndSec": 2.0,
+                "evidence": "ok",
+                "_payloadPreview": {"stage": "stage2", "stepNo": 1},
+                "_rawModelResult": {
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}
+                },
+            },
+            {
+                "stepNo": 2,
+                "description": "做出“2”手势",
+                "passed": True,
+                "score": 100,
+                "confidence": 1.0,
+                "applicable": True,
+                "issueType": "正常",
+                "completionLevel": "完整",
+                "orderIssue": False,
+                "prerequisiteViolated": False,
+                "detectedStartSec": 3.0,
+                "detectedEndSec": 4.0,
+                "evidence": "ok",
+                "_payloadPreview": {"stage": "stage2", "stepNo": 2},
+                "_rawModelResult": {
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 3, "total_tokens": 14}
+                },
+            },
+            {
+                "stepNo": 3,
+                "description": "做出“3”手势",
+                "passed": False,
+                "score": 60,
+                "confidence": 1.0,
+                "applicable": True,
+                "issueType": "过早执行",
+                "completionLevel": "完整",
+                "orderIssue": True,
+                "prerequisiteViolated": True,
+                "detectedStartSec": 5.0,
+                "detectedEndSec": 6.0,
+                "evidence": "order issue",
+                "_payloadPreview": {"stage": "stage2", "stepNo": 3},
+                "_rawModelResult": {
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}
+                },
+            },
+        ]
+        global_result = {
+            "passed": False,
+            "score": 60,
+            "feedback": "全局判断",
+            "issues": ["顺序错误"],
+            "sequenceAssessment": "明显顺序错误",
+            "prerequisiteViolated": True,
+            "stepOverrides": [],
+            "_payloadPreview": {"stage": "stage3"},
+            "_rawModelResult": {
+                "usage": {"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18}
+            },
+        }
+
+        with mock.patch(
+            "backend.evaluation.run_temporal_segmentation",
+            return_value=(
+                segments,
+                7.0,
+                {
+                    "payloadPreview": {"stage": "stage1"},
+                    "rawModelResult": {
+                        "usage": {"prompt_tokens": 9, "completion_tokens": 1, "total_tokens": 10}
+                    },
+                },
+            ),
+        ), mock.patch(
+            "backend.evaluation.ensure_step_segments",
+            return_value=segments,
+        ), mock.patch(
+            "backend.evaluation.run_per_step_evaluation_batch",
+            return_value=step_results,
+        ), mock.patch(
+            "backend.evaluation.run_global_validation",
+            return_value=global_result,
+        ), mock.patch(
+            "backend.evaluation.post_process_evaluation_result",
+            side_effect=lambda _sop, merged, penalty_config=None: merged,
+        ):
+            result, normalized_segments, detected_duration = evaluation.asyncio.run(
+                evaluation._run_multistage_evaluation(
+                    evaluation.ApiConfig(apiKey="k"),
+                    sop,
+                    "demo.mp4",
+                    "data:video/mp4;base64,ZmFrZQ==",
+                    6.0,
+                )
+            )
+
+        self.assertEqual(normalized_segments, segments)
+        self.assertEqual(detected_duration, 7.0)
+        self.assertEqual(
+            result["rawModelResult"]["usage"],
+            {"prompt_tokens": 55, "completion_tokens": 15, "total_tokens": 70},
+        )
+        self.assertEqual(len(result["payloadPreview"]["stages"]), 5)
+
+    def test_build_multistage_model_trace_keeps_media_preview(self):
+        payload_preview, raw_model_result = evaluation.build_multistage_model_trace(
+            [
+                {
+                    "stage": "stage2_step_eval",
+                    "stepNo": 2,
+                    "payloadPreview": {
+                        "messages": [
+                            {"role": "system", "content": "系统提示词"},
+                        ]
+                    },
+                    "mediaPreview": {
+                        "images": [{"url": "data:image/png;base64,abc"}],
+                        "videos": [{"label": "整段用户视频"}],
+                    },
+                    "rawModelResult": {
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12}
+                    },
+                }
+            ]
+        )
+
+        self.assertEqual(payload_preview["stages"][0]["mediaPreview"]["images"][0]["url"], "data:image/png;base64,abc")
+        self.assertEqual(payload_preview["stages"][0]["mediaPreview"]["videos"][0]["label"], "整段用户视频")
+        self.assertEqual(
+            raw_model_result["usage"],
+            {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        )
 
 
 if __name__ == "__main__":
