@@ -176,6 +176,47 @@ test('normalizeHistory builds evaluation process stages from multistage traces',
   })
 })
 
+test('normalizeHistory labels batch stage2 without synthetic step 0', async () => {
+  const { normalizeHistory } = await loadUserHistoryModule()
+  const record = normalizeHistory({
+    detail: {
+      payloadPreview: {
+        mode: 'multistage',
+        stages: [
+          {
+            stage: 'stage2_step_eval',
+            payload: {
+              messages: [
+                { role: 'system', content: '阶段2系统提示词' },
+              ],
+            },
+          },
+        ],
+      },
+      rawModelResult: {
+        mode: 'multistage',
+        stages: [
+          {
+            stage: 'stage2_step_eval',
+            result: {
+              usage: {
+                prompt_tokens: 10,
+                completion_tokens: 2,
+                total_tokens: 12,
+              },
+              choices: [{ message: { content: '{"stepResults":[]}' } }],
+            },
+          },
+        ],
+      },
+    },
+  })
+
+  const stage2 = record.detail.evaluationProcess.stages.find((item) => item.stage === 'stage2_step_eval')
+  assert.equal(stage2.stepNo, null)
+  assert.equal(stage2.label, '阶段2：批量步骤评测')
+})
+
 test('normalizeHistory returns empty evaluation process for non-multistage traces', async () => {
   const { normalizeHistory } = await loadUserHistoryModule()
   const record = normalizeHistory({
@@ -188,6 +229,57 @@ test('normalizeHistory returns empty evaluation process for non-multistage trace
   assert.deepEqual(record.detail.evaluationProcess, {
     stages: [],
   })
+})
+
+test('normalizeHistory synthesizes stage1 placeholder when legacy trace starts from stage2', async () => {
+  const { normalizeHistory } = await loadUserHistoryModule()
+  const record = normalizeHistory({
+    detail: {
+      payloadPreview: {
+        mode: 'multistage',
+        stages: [
+          {
+            stage: 'stage2_step_eval',
+            stepNo: 1,
+            payload: {
+              messages: [
+                { role: 'system', content: '阶段2系统提示词' },
+              ],
+            },
+          },
+          {
+            stage: 'stage3_validation',
+            payload: {
+              messages: [
+                { role: 'system', content: '阶段3系统提示词' },
+              ],
+            },
+          },
+        ],
+      },
+      rawModelResult: {
+        mode: 'multistage',
+        stages: [
+          {
+            stage: 'stage2_step_eval',
+            stepNo: 1,
+            result: {
+              usage: {
+                prompt_tokens: 10,
+                completion_tokens: 2,
+                total_tokens: 12,
+              },
+              choices: [{ message: { content: '{"stepNo":1}' } }],
+            },
+          },
+        ],
+      },
+    },
+  })
+
+  assert.equal(record.detail.evaluationProcess.stages[0].stage, 'stage1_segmentation')
+  assert.equal(record.detail.evaluationProcess.stages[0].isSynthetic, true)
+  assert.equal(record.detail.evaluationProcess.stages[0].note.includes('阶段1'), true)
 })
 
 test('formatTokenUsage renders compact token summary', async () => {

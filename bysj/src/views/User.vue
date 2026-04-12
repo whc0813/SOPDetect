@@ -436,12 +436,17 @@
                   <pre class="process-text">{{ stage.promptText }}</pre>
                 </div>
 
+                <div v-if="stage.note" class="process-block">
+                  <div class="process-block-title">阶段说明</div>
+                  <div class="detail-text">{{ stage.note }}</div>
+                </div>
+
                 <div v-if="stage.responseText" class="process-block">
                   <div class="process-block-title">AI 回复</div>
                   <pre class="process-text process-response">{{ stage.responseText }}</pre>
                 </div>
 
-                <div v-if="!stage.promptText && !stage.responseText" class="detail-text">
+                <div v-if="!stage.promptText && !stage.responseText && !stage.note" class="detail-text">
                   该阶段未记录可展示的过程内容。
                 </div>
               </div>

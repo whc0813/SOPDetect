@@ -227,7 +227,7 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertIn("不要写出超过", all_text)
         self.assertNotIn("用户关键帧 1@", all_text)
 
-    def test_run_per_step_evaluation_batch_extracts_focus_frames_from_segment_window(self):
+    def test_batch_step_evaluation_blocks_attach_one_video_for_all_steps(self):
         sop = _build_test_sop()
         segments = {
             1: {"stepNo": 1, "detected": True, "startSec": 1.0, "endSec": 2.0},
@@ -235,22 +235,118 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
             3: {"stepNo": 3, "detected": True, "startSec": 5.0, "endSec": 6.0},
         }
 
-        async def fake_run_per_step(*args, **kwargs):
-            return {
-                "stepNo": args[1].stepNo,
-                "description": args[1].description,
-                "passed": True,
-                "score": 100,
-                "confidence": 1.0,
-                "applicable": True,
-                "issueType": "正常",
-                "completionLevel": "完整",
-                "orderIssue": False,
-                "prerequisiteViolated": False,
-                "detectedStartSec": kwargs["segment_info"]["startSec"],
-                "detectedEndSec": kwargs["segment_info"]["endSec"],
-                "evidence": "ok",
-            }
+        blocks = prompt.build_batch_step_evaluation_blocks(
+            sop,
+            segments,
+            "data:video/mp4;base64,ZmFrZQ==",
+            6,
+            user_video_duration=7.0,
+        )
+        all_text = "\n".join(
+            item.get("text", "")
+            for item in blocks
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+
+        self.assertIn("7.0s", all_text)
+        self.assertIn("1.0s - 2.0s", all_text)
+        self.assertEqual(sum(1 for item in blocks if item.get("type") == "video_url"), 1)
+        self.assertNotIn("鐢ㄦ埛瑙嗛鍏抽敭甯", all_text)
+
+    def test_batch_step_evaluation_system_prompt_mentions_batch_scope(self):
+        system_prompt = prompt.build_batch_step_evaluation_system_prompt()
+
+        self.assertIn("stepResults", system_prompt)
+        self.assertIn("stepNo", system_prompt)
+        self.assertIn("mm:ss", system_prompt)
+        self.assertIn(
+            "stepResults",
+            prompt.build_batch_step_evaluation_schema(3)["json_schema"]["schema"]["required"],
+        )
+
+    def test_run_per_step_evaluation_batch_calls_model_once_and_returns_all_steps(self):
+        sop = _build_test_sop()
+        segments = {
+            1: {"stepNo": 1, "detected": True, "startSec": 1.0, "endSec": 2.0},
+            2: {"stepNo": 2, "detected": True, "startSec": 3.0, "endSec": 4.0},
+            3: {"stepNo": 3, "detected": True, "startSec": 5.0, "endSec": 6.0},
+        }
+        raw_json = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"stepResults":['
+                            '{"stepNo":1,"passed":true,"score":100,"confidence":1.0,"applicable":true,'
+                            '"issueType":"姝ｅ父","completionLevel":"瀹屾暣","orderIssue":false,'
+                            '"prerequisiteViolated":false,"detectedStartSec":1.1,"detectedEndSec":1.9,"evidence":"ok1"},'
+                            '{"stepNo":2,"passed":true,"score":90,"confidence":0.9,"applicable":true,'
+                            '"issueType":"姝ｅ父","completionLevel":"瀹屾暣","orderIssue":false,'
+                            '"prerequisiteViolated":false,"detectedStartSec":3.2,"detectedEndSec":3.9,"evidence":"ok2"},'
+                            '{"stepNo":3,"passed":false,"score":60,"confidence":0.8,"applicable":true,'
+                            '"issueType":"杩囨棭鎵ц","completionLevel":"瀹屾暣","orderIssue":true,'
+                            '"prerequisiteViolated":false,"detectedStartSec":0.6,"detectedEndSec":1.8,"evidence":"ok3"}'
+                            ']}'
+                        )
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        }
+
+        with mock.patch(
+            "backend.evaluation.read_video_meta",
+            return_value={"durationSec": 6.0, "fps": 30.0, "frameCount": 180},
+        ), mock.patch(
+            "backend.evaluation.call_chat_completion",
+            new=mock.AsyncMock(return_value=raw_json),
+        ) as call_mock:
+            results = evaluation.asyncio.run(
+                evaluation.run_per_step_evaluation_batch(
+                    evaluation.ApiConfig(apiKey="k"),
+                    sop,
+                    segments,
+                    "demo-path.mp4",
+                    "data:video/mp4;base64,ZmFrZQ==",
+                    6,
+                )
+            )
+
+        self.assertEqual(call_mock.await_count, 1)
+        self.assertEqual(len(results), 3)
+        self.assertEqual(results[0]["description"], sop.steps[0].description)
+        self.assertEqual(results[2]["issueType"], "杩囨棭鎵ц")
+        self.assertIn("_batchPayloadPreview", results[0])
+        self.assertNotIn("_batchPayloadPreview", results[1])
+
+    def test_run_per_step_evaluation_batch_skips_focus_frame_extraction(self):
+        sop = _build_test_sop()
+        segments = {
+            1: {"stepNo": 1, "detected": True, "startSec": 1.0, "endSec": 2.0},
+            2: {"stepNo": 2, "detected": True, "startSec": 3.0, "endSec": 4.0},
+            3: {"stepNo": 3, "detected": True, "startSec": 5.0, "endSec": 6.0},
+        }
+        raw_json = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"stepResults":['
+                            '{"stepNo":1,"passed":true,"score":100,"confidence":1.0,"applicable":true,',
+                            '"issueType":"正常","completionLevel":"完整","orderIssue":false,',
+                            '"prerequisiteViolated":false,"detectedStartSec":1.0,"detectedEndSec":2.0,"evidence":"ok"},',
+                            '{"stepNo":2,"passed":true,"score":100,"confidence":1.0,"applicable":true,',
+                            '"issueType":"正常","completionLevel":"完整","orderIssue":false,',
+                            '"prerequisiteViolated":false,"detectedStartSec":3.0,"detectedEndSec":4.0,"evidence":"ok"},',
+                            '{"stepNo":3,"passed":true,"score":100,"confidence":1.0,"applicable":true,',
+                            '"issueType":"正常","completionLevel":"完整","orderIssue":false,',
+                            '"prerequisiteViolated":false,"detectedStartSec":5.0,"detectedEndSec":6.0,"evidence":"ok"}'
+                            ']}'
+                        )
+                    }
+                }
+            ]
+        }
 
         with mock.patch(
             "backend.evaluation.extract_analysis_samples",
@@ -259,8 +355,8 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
             "backend.evaluation.read_video_meta",
             return_value={"durationSec": 6.0, "fps": 30.0, "frameCount": 180},
         ), mock.patch(
-            "backend.evaluation.run_per_step_evaluation",
-            side_effect=fake_run_per_step,
+            "backend.evaluation.call_chat_completion",
+            new=mock.AsyncMock(return_value=raw_json),
         ):
             results = evaluation.asyncio.run(
                 evaluation.run_per_step_evaluation_batch(
@@ -274,44 +370,42 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
             )
 
         self.assertEqual(len(results), 3)
-        self.assertEqual(extract_mock.call_count, 3)
+        self.assertEqual(extract_mock.call_count, 0)
 
-    def test_run_per_step_evaluation_batch_uses_padded_dense_sampling_for_short_window(self):
+    def test_run_per_step_evaluation_batch_fills_missing_steps_when_model_omits_one(self):
         sop = _build_test_sop()
         segments = {
             1: {"stepNo": 1, "detected": True, "startSec": 1.0, "endSec": 2.0},
             2: {"stepNo": 2, "detected": True, "startSec": 3.0, "endSec": 4.0},
             3: {"stepNo": 3, "detected": True, "startSec": 5.0, "endSec": 6.0},
         }
-
-        async def fake_run_per_step(*args, **kwargs):
-            return {
-                "stepNo": args[1].stepNo,
-                "description": args[1].description,
-                "passed": True,
-                "score": 100,
-                "confidence": 1.0,
-                "applicable": True,
-                "issueType": "正常",
-                "completionLevel": "完整",
-                "orderIssue": False,
-                "prerequisiteViolated": False,
-                "detectedStartSec": kwargs["segment_info"]["startSec"],
-                "detectedEndSec": kwargs["segment_info"]["endSec"],
-                "evidence": "ok",
-            }
+        raw_json = {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"stepResults":['
+                            '{"stepNo":1,"passed":true,"score":100,"confidence":1.0,"applicable":true,',
+                            '"issueType":"正常","completionLevel":"完整","orderIssue":false,',
+                            '"prerequisiteViolated":false,"detectedStartSec":1.0,"detectedEndSec":2.0,"evidence":"ok"},',
+                            '{"stepNo":3,"passed":true,"score":95,"confidence":0.9,"applicable":true,',
+                            '"issueType":"正常","completionLevel":"完整","orderIssue":false,',
+                            '"prerequisiteViolated":false,"detectedStartSec":5.0,"detectedEndSec":6.0,"evidence":"ok"}'
+                            ']}'
+                        )
+                    }
+                }
+            ]
+        }
 
         with mock.patch(
-            "backend.evaluation.extract_analysis_samples",
-            return_value=([2.8, 3.1, 3.4], ["frame://u1", "frame://u2", "frame://u3"]),
-        ) as extract_mock, mock.patch(
             "backend.evaluation.read_video_meta",
             return_value={"durationSec": 6.0, "fps": 30.0, "frameCount": 180},
         ), mock.patch(
-            "backend.evaluation.run_per_step_evaluation",
-            side_effect=fake_run_per_step,
+            "backend.evaluation.call_chat_completion",
+            new=mock.AsyncMock(return_value=raw_json),
         ):
-            evaluation.asyncio.run(
+            results = evaluation.asyncio.run(
                 evaluation.run_per_step_evaluation_batch(
                     evaluation.ApiConfig(apiKey="k"),
                     sop,
@@ -322,13 +416,11 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 )
             )
 
-        extract_mock.assert_any_call(
-            "demo-path.mp4",
-            6.0,
-            start_sec=2.75,
-            end_sec=4.25,
-            sample_count=12,
-        )
+        self.assertEqual(len(results), 3)
+        self.assertEqual(results[1]["stepNo"], 2)
+        self.assertFalse(results[1]["passed"])
+        self.assertEqual(results[1]["score"], 0)
+        self.assertEqual(results[1]["issueType"], "证据不足")
 
     def test_sanitize_step_result_clamps_range_and_strips_impossible_timestamps(self):
         result = {
@@ -534,6 +626,71 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertEqual(
             raw_model_result["usage"],
             {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        )
+
+    def test_run_multistage_evaluation_persists_stage1_fallback_trace_when_segmentation_fails(self):
+        sop = _build_test_sop()
+        step_results = [
+            {
+                "stepNo": 1,
+                "description": "步骤1",
+                "passed": True,
+                "score": 100,
+                "confidence": 1.0,
+                "applicable": True,
+                "issueType": "姝ｅ父",
+                "completionLevel": "瀹屾暣",
+                "orderIssue": False,
+                "prerequisiteViolated": False,
+                "detectedStartSec": 0.0,
+                "detectedEndSec": 1.0,
+                "evidence": "ok",
+                "_payloadPreview": {"messages": []},
+                "_rawModelResult": {"usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}},
+            }
+        ]
+        global_result = {
+            "passed": True,
+            "score": 100,
+            "feedback": "ok",
+            "issues": [],
+            "sequenceAssessment": "椤哄簭姝ｇ‘",
+            "prerequisiteViolated": False,
+            "stepOverrides": [],
+            "_payloadPreview": {"messages": []},
+            "_rawModelResult": {"usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}},
+        }
+
+        with mock.patch(
+            "backend.evaluation.run_temporal_segmentation",
+            return_value=({}, None, None),
+        ), mock.patch(
+            "backend.evaluation.ensure_step_segments",
+            return_value={1: {"stepNo": 1, "detected": False, "startSec": 0.0, "endSec": 1.0, "confidence": 0.0, "note": "fallback"}},
+        ), mock.patch(
+            "backend.evaluation.run_per_step_evaluation_batch",
+            return_value=step_results,
+        ), mock.patch(
+            "backend.evaluation.run_global_validation",
+            return_value=global_result,
+        ), mock.patch(
+            "backend.evaluation.post_process_evaluation_result",
+            side_effect=lambda _sop, merged, penalty_config=None: merged,
+        ):
+            result, _normalized_segments, _detected_duration = evaluation.asyncio.run(
+                evaluation._run_multistage_evaluation(
+                    evaluation.ApiConfig(apiKey="k"),
+                    sop,
+                    "demo.mp4",
+                    "data:video/mp4;base64,ZmFrZQ==",
+                    6.0,
+                )
+            )
+
+        self.assertEqual(result["payloadPreview"]["stages"][0]["stage"], "stage1_segmentation")
+        self.assertEqual(
+            result["payloadPreview"]["stages"][0]["payload"]["fallbackNote"],
+            "阶段1时序定位失败，系统已回退为兜底分段继续后续评测。",
         )
 
 

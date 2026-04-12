@@ -655,3 +655,132 @@ def build_global_validation_schema():
             },
         },
     }
+
+
+def build_batch_step_evaluation_system_prompt():
+    return (
+        "你是一个严谨的 SOP 批量评估助手。\n"
+        "你会在一次输出中完成所有步骤的评估，并返回 stepResults 数组。\n"
+        "输入中会提供：每个步骤的说明、参考摘要、ROI 提示、关键时刻，以及阶段1时序分割给出的候选时间窗。\n"
+        "注意事项：\n"
+        "1. 阶段1的时间窗只是搜索提示，不是硬约束；如果动作出现在窗外，也要如实判断。\n"
+        "2. 必须结合完整用户视频判断所有步骤，不要遗漏任何 stepNo。\n"
+        "3. 如果动作存在但顺序错误，应标记为“顺序颠倒”“过早执行”或“延后执行”，不要误判为“缺失”。\n"
+        "4. evidence 如果引用绝对时间，只能使用 x.xs，不要使用 mm:ss，也不要写出超过用户视频总时长的时间点。\n"
+        "5. feedback、issues、evidence 全部使用中文。\n"
+        "6. issueType 只能从给定枚举中选择，completionLevel 只能从给定枚举中选择。\n"
+        "只返回合法 JSON，不要输出任何额外说明。"
+    )
+
+
+def build_batch_step_evaluation_blocks(
+    sop: SopData,
+    segments: dict,
+    user_video_data_url: str,
+    user_video_fps: float,
+    user_video_duration: Optional[float] = None,
+):
+    intro_lines = [
+        f"SOP 名称：{sop.name}",
+        f"适用场景：{sop.scene or '未提供'}",
+        f"总步骤数：{sop.stepCount}",
+    ]
+    if user_video_duration:
+        intro_lines.append(f"用户视频总时长：{float(user_video_duration):.1f}s")
+    intro_lines.append("请基于同一段完整用户视频，一次性完成所有步骤的评估。")
+
+    blocks = [{"type": "text", "text": "\n".join(intro_lines)}]
+
+    for step in sop.steps:
+        segment_info = segments.get(step.stepNo) or {}
+        substeps_text = (
+            "; ".join([f"{item.title}@{item.timestampSec:.2f}s" for item in step.substeps])
+            if step.substeps
+            else "无"
+        )
+        start_sec = segment_info.get("startSec")
+        end_sec = segment_info.get("endSec")
+        if start_sec is not None and end_sec is not None:
+            segment_text = f"{float(start_sec):.1f}s - {float(end_sec):.1f}s"
+        else:
+            segment_text = "未稳定定位"
+        blocks.append(
+            {
+                "type": "text",
+                "text": (
+                    f"步骤 {step.stepNo}\n"
+                    f"步骤说明：{step.description}\n"
+                    f"步骤类型：{step.stepType}\n"
+                    f"步骤权重：{step.stepWeight}\n"
+                    f"条件说明：{step.conditionText or '无'}\n"
+                    f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
+                    f"参考摘要：{step.referenceSummary or '无'}\n"
+                    f"ROI 提示：{step.roiHint or '无'}\n"
+                    f"参考关键时刻：{substeps_text}\n"
+                    f"阶段1候选时间窗：{segment_text}\n"
+                    "请结合完整用户视频判断该步骤是否出现、完成度如何、是否存在顺序问题。"
+                ),
+            }
+        )
+    blocks.append({"type": "text", "text": "下面是完整用户视频："})
+    blocks.append(
+        {
+            "type": "video_url",
+            "video_url": {"url": user_video_data_url},
+            "fps": max(0.1, float(user_video_fps or 2)),
+        }
+    )
+    return blocks
+
+
+def build_batch_step_evaluation_schema(step_count: int):
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "sop_batch_step_eval",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "stepResults": {
+                        "type": "array",
+                        "minItems": step_count,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "stepNo": {"type": "integer", "minimum": 1},
+                                "passed": {"type": "boolean"},
+                                "score": {"type": "integer", "minimum": 0, "maximum": 100},
+                                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                                "applicable": {"type": "boolean"},
+                                "issueType": {"type": "string", "enum": sorted(ISSUE_TYPE_VALUES)},
+                                "completionLevel": {"type": "string", "enum": sorted(COMPLETION_LEVEL_VALUES)},
+                                "orderIssue": {"type": "boolean"},
+                                "prerequisiteViolated": {"type": "boolean"},
+                                "detectedStartSec": {"type": ["number", "null"], "minimum": 0},
+                                "detectedEndSec": {"type": ["number", "null"], "minimum": 0},
+                                "evidence": {"type": "string"},
+                            },
+                            "required": [
+                                "stepNo",
+                                "passed",
+                                "score",
+                                "confidence",
+                                "applicable",
+                                "issueType",
+                                "completionLevel",
+                                "orderIssue",
+                                "prerequisiteViolated",
+                                "detectedStartSec",
+                                "detectedEndSec",
+                                "evidence",
+                            ],
+                        },
+                    }
+                },
+                "required": ["stepResults"],
+            },
+        },
+    }

@@ -77,6 +77,7 @@ export function buildEvaluationProcess(detail = {}) {
     entry.payloadPreview = item?.payload || null
     entry.promptText = buildPromptText(item?.payload)
     entry.media = extractPayloadMedia(item)
+    entry.note = typeof item?.payload?.fallbackNote === 'string' ? item.payload.fallbackNote.trim() : entry.note
   }
 
   for (const item of resultStages) {
@@ -93,12 +94,19 @@ export function buildEvaluationProcess(detail = {}) {
       label: buildStageLabel(item.stage, item.stepNo),
     }))
 
+  if (stages.length && !stages.some((item) => item.stage === 'stage1_segmentation')) {
+    stages.unshift(buildSyntheticStage1())
+  }
+
   return { stages }
 }
 
 function ensureStageEntry(stageMap, stage, stepNo) {
   const normalizedStage = String(stage || '').trim()
-  const normalizedStepNo = Number.isFinite(Number(stepNo)) ? Number(stepNo) : null
+  const normalizedStepNo =
+    stepNo === null || stepNo === undefined || stepNo === ''
+      ? null
+      : (Number.isFinite(Number(stepNo)) ? Number(stepNo) : null)
   const key = `${normalizedStage}::${normalizedStepNo ?? ''}`
 
   if (!stageMap.has(key)) {
@@ -109,6 +117,8 @@ function ensureStageEntry(stageMap, stage, stepNo) {
       promptText: '',
       responseText: '',
       tokenUsage: null,
+      note: '',
+      isSynthetic: false,
       media: {
         images: [],
         videos: [],
@@ -134,10 +144,33 @@ function compareStageEntries(left, right) {
 }
 
 function buildStageLabel(stage, stepNo) {
-  if (stage === 'stage2_step_eval' && Number.isFinite(Number(stepNo))) {
+  if (stage === 'stage2_step_eval' && Number.isFinite(Number(stepNo)) && Number(stepNo) > 0) {
     return `阶段2：步骤 ${Number(stepNo)} 评测`
   }
+  if (stage === 'stage2_step_eval') {
+    return '阶段2：批量步骤评测'
+  }
   return STAGE_LABELS[stage] || stage || '评测阶段'
+}
+
+function buildSyntheticStage1() {
+  return {
+    key: 'stage1_segmentation::synthetic',
+    stage: 'stage1_segmentation',
+    stepNo: null,
+    label: buildStageLabel('stage1_segmentation'),
+    promptText: '',
+    responseText: '',
+    tokenUsage: null,
+    note: '阶段1原始过程未保存在该记录中，系统可能在时序定位失败后已回退为兜底分段继续评测。',
+    isSynthetic: true,
+    media: {
+      images: [],
+      videos: [],
+    },
+    payloadPreview: null,
+    rawModelResult: null,
+  }
 }
 
 function buildPromptText(payload) {

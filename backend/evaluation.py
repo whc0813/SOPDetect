@@ -26,6 +26,9 @@ try:
         SopStep,
     )
     from .prompt import (
+        build_batch_step_evaluation_blocks,
+        build_batch_step_evaluation_schema,
+        build_batch_step_evaluation_system_prompt,
         build_content_blocks,
         build_evaluation_system_prompt,
         build_global_validation_content,
@@ -80,6 +83,9 @@ except ImportError:
         SopStep,
     )
     from prompt import (
+        build_batch_step_evaluation_blocks,
+        build_batch_step_evaluation_schema,
+        build_batch_step_evaluation_system_prompt,
         build_content_blocks,
         build_evaluation_system_prompt,
         build_global_validation_content,
@@ -523,6 +529,21 @@ def extract_payload_media_preview(payload: Optional[dict]) -> dict:
                 videos.append({"label": "整段用户视频", "type": "video"})
 
     return {"images": images, "videos": videos}
+
+
+def build_stage1_fallback_trace() -> dict:
+    return {
+        "stage": "stage1_segmentation",
+        "payloadPreview": {
+            "fallbackNote": "阶段1时序定位失败，系统已回退为兜底分段继续后续评测。",
+            "messages": [],
+        },
+        "mediaPreview": {
+            "images": [],
+            "videos": [{"label": "整段用户视频", "type": "video"}],
+        },
+        "rawModelResult": None,
+    }
 
 
 def _pick_usage_number(usage: Optional[dict], *keys) -> Optional[int]:
@@ -1029,6 +1050,8 @@ async def run_per_step_evaluation(
     return reconcile_order_issue_from_evidence(step, result, user_video_duration)
 
 
+
+
 async def run_per_step_evaluation_batch(
     api_config: ApiConfig,
     sop: SopData,
@@ -1039,70 +1062,82 @@ async def run_per_step_evaluation_batch(
     on_step_done: Optional[Callable] = None,
 ) -> list:
     """
-    Stage 2 batch: evaluate all steps concurrently (max 3 at a time).
+    Stage 2 batch: evaluate all steps in one model call against the full user video.
     """
-    semaphore = asyncio.Semaphore(3)
     total = len(sop.steps)
     user_video_meta = read_video_meta(user_video_path)
     user_video_duration = user_video_meta.get("durationSec") or 0
 
-    async def eval_one(step: SopStep):
-        async with semaphore:
-            try:
-                segment_info = segments.get(step.stepNo)
-                user_focus_timestamps = []
-                user_focus_frames = []
-                if (
-                    segment_info
-                    and segment_info.get("startSec") is not None
-                    and segment_info.get("endSec") is not None
-                    and user_video_duration > 0
-                ):
-                    try:
-                        focus_start, focus_end, focus_sample_count = build_focus_sampling_window(
-                            segment_info, user_video_duration
-                        )
-                        user_focus_timestamps, user_focus_frames = extract_analysis_samples(
-                            user_video_path,
-                            user_video_duration,
-                            start_sec=focus_start if focus_start is not None else float(segment_info.get("startSec") or 0),
-                            end_sec=focus_end if focus_end is not None else float(segment_info.get("endSec") or 0),
-                            sample_count=focus_sample_count,
-                        )
-                    except Exception:
-                        user_focus_timestamps, user_focus_frames = [], []
-                result = await run_per_step_evaluation(
-                    api_config=api_config,
-                    step=step,
-                    segment_info=segment_info,
-                    user_video_data_url=user_video_data_url,
-                    user_video_fps=user_video_fps,
-                    user_video_duration=user_video_duration,
-                    user_focus_frames=user_focus_frames,
-                    user_focus_timestamps=user_focus_timestamps,
-                )
-            except Exception as exc:
-                result = {
-                    "stepNo": step.stepNo,
-                    "description": step.description,
-                    "passed": False,
-                    "score": 0,
-                    "confidence": 0.0,
-                    "applicable": True,
-                    "issueType": "证据不足",
-                    "completionLevel": "无法判断",
-                    "orderIssue": False,
-                    "prerequisiteViolated": False,
-                    "detectedStartSec": None,
-                    "detectedEndSec": None,
-                    "evidence": f"该步骤评估调用异常：{exc}",
-                }
-            if on_step_done:
-                on_step_done(step.stepNo, total)
-            return result
+    def build_failed_result(step: SopStep, exc: Exception) -> dict:
+        return {
+            "stepNo": step.stepNo,
+            "description": step.description,
+            "passed": False,
+            "score": 0,
+            "confidence": 0.0,
+            "applicable": True,
+            "issueType": "证据不足",
+            "completionLevel": "无法判断",
+            "orderIssue": False,
+            "prerequisiteViolated": False,
+            "detectedStartSec": None,
+            "detectedEndSec": None,
+            "evidence": f"该步骤评估调用异常：{exc}",
+        }
 
-    results = await asyncio.gather(*[eval_one(step) for step in sop.steps])
-    return list(results)
+    try:
+        payload = {
+            "model": api_config.model,
+            "temperature": api_config.temperature,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": build_batch_step_evaluation_system_prompt(),
+                },
+                {
+                    "role": "user",
+                    "content": build_batch_step_evaluation_blocks(
+                        sop,
+                        segments,
+                        user_video_data_url,
+                        user_video_fps,
+                        user_video_duration=user_video_duration,
+                    ),
+                },
+            ],
+            "response_format": build_batch_step_evaluation_schema(sop.stepCount),
+        }
+        raw_json = await call_chat_completion(api_config, payload)
+        parsed = parse_json_content(
+            raw_json.get("choices", [{}])[0].get("message", {}).get("content")
+        )
+        parsed_results = {
+            int(item.get("stepNo") or 0): dict(item)
+            for item in (parsed.get("stepResults") or [])
+            if int(item.get("stepNo") or 0) > 0
+        }
+        results = []
+        for index, step in enumerate(sop.steps):
+            raw_result = parsed_results.get(step.stepNo)
+            if raw_result is None:
+                result = build_failed_result(step, ValueError("模型未返回该步骤结果"))
+            else:
+                result = dict(raw_result)
+                result["stepNo"] = step.stepNo
+                result.setdefault("description", step.description)
+                result = reconcile_order_issue_from_evidence(step, result, user_video_duration)
+            if index == 0:
+                result["_batchPayloadPreview"] = sanitize_payload(payload)
+                result["_batchMediaPreview"] = extract_payload_media_preview(payload)
+                result["_batchRawModelResult"] = sanitize_payload(raw_json)
+            results.append(result)
+    except Exception as exc:
+        results = [build_failed_result(step, exc) for step in sop.steps]
+
+    for index, _step in enumerate(sop.steps, start=1):
+        if on_step_done:
+            on_step_done(index, total)
+    return results
 
 
 async def run_global_validation(
@@ -1182,6 +1217,28 @@ async def _run_multistage_evaluation(
     stage_traces = []
     if segmentation_trace:
         stage_traces.append(segmentation_trace)
+    else:
+        stage_traces.append(build_stage1_fallback_trace())
+    batch_payload_preview = None
+    batch_media_preview = None
+    batch_raw_model_result = None
+    if step_results:
+        batch_payload_preview = step_results[0].pop("_batchPayloadPreview", None)
+        batch_media_preview = step_results[0].pop("_batchMediaPreview", None)
+        batch_raw_model_result = step_results[0].pop("_batchRawModelResult", None)
+    if (
+        batch_payload_preview is not None
+        or batch_media_preview is not None
+        or batch_raw_model_result is not None
+    ):
+        stage_traces.append(
+            {
+                "stage": "stage2_step_eval",
+                "payloadPreview": batch_payload_preview,
+                "mediaPreview": batch_media_preview,
+                "rawModelResult": batch_raw_model_result,
+            }
+        )
     for item in step_results:
         payload_preview = item.pop("_payloadPreview", None)
         media_preview = item.pop("_mediaPreview", None)

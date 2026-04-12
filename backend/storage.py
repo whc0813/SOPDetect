@@ -1818,8 +1818,7 @@ def _fetch_history_rows(
 ):
     sql = """
         SELECT e.id, e.execution_code, e.sop_id, e.user_id, e.uploaded_video_media_id, e.finish_time,
-               e.score, e.ai_status, e.feedback, e.sequence_assessment, e.prerequisite_violated,
-               e.payload_preview, e.raw_model_result, e.created_at,
+               e.score, e.ai_status, e.prerequisite_violated, e.created_at,
                s.sop_code, s.name AS task_name, s.scene,
                u.username AS user_name, u.display_name AS user_display_name
         FROM sop_executions e
@@ -1874,6 +1873,23 @@ def _fetch_history_rows(
         return cursor.fetchall()
 
 
+def _fetch_history_detail_rows(connection, execution_ids):
+    if not execution_ids:
+        return {}
+
+    placeholders = ", ".join(["%s"] * len(execution_ids))
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT e.id, e.feedback, e.sequence_assessment, e.payload_preview, e.raw_model_result
+            FROM sop_executions e
+            WHERE e.id IN ({placeholders})
+            """,
+            execution_ids,
+        )
+        return {row["id"]: row for row in cursor.fetchall()}
+
+
 def _build_history_records(
     connection,
     execution_codes=None,
@@ -1896,6 +1912,7 @@ def _build_history_records(
         return []
 
     execution_ids = [row["id"] for row in rows]
+    detail_rows = _fetch_history_detail_rows(connection, execution_ids)
     execution_placeholders = ", ".join(["%s"] * len(execution_ids))
     sop_ids = sorted({row["sop_id"] for row in rows})
     sop_placeholders = ", ".join(["%s"] * len(sop_ids))
@@ -2011,6 +2028,7 @@ def _build_history_records(
 
     records = []
     for row in rows:
+        detail_row = detail_rows.get(row["id"], {})
         records.append(
             {
                 "id": row.get("execution_code"),
@@ -2026,16 +2044,16 @@ def _build_history_records(
                 "status": row.get("ai_status") or "failed",
                 "manualReview": review_map.get(row["id"]),
                 "detail": {
-                    "feedback": row.get("feedback") or "",
+                    "feedback": detail_row.get("feedback") or "",
                     "issues": issues_map.get(row["id"], []),
-                    "sequenceAssessment": row.get("sequence_assessment") or "",
+                    "sequenceAssessment": detail_row.get("sequence_assessment") or "",
                     "prerequisiteViolated": bool(row.get("prerequisite_violated")),
                     "stepResults": step_results_map.get(row["id"], []),
                     "sopSteps": sop_steps_map.get(row["sop_id"], []),
                     "uploadedVideo": media_map.get(row["id"]),
-                    "tokenUsage": _extract_token_usage(row.get("raw_model_result")),
-                    "payloadPreview": _json_loads(row.get("payload_preview"), None),
-                    "rawModelResult": _json_loads(row.get("raw_model_result"), None),
+                    "tokenUsage": _extract_token_usage(detail_row.get("raw_model_result")),
+                    "payloadPreview": _json_loads(detail_row.get("payload_preview"), None),
+                    "rawModelResult": _json_loads(detail_row.get("raw_model_result"), None),
                 },
             }
         )
