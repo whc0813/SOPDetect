@@ -98,6 +98,12 @@ class RemoveRiskTimeTests(unittest.TestCase):
                             "issueType": "正常",
                             "timingStatus": "within_window",
                             "riskLevel": "high",
+                        },
+                        {
+                            "stepNo": 2,
+                            "description": "步骤二",
+                            "passed": False,
+                            "issueType": "动作错误",
                         }
                     ]
                 },
@@ -110,6 +116,9 @@ class RemoveRiskTimeTests(unittest.TestCase):
             result = storage.build_stats()
 
         self.assertIn("issueTypeStats", result)
+        issue_stats = {item["issueType"]: item["count"] for item in result["issueTypeStats"]}
+        self.assertNotIn("正常", issue_stats)
+        self.assertEqual(issue_stats["动作错误"], 1)
         self.assertNotIn("highRiskStepStats", result)
         self.assertNotIn("timingStatusStats", result)
         self.assertNotIn("riskLevelStats", result)

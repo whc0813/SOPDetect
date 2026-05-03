@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from backend import evaluation, prompt
+from backend import evaluation, main, prompt, scoring
 from backend.models import KeyMoment, SopData, SopStep
 
 
@@ -42,6 +42,152 @@ def _build_test_sop():
 
 
 class EvaluationPipelineRegressionTests(unittest.TestCase):
+    def test_duration_issue_types_are_known_and_penalized(self):
+        self.assertEqual(scoring.normalize_issue_type("过快完成"), "过快完成")
+        self.assertEqual(scoring.normalize_issue_type("超时完成"), "超时完成")
+        self.assertEqual(scoring.DEFAULT_ISSUE_TYPE_PENALTIES["过快完成"], 25)
+        self.assertEqual(scoring.DEFAULT_ISSUE_TYPE_PENALTIES["超时完成"], 25)
+
+    def test_post_process_marks_step_as_too_fast_when_under_min_duration(self):
+        sop = SopData(
+            name="计时测试",
+            stepCount=1,
+            steps=[
+                SopStep(
+                    stepNo=1,
+                    description="擦拭消毒至少 3 秒",
+                    minDurationSec=3.0,
+                )
+            ],
+        )
+        evaluation_payload = {
+            "passed": True,
+            "score": 100,
+            "feedback": "",
+            "issues": [],
+            "sequenceAssessment": "",
+            "prerequisiteViolated": False,
+            "stepResults": [
+                {
+                    "stepNo": 1,
+                    "description": "擦拭消毒至少 3 秒",
+                    "passed": True,
+                    "score": 100,
+                    "confidence": 0.95,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 1.0,
+                    "detectedEndSec": 2.0,
+                    "evidence": "动作完整但持续时间较短",
+                }
+            ],
+        }
+
+        result = scoring.post_process_evaluation_result(sop, evaluation_payload)
+
+        self.assertEqual(result["stepResults"][0]["issueType"], "过快完成")
+        self.assertEqual(result["stepResults"][0]["score"], 75)
+        self.assertIn("最短耗时", result["stepResults"][0]["evidence"])
+        self.assertIn("步骤 1 过快完成", result["issues"])
+
+    def test_post_process_marks_step_as_timeout_when_over_max_duration(self):
+        sop = SopData(
+            name="计时测试",
+            stepCount=1,
+            steps=[
+                SopStep(
+                    stepNo=1,
+                    description="拧紧螺丝需在 2 秒内完成",
+                    maxDurationSec=2.0,
+                )
+            ],
+        )
+        evaluation_payload = {
+            "passed": True,
+            "score": 100,
+            "feedback": "",
+            "issues": [],
+            "sequenceAssessment": "",
+            "prerequisiteViolated": False,
+            "stepResults": [
+                {
+                    "stepNo": 1,
+                    "description": "拧紧螺丝需在 2 秒内完成",
+                    "passed": True,
+                    "score": 100,
+                    "confidence": 0.95,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 1.0,
+                    "detectedEndSec": 4.5,
+                    "evidence": "动作完整但耗时较长",
+                }
+            ],
+        }
+
+        result = scoring.post_process_evaluation_result(sop, evaluation_payload)
+
+        self.assertEqual(result["stepResults"][0]["issueType"], "超时完成")
+        self.assertEqual(result["stepResults"][0]["score"], 75)
+        self.assertIn("最长耗时", result["stepResults"][0]["evidence"])
+        self.assertIn("步骤 1 超时完成", result["issues"])
+
+    def test_post_process_keeps_normal_step_without_duration_limits(self):
+        sop = SopData(
+            name="计时测试",
+            stepCount=1,
+            steps=[SopStep(stepNo=1, description="普通步骤")],
+        )
+        evaluation_payload = {
+            "passed": True,
+            "score": 100,
+            "feedback": "",
+            "issues": [],
+            "sequenceAssessment": "",
+            "prerequisiteViolated": False,
+            "stepResults": [
+                {
+                    "stepNo": 1,
+                    "description": "普通步骤",
+                    "passed": True,
+                    "score": 100,
+                    "confidence": 0.95,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 1.0,
+                    "detectedEndSec": 10.0,
+                    "evidence": "动作完整",
+                }
+            ],
+        }
+
+        result = scoring.post_process_evaluation_result(sop, evaluation_payload)
+
+        self.assertEqual(result["stepResults"][0]["issueType"], "正常")
+        self.assertEqual(result["stepResults"][0]["score"], 100)
+
+    def test_validate_sop_step_rejects_min_duration_greater_than_max_duration(self):
+        step = main.StepVideoInput(
+            description="计时步骤",
+            minDurationSec=5.0,
+            maxDurationSec=4.0,
+        )
+
+        with self.assertRaises(main.HTTPException) as context:
+            main.validate_sop_step_inputs([step])
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("时间范围不合法", context.exception.detail)
+
     def test_choose_analysis_fps_raises_sampling_density_for_fast_actions(self):
         self.assertEqual(evaluation.choose_analysis_fps(configured_fps=2, video_fps=30), 8.0)
 

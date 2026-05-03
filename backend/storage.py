@@ -239,12 +239,16 @@ def _run_schema_migrations(connection):
         ("sop_steps", "step_type"): "ALTER TABLE sop_steps ADD COLUMN step_type ENUM('required', 'optional', 'conditional') NOT NULL DEFAULT 'required' AFTER description",
         ("sop_steps", "step_weight"): "ALTER TABLE sop_steps ADD COLUMN step_weight DECIMAL(4,1) NOT NULL DEFAULT 1.0 AFTER step_type",
         ("sop_steps", "condition_text"): "ALTER TABLE sop_steps ADD COLUMN condition_text TEXT NULL AFTER step_weight",
+        ("sop_steps", "min_duration_sec"): "ALTER TABLE sop_steps ADD COLUMN min_duration_sec DECIMAL(8,3) NULL AFTER condition_text",
+        ("sop_steps", "max_duration_sec"): "ALTER TABLE sop_steps ADD COLUMN max_duration_sec DECIMAL(8,3) NULL AFTER min_duration_sec",
         ("execution_step_results", "applicable"): "ALTER TABLE execution_step_results ADD COLUMN applicable TINYINT(1) NOT NULL DEFAULT 1 AFTER confidence",
         ("execution_step_results", "included_in_score"): "ALTER TABLE execution_step_results ADD COLUMN included_in_score TINYINT(1) NOT NULL DEFAULT 1 AFTER applicable",
         ("execution_step_results", "detected_start_sec"): "ALTER TABLE execution_step_results ADD COLUMN detected_start_sec DECIMAL(8,3) NULL AFTER prerequisite_violated",
         ("execution_step_results", "detected_end_sec"): "ALTER TABLE execution_step_results ADD COLUMN detected_end_sec DECIMAL(8,3) NULL AFTER detected_start_sec",
         ("execution_step_results", "step_weight_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN step_weight_snapshot DECIMAL(4,1) NOT NULL DEFAULT 1.0 AFTER detected_end_sec",
         ("execution_step_results", "step_type_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN step_type_snapshot VARCHAR(20) NOT NULL DEFAULT 'required' AFTER step_weight_snapshot",
+        ("execution_step_results", "min_duration_sec_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN min_duration_sec_snapshot DECIMAL(8,3) NULL AFTER step_type_snapshot",
+        ("execution_step_results", "max_duration_sec_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN max_duration_sec_snapshot DECIMAL(8,3) NULL AFTER min_duration_sec_snapshot",
         ("sops", "penalty_config"): "ALTER TABLE sops ADD COLUMN penalty_config JSON NULL AFTER demo_video_count",
     }
 
@@ -308,6 +312,13 @@ def _normalize_optional_float(value):
         return None
 
 
+def _normalize_duration_limit(value):
+    number = _normalize_optional_float(value)
+    if number is None or number <= 0:
+        return None
+    return number
+
+
 def _normalize_prerequisite_step_nos(values, current_step_no=None):
     items = []
     for raw in values or []:
@@ -332,6 +343,8 @@ def _normalize_step_record(step):
         "stepWeight": _normalize_step_weight(step.get("stepWeight")),
         "conditionText": (step.get("conditionText") or "").strip(),
         "prerequisiteStepNos": _normalize_prerequisite_step_nos(step.get("prerequisiteStepNos"), step_no or None),
+        "minDurationSec": _normalize_duration_limit(step.get("minDurationSec")),
+        "maxDurationSec": _normalize_duration_limit(step.get("maxDurationSec")),
     }
 
 def _ensure_seed_data(connection):
@@ -964,6 +977,8 @@ def _build_sop_records(connection, sop_codes=None):
                 "stepWeight": step.get("step_weight"),
                 "conditionText": step.get("condition_text"),
                 "prerequisiteStepNos": prerequisite_map.get(step["id"], []),
+                "minDurationSec": step.get("min_duration_sec"),
+                "maxDurationSec": step.get("max_duration_sec"),
             }
         )
 
@@ -977,6 +992,8 @@ def _build_sop_records(connection, sop_codes=None):
                 "stepWeight": normalized_step["stepWeight"],
                 "conditionText": normalized_step["conditionText"],
                 "prerequisiteStepNos": normalized_step["prerequisiteStepNos"],
+                "minDurationSec": normalized_step["minDurationSec"],
+                "maxDurationSec": normalized_step["maxDurationSec"],
                 "referenceMode": step.get("reference_mode") or ("video" if reference_frames else "text"),
                 "referenceFrames": reference_frames,
                 "analysisFrames": analysis_frames,
@@ -1153,10 +1170,11 @@ def _upsert_sop_content(connection, sop_data, created_by_id=None):
             cursor.execute(
                 """
                 INSERT INTO sop_steps (
-                  sop_id, step_no, description, step_type, step_weight, condition_text, reference_mode,
+                  sop_id, step_no, description, step_type, step_weight, condition_text,
+                  min_duration_sec, max_duration_sec, reference_mode,
                   reference_summary, roi_hint, ai_used, reference_duration_sec, reference_fps,
                   reference_frame_count, raw_ai_result
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     sop_id,
@@ -1165,6 +1183,8 @@ def _upsert_sop_content(connection, sop_data, created_by_id=None):
                     step.get("stepType") or DEFAULT_STEP_TYPE,
                     step.get("stepWeight") or DEFAULT_STEP_WEIGHT,
                     step.get("conditionText") or "",
+                    step.get("minDurationSec"),
+                    step.get("maxDurationSec"),
                     step.get("referenceMode") or ("video" if step.get("referenceFrames") else "text"),
                     step.get("referenceSummary") or "",
                     step.get("roiHint") or "",
@@ -1997,6 +2017,8 @@ def _build_history_records(
                 "detectedEndSec": float(row.get("detected_end_sec")) if row.get("detected_end_sec") is not None else None,
                 "stepWeight": _normalize_step_weight(row.get("step_weight_snapshot")),
                 "stepType": _normalize_step_type(row.get("step_type_snapshot")),
+                "minDurationSec": _normalize_duration_limit(row.get("min_duration_sec_snapshot")),
+                "maxDurationSec": _normalize_duration_limit(row.get("max_duration_sec_snapshot")),
                 "evidence": row.get("evidence") or "",
             }
         )
@@ -2140,8 +2162,9 @@ def add_history(record, current_user=None):
                     INSERT INTO execution_step_results (
                       execution_id, sop_step_id, step_no, description, passed, score, confidence, applicable,
                       included_in_score, issue_type, completion_level, order_issue, prerequisite_violated,
-                      detected_start_sec, detected_end_sec, step_weight_snapshot, step_type_snapshot, evidence
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                      detected_start_sec, detected_end_sec, step_weight_snapshot, step_type_snapshot,
+                      min_duration_sec_snapshot, max_duration_sec_snapshot, evidence
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         execution_id,
@@ -2161,6 +2184,8 @@ def add_history(record, current_user=None):
                         item.get("detectedEndSec"),
                         _normalize_step_weight(item.get("stepWeight")),
                         _normalize_step_type(item.get("stepType")),
+                        _normalize_duration_limit(item.get("minDurationSec")),
+                        _normalize_duration_limit(item.get("maxDurationSec")),
                         item.get("evidence") or "",
                     ),
                 )
@@ -2244,6 +2269,8 @@ def serialize_sop_summary(sop):
                 "stepWeight": _normalize_step_weight(step.get("stepWeight")),
                 "conditionText": (step.get("conditionText") or "").strip(),
                 "prerequisiteStepNos": _normalize_prerequisite_step_nos(step.get("prerequisiteStepNos"), step.get("stepNo")),
+                "minDurationSec": _normalize_duration_limit(step.get("minDurationSec")),
+                "maxDurationSec": _normalize_duration_limit(step.get("maxDurationSec")),
                 "referenceMode": step.get("referenceMode") or ("video" if step.get("referenceFrames") else "text"),
                 "referenceSummary": step.get("referenceSummary") or "",
                 "referenceFeatures": step.get("referenceFeatures"),
@@ -2311,7 +2338,9 @@ def build_stats():
     issue_bucket = {}
     for record in history:
         for step in (record.get("detail") or {}).get("stepResults") or []:
-            issue_type = step.get("issueType") or "未知"
+            issue_type = (step.get("issueType") or "").strip()
+            if not issue_type or issue_type == "正常":
+                continue
             issue_bucket[issue_type] = issue_bucket.get(issue_type, 0) + 1
 
     sop_stats_list = []

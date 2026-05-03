@@ -7,6 +7,7 @@ STEP_TYPE_VALUES = {"required", "optional", "conditional"}
 ISSUE_TYPE_VALUES = {
     "正常", "缺失", "顺序颠倒", "过早执行", "延后执行",
     "重复操作", "动作错误", "部分完成", "证据不足", "前置条件缺失",
+    "过快完成", "超时完成",
 }
 COMPLETION_LEVEL_VALUES = {"完整", "部分完成", "未完成", "无法判断"}
 DEFAULT_STEP_TYPE = "required"
@@ -43,6 +44,8 @@ class SopStep(BaseModel):
     stepWeight: float = DEFAULT_STEP_WEIGHT
     conditionText: str = ""
     prerequisiteStepNos: List[int] = Field(default_factory=list)
+    minDurationSec: Optional[float] = None
+    maxDurationSec: Optional[float] = None
     referenceFrames: List[str] = Field(default_factory=list)
     referenceSummary: str = ""
     referenceFeatures: Optional[StepFeatures] = None
@@ -72,6 +75,8 @@ class StepResultPayload(BaseModel):
     prerequisiteViolated: bool = False
     detectedStartSec: Optional[float] = None
     detectedEndSec: Optional[float] = None
+    minDurationSec: Optional[float] = None
+    maxDurationSec: Optional[float] = None
     stepType: str = DEFAULT_STEP_TYPE
     stepWeight: float = DEFAULT_STEP_WEIGHT
     evidence: str = ""

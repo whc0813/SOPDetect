@@ -33,6 +33,8 @@ DEFAULT_ISSUE_TYPE_PENALTIES = {
     "部分完成": 20,
     "过早执行": 25,
     "延后执行": 25,
+    "过快完成": 25,
+    "超时完成": 25,
     "动作错误": 35,
     "顺序颠倒": 40,
     "前置条件缺失": 45,
@@ -82,6 +84,13 @@ def normalize_optional_float(value):
         return None
 
 
+def normalize_duration_limit(value):
+    number = normalize_optional_float(value)
+    if number is None or number <= 0:
+        return None
+    return number
+
+
 def normalize_step_weight(value):
     try:
         weight = round(float(value), 1)
@@ -117,6 +126,8 @@ def normalize_step_payload(step: dict) -> dict:
         "prerequisiteStepNos": normalize_prerequisite_step_nos(
             step.get("prerequisiteStepNos"), step_no or None
         ),
+        "minDurationSec": normalize_duration_limit(step.get("minDurationSec")),
+        "maxDurationSec": normalize_duration_limit(step.get("maxDurationSec")),
     }
 
 
@@ -180,6 +191,33 @@ def append_rule_note(evidence: str, note: str) -> str:
     return f"{text}；{note}"
 
 
+def apply_duration_constraint(step: SopStep, result: dict) -> dict:
+    start_sec = normalize_optional_float(result.get("detectedStartSec"))
+    end_sec = normalize_optional_float(result.get("detectedEndSec"))
+    if start_sec is None or end_sec is None or end_sec < start_sec:
+        return result
+
+    min_duration = normalize_duration_limit(getattr(step, "minDurationSec", None))
+    max_duration = normalize_duration_limit(getattr(step, "maxDurationSec", None))
+    if min_duration is None and max_duration is None:
+        return result
+
+    actual_duration = round(end_sec - start_sec, 3)
+    if min_duration is not None and actual_duration < min_duration:
+        result["issueType"] = "过快完成"
+        result["evidence"] = append_rule_note(
+            result.get("evidence") or "",
+            f"后端规则判断该步骤实际耗时 {actual_duration:.1f}s，短于最短耗时 {min_duration:.1f}s",
+        )
+    elif max_duration is not None and actual_duration > max_duration:
+        result["issueType"] = "超时完成"
+        result["evidence"] = append_rule_note(
+            result.get("evidence") or "",
+            f"后端规则判断该步骤实际耗时 {actual_duration:.1f}s，超过最长耗时 {max_duration:.1f}s",
+        )
+    return result
+
+
 def post_process_evaluation_result(
     sop: SopData, evaluation: dict, penalty_config: Optional[dict] = None
 ) -> dict:
@@ -226,6 +264,8 @@ def post_process_evaluation_result(
             "prerequisiteViolated": bool(raw_result.get("prerequisiteViolated")),
             "detectedStartSec": normalize_optional_float(raw_result.get("detectedStartSec")),
             "detectedEndSec": normalize_optional_float(raw_result.get("detectedEndSec")),
+            "minDurationSec": normalize_duration_limit(getattr(step, "minDurationSec", None)),
+            "maxDurationSec": normalize_duration_limit(getattr(step, "maxDurationSec", None)),
             "stepType": step.stepType,
             "stepWeight": normalize_step_weight(step.stepWeight),
             "evidence": (raw_result.get("evidence") or "").strip(),
@@ -242,6 +282,8 @@ def post_process_evaluation_result(
             step_result["evidence"] = append_rule_note(
                 step_result["evidence"], "后端规则判断该步骤违反前置依赖"
             )
+
+        step_result = apply_duration_constraint(step, step_result)
 
         base_penalty = effective_penalties.get(
             step_result["issueType"], effective_penalties.get(DEFAULT_ISSUE_TYPE, 15)

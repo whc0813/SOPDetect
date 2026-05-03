@@ -264,6 +264,14 @@
                 <el-input-number v-model="step.stepWeight" :min="0.5" :max="5" :step="0.5" />
               </el-form-item>
             </div>
+            <div class="form-row">
+              <el-form-item label="最短耗时(秒)" class="flex-1">
+                <el-input-number v-model="step.minDurationSec" :min="0" :max="3600" :step="1" placeholder="不限制" />
+              </el-form-item>
+              <el-form-item label="最长耗时(秒)" class="flex-1">
+                <el-input-number v-model="step.maxDurationSec" :min="0" :max="3600" :step="1" placeholder="不限制" />
+              </el-form-item>
+            </div>
             <el-form-item v-if="step.stepType === 'conditional'" label="条件触发说明">
               <el-input v-model="step.conditionText" type="textarea" :rows="2" resize="none" placeholder="说明什么情况下该步骤需要执行" />
             </el-form-item>
@@ -419,6 +427,7 @@
             </div>
             <div class="detail-text">步骤类型：{{ formatStepType(step.stepType) }}</div>
             <div class="detail-text">步骤权重：{{ Number(step.stepWeight || 1).toFixed(1) }}</div>
+            <div class="detail-text">耗时限制：{{ formatDurationLimit(step) }}</div>
             <div class="detail-text">条件说明：{{ step.conditionText || '无' }}</div>
             <div class="detail-text">前置依赖：{{ (step.prerequisiteStepNos || []).length ? step.prerequisiteStepNos.join(', ') : '无' }}</div>
             <div class="frame-grid">
@@ -565,6 +574,8 @@ const PENALTY_ISSUE_TYPES = [
   { key: '部分完成', label: '部分完成', description: '步骤仅完成一部分' },
   { key: '过早执行', label: '过早执行', description: '在规定时机之前执行' },
   { key: '延后执行', label: '延后执行', description: '在规定时机之后执行' },
+  { key: '过快完成', label: '过快完成', description: '未达到规定持续时间' },
+  { key: '超时完成', label: '超时完成', description: '超过步骤规定完成时限' },
   { key: '动作错误', label: '动作错误', description: '执行了错误的操作' },
   { key: '顺序颠倒', label: '顺序颠倒', description: '步骤执行顺序错误' },
   { key: '前置条件缺失', label: '前置条件缺失', description: '前置步骤未完成即执行' },
@@ -572,7 +583,7 @@ const PENALTY_ISSUE_TYPES = [
 ]
 const DEFAULT_PENALTY_VALUES = {
   '正常': 0, '证据不足': 15, '重复操作': 10, '部分完成': 20,
-  '过早执行': 25, '延后执行': 25, '动作错误': 35,
+  '过早执行': 25, '延后执行': 25, '过快完成': 25, '超时完成': 25, '动作错误': 35,
   '顺序颠倒': 40, '前置条件缺失': 45, '缺失': 60
 }
 
@@ -664,7 +675,9 @@ function createEmptyStep() {
     stepType: 'required',
     stepWeight: 1,
     conditionText: '',
-    prerequisiteStepNos: []
+    prerequisiteStepNos: [],
+    minDurationSec: null,
+    maxDurationSec: null
   }
 }
 
@@ -842,7 +855,17 @@ function validateStepConfig(step, index) {
   if (invalidPrerequisite) {
     return `步骤 ${stepNo} 的前置依赖只能选择前面的步骤`
   }
+  const minDuration = normalizeOptionalDuration(step.minDurationSec)
+  const maxDuration = normalizeOptionalDuration(step.maxDurationSec)
+  if (minDuration != null && maxDuration != null && minDuration > maxDuration) {
+    return `步骤 ${stepNo} 的最短耗时不能大于最长耗时`
+  }
   return ''
+}
+
+function normalizeOptionalDuration(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
 }
 
 async function saveSop() {
@@ -865,6 +888,8 @@ async function saveSop() {
       stepWeight: Number(item.stepWeight),
       conditionText: String(item.conditionText || '').trim(),
       prerequisiteStepNos: (item.prerequisiteStepNos || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
+      minDurationSec: normalizeOptionalDuration(item.minDurationSec),
+      maxDurationSec: normalizeOptionalDuration(item.maxDurationSec),
       videoDataUrl: item.video ? await fileToDataUrl(item.video) : '',
       videoMeta: item.video ? {
         name: item.video.name || '',
@@ -1028,6 +1053,15 @@ function formatTokenUsage(usage) {
 
 function formatStepType(stepType) {
   return STEP_TYPE_OPTIONS.find((item) => item.value === stepType)?.label || stepType || '-'
+}
+
+function formatDurationLimit(step = {}) {
+  const parts = []
+  const minDuration = normalizeOptionalDuration(step.minDurationSec)
+  const maxDuration = normalizeOptionalDuration(step.maxDurationSec)
+  if (minDuration != null) parts.push(`至少 ${minDuration}s`)
+  if (maxDuration != null) parts.push(`最多 ${maxDuration}s`)
+  return parts.length ? parts.join(' / ') : '无'
 }
 
 async function applyManualSegmentation(step) {

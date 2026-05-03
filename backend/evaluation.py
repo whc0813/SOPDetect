@@ -875,6 +875,8 @@ def build_sop_model_from_record(record: dict) -> SopData:
                 "stepWeight": step.get("stepWeight"),
                 "conditionText": step.get("conditionText"),
                 "prerequisiteStepNos": step.get("prerequisiteStepNos"),
+                "minDurationSec": step.get("minDurationSec"),
+                "maxDurationSec": step.get("maxDurationSec"),
             }
         )
         steps.append(
@@ -885,6 +887,8 @@ def build_sop_model_from_record(record: dict) -> SopData:
                 "stepWeight": normalized_step["stepWeight"],
                 "conditionText": normalized_step["conditionText"],
                 "prerequisiteStepNos": normalized_step["prerequisiteStepNos"],
+                "minDurationSec": normalized_step["minDurationSec"],
+                "maxDurationSec": normalized_step["maxDurationSec"],
                 "referenceFrames": step.get("referenceFrames") or [],
                 "referenceSummary": step.get("referenceSummary") or "",
                 "referenceFeatures": step.get("referenceFeatures") or None,

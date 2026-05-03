@@ -8,12 +8,14 @@ try:
         COMPLETION_LEVEL_VALUES,
         ISSUE_TYPE_VALUES,
         SopData,
+        SopStep,
     )
 except ImportError:
     from models import (
         COMPLETION_LEVEL_VALUES,
         ISSUE_TYPE_VALUES,
         SopData,
+        SopStep,
     )
 
 
@@ -92,7 +94,8 @@ def build_evaluation_system_prompt():
         "- 如果动作看起来存在，但顺序位置错误，不能算完全通过。\n"
         "- passed=true 只能在整个 SOP 基本按正确顺序完成、没有明显漏做/错做/严重错序时给出。\n"
         "- 顶层字段 sequenceAssessment 只能从以下值中选择：['顺序正确', '轻微顺序偏差', '明显顺序错误', '无法判断顺序']。\n"
-        "- 每个步骤的 issueType 只能从以下值中选择：['正常', '缺失', '顺序颠倒', '过早执行', '延后执行', '重复操作', '动作错误', '部分完成', '证据不足', '前置条件缺失']。\n"
+        "- 每个步骤的 issueType 只能从以下值中选择：['正常', '缺失', '顺序颠倒', '过早执行', '延后执行', '重复操作', '动作错误', '部分完成', '证据不足', '前置条件缺失', '过快完成', '超时完成']。\n"
+        "- 只有步骤明确给出时间限制时才判断耗时问题：低于最短耗时使用“过快完成”，超过最长耗时使用“超时完成”；无时间限制时不得因耗时长短扣分。\n"
         "- 每个步骤的 completionLevel 只能从以下值中选择：['完整', '部分完成', '未完成', '无法判断']。\n"
         "- orderIssue 表示该步骤是否存在顺序问题；prerequisiteViolated 表示该步骤是否存在前置条件问题。\n"
         "- evidence 必须点明你为什么这样判断，必要时明确写出\"顺序颠倒\"\"过早执行\"\"延后执行\"\"证据不足\"等。\n"
@@ -121,6 +124,17 @@ def build_evaluation_overview_text(sop: SopData):
     )
 
 
+def format_duration_constraint(step: SopStep) -> str:
+    min_duration = getattr(step, "minDurationSec", None)
+    max_duration = getattr(step, "maxDurationSec", None)
+    parts = []
+    if min_duration is not None and float(min_duration) > 0:
+        parts.append(f"最短耗时 {float(min_duration):.1f}s")
+    if max_duration is not None and float(max_duration) > 0:
+        parts.append(f"最长耗时 {float(max_duration):.1f}s")
+    return "，".join(parts) if parts else "无时间限制"
+
+
 def build_content_blocks(sop: SopData, user_video_data_url: str, user_video_fps: float):
     blocks = [{"type": "text", "text": build_evaluation_overview_text(sop)}]
     blocks.append(
@@ -146,6 +160,7 @@ def build_content_blocks(sop: SopData, user_video_data_url: str, user_video_fps:
             if step.substeps
             else "无"
         )
+        duration_constraint_text = format_duration_constraint(step)
         blocks.append(
             {
                 "type": "text",
@@ -156,6 +171,7 @@ def build_content_blocks(sop: SopData, user_video_data_url: str, user_video_fps:
                     f"步骤权重：{step.stepWeight}\n"
                     f"条件说明：{step.conditionText or '无'}\n"
                     f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
+                    f"步骤耗时限制：{duration_constraint_text}\n"
                     f"参考摘要：{step.referenceSummary or '无'}\n"
                     f"关注区域提示：{step.roiHint or '无'}\n"
                     f"参考子步骤时间点：{substeps_text}\n"
@@ -327,7 +343,9 @@ def build_per_step_evaluation_system_prompt():
         "7. 如果目标动作确实出现过，但出现在错误的步骤顺序上，必须标记为“过早执行”“延后执行”或“顺序颠倒”，绝不能判成“缺失”。\n"
         "- 管理员示范视频与用户视频总时长可能不同，不能按绝对秒数机械对齐。\n"
         "- evidence 中引用绝对时间时，只能使用 x.xs 这种秒数格式，不要使用 mm:ss，也不要写出超过用户视频总时长的时间点。\n"
-        "- issueType 只能从以下值中选择：['正常', '缺失', '顺序颠倒', '过早执行', '延后执行', '重复操作', '动作错误', '部分完成', '证据不足', '前置条件缺失']。\n"
+        "- issueType 只能从以下值中选择：['正常', '缺失', '顺序颠倒', '过早执行', '延后执行', '重复操作', '动作错误', '部分完成', '证据不足', '前置条件缺失', '过快完成', '超时完成']。\n"
+        "- 如果步骤配置了最短耗时，实际动作持续时间明显短于该限制时使用“过快完成”；如果配置了最长耗时，实际动作持续时间超过该限制时使用“超时完成”。\n"
+        "- 如果步骤耗时限制为“无时间限制”，不得仅因为执行快慢判定为时间类问题。\n"
         "- completionLevel 只能从以下值中选择：['完整', '部分完成', '未完成', '无法判断']。\n"
         "- evidence 必须说明判断依据，指出具体观察到的内容。\n"
         "只返回合法 JSON，不要输出任何额外说明。"
@@ -428,6 +446,7 @@ def build_per_step_evaluation_blocks(
         if step.substeps
         else "无"
     )
+    duration_constraint_text = format_duration_constraint(step)
     detected = segment_info.get("detected", False) if segment_info else False
     start_sec = segment_info.get("startSec") if segment_info else None
     end_sec = segment_info.get("endSec") if segment_info else None
@@ -450,6 +469,7 @@ def build_per_step_evaluation_blocks(
                 f"步骤权重：{step.stepWeight}\n"
                 f"条件说明：{step.conditionText or '无'}\n"
                 f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
+                f"步骤耗时限制：{duration_constraint_text}\n"
                 f"参考摘要：{step.referenceSummary or '无'}\n"
                 f"ROI 提示：{step.roiHint or '无'}\n"
                 f"参考关键时刻：{substeps_text}\n"
@@ -561,6 +581,7 @@ def build_global_validation_system_prompt():
         "- sequenceAssessment 只能从以下值中选择：['顺序正确', '轻微顺序偏差', '明显顺序错误', '无法判断顺序']。\n"
         "- feedback 和 issues 使用中文。\n"
         "- stepOverrides 只填写需要修正的步骤；如果某一步需要改判，请明确给出 issueType、orderIssue、prerequisiteViolated 和 evidenceNote。\n"
+        "- 如果步骤结果显示实际耗时违反该步骤配置的最短/最长耗时限制，可以改判为“过快完成”或“超时完成”；无时间限制的步骤不要做时间类改判。\n"
         "只返回合法 JSON，不要输出任何额外说明。"
     )
 
@@ -579,12 +600,13 @@ def build_global_validation_content(sop: SopData, step_results: list, segments: 
 
         time_range = f"{start:.1f}s~{end:.1f}s" if (start is not None and end is not None) else "未定位"
         prerequisite_text = ", ".join([str(item) for item in step.prerequisiteStepNos]) or "无"
+        duration_constraint_text = format_duration_constraint(step)
         step_results_lines.append(
             f"步骤 {step.stepNo}: {step.description}\n"
             f"  判断={'通过' if result.get('passed') else '未通过'} | "
             f"得分={result.get('score', 0)} | 问题类型={result.get('issueType', '未知')} | "
             f"检测区间={time_range} | 顺序问题={'是' if result.get('orderIssue') else '否'} | "
-            f"前置依赖={prerequisite_text}\n"
+            f"前置依赖={prerequisite_text} | 步骤耗时限制={duration_constraint_text}\n"
             f"  证据：{result.get('evidence', '无')}"
         )
 
@@ -669,6 +691,7 @@ def build_batch_step_evaluation_system_prompt():
         "4. evidence 如果引用绝对时间，只能使用 x.xs，不要使用 mm:ss，也不要写出超过用户视频总时长的时间点。\n"
         "5. feedback、issues、evidence 全部使用中文。\n"
         "6. issueType 只能从给定枚举中选择，completionLevel 只能从给定枚举中选择。\n"
+        "7. 步骤配置最短耗时时，实际动作持续时间短于限制应标记“过快完成”；配置最长耗时时，实际动作持续时间超过限制应标记“超时完成”。无时间限制时不要使用时间类问题。\n"
         "只返回合法 JSON，不要输出任何额外说明。"
     )
 
@@ -698,6 +721,7 @@ def build_batch_step_evaluation_blocks(
             if step.substeps
             else "无"
         )
+        duration_constraint_text = format_duration_constraint(step)
         start_sec = segment_info.get("startSec")
         end_sec = segment_info.get("endSec")
         if start_sec is not None and end_sec is not None:
@@ -714,6 +738,7 @@ def build_batch_step_evaluation_blocks(
                     f"步骤权重：{step.stepWeight}\n"
                     f"条件说明：{step.conditionText or '无'}\n"
                     f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
+                    f"步骤耗时限制：{duration_constraint_text}\n"
                     f"参考摘要：{step.referenceSummary or '无'}\n"
                     f"ROI 提示：{step.roiHint or '无'}\n"
                     f"参考关键时刻：{substeps_text}\n"
