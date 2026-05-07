@@ -4,12 +4,17 @@ from pydantic import BaseModel, Field
 
 # ── Shared constants ───────────────────────────────────────────
 STEP_TYPE_VALUES = {"required", "optional", "conditional"}
-ISSUE_TYPE_VALUES = {
-    "正常", "缺失", "顺序颠倒", "过早执行", "延后执行",
-    "重复操作", "动作错误", "部分完成", "证据不足", "前置条件缺失",
+# 语义类别分组排列：执行质量 → 执行顺序 → 执行次数 → 前置依赖 → 耗时约束 → 不确定
+ISSUE_TYPE_VALUES = [
+    "正常",
+    "缺失", "部分完成", "动作错误",
+    "顺序颠倒", "过早执行", "延后执行",
+    "重复操作",
+    "前置条件缺失",
     "过快完成", "超时完成",
-}
-COMPLETION_LEVEL_VALUES = {"完整", "部分完成", "未完成", "无法判断"}
+    "证据不足",
+]
+COMPLETION_LEVEL_VALUES = ["完整", "部分完成", "未完成", "无法判断"]
 DEFAULT_STEP_TYPE = "required"
 DEFAULT_ISSUE_TYPE = "证据不足"
 DEFAULT_COMPLETION_LEVEL = "无法判断"

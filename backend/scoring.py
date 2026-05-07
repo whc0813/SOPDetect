@@ -206,7 +206,10 @@ def apply_repeated_execution_constraint(step: SopStep, result: dict) -> dict:
     result["detectedOccurrences"] = occurrences
     if len(occurrences) <= 1:
         return result
-    if not bool(result.get("repeatedExecution")) and normalize_issue_type(result.get("issueType")) != "重复操作":
+    if normalize_issue_type(result.get("issueType")) != "重复操作":
+        # repeatedExecution 是事实观察（出现多次），issueType 才是判断（是否"不必要"地重复）
+        # 模型若判定 issueType 不是"重复操作"（例如双显卡场景判为"正常"），即使观察到
+        # repeatedExecution=true 也不应覆盖模型判断
         return result
 
     result["repeatedExecution"] = True

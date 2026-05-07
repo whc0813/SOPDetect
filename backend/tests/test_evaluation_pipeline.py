@@ -655,9 +655,9 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
 
         self.assertIn("候选时间窗", system_prompt)
         self.assertIn("局部片段", system_prompt)
-        self.assertIn("不要因为", system_prompt)
-        self.assertIn("不要使用 mm:ss", system_prompt)
-        self.assertIn("绝不能判成“缺失”", system_prompt)
+        self.assertIn("而非直接判为缺失", system_prompt)
+        self.assertIn("x.xs 秒数格式", system_prompt)
+        self.assertIn("顺序类问题", system_prompt)
 
     def test_per_step_evaluation_blocks_include_video_duration_guardrail(self):
         step = _build_test_sop().steps[2]
@@ -703,7 +703,8 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         )
 
         self.assertIn("7.0s", all_text)
-        self.assertIn("1.0s - 2.0s", all_text)
+        self.assertIn("startSec", all_text)
+        self.assertIn("endSec", all_text)
         self.assertEqual(sum(1 for item in blocks if item.get("type") == "video_url"), 1)
         self.assertNotIn("鐢ㄦ埛瑙嗛鍏抽敭甯", all_text)
 
@@ -750,10 +751,10 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 {
                     "stepNo": 2,
                     "description": "做出“2”手势",
-                    "passed": True,
+                    "passed": False,
                     "confidence": 0.95,
                     "applicable": True,
-                    "issueType": "正常",
+                    "issueType": "重复操作",
                     "completionLevel": "完整",
                     "orderIssue": False,
                     "prerequisiteViolated": False,
@@ -764,7 +765,7 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                         {"startSec": 2.0, "endSec": 3.0, "note": "第一次形成手势2"},
                         {"startSec": 4.5, "endSec": 5.2, "note": "重复形成手势2"},
                     ],
-                    "evidence": "步骤2动作完成。",
+                    "evidence": "步骤2不必要地重复执行。",
                 },
                 {
                     "stepNo": 3,
