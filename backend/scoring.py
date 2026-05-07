@@ -25,39 +25,6 @@ except ImportError:
         SopStep,
     )
 
-# ── Default penalty table (points deducted per issue type) ─────
-DEFAULT_ISSUE_TYPE_PENALTIES = {
-    "正常": 0,
-    "证据不足": 15,
-    "重复操作": 10,
-    "部分完成": 20,
-    "过早执行": 25,
-    "延后执行": 25,
-    "过快完成": 25,
-    "超时完成": 25,
-    "动作错误": 35,
-    "顺序颠倒": 40,
-    "前置条件缺失": 45,
-    "缺失": 60,
-}
-
-PASS_THRESHOLD = 80       # Minimum overall score to pass
-STEP_PASS_THRESHOLD = 60  # Minimum per-step score to pass
-
-
-def get_penalty_config(sop_record: dict) -> dict:
-    """Return the merged penalty config for a SOP (custom overrides default)."""
-    custom = sop_record.get("penaltyConfig") or {}
-    merged = dict(DEFAULT_ISSUE_TYPE_PENALTIES)
-    for key, value in custom.items():
-        if key in merged:
-            try:
-                merged[key] = max(0, min(100, int(value)))
-            except (TypeError, ValueError):
-                pass
-    return merged
-
-
 # ── Normalisation helpers ──────────────────────────────────────
 
 def normalize_step_type(value):
@@ -131,19 +98,13 @@ def normalize_step_payload(step: dict) -> dict:
     }
 
 
-def clamp_score(value) -> float:
-    try:
-        number = float(value)
-    except Exception:
-        number = 0.0
-    return max(0.0, min(100.0, round(number, 2)))
-
-
 # ── Scoring logic helpers ──────────────────────────────────────
 
 def step_result_indicates_execution(result: dict) -> bool:
     issue_type = normalize_issue_type(result.get("issueType"))
     completion_level = normalize_completion_level(result.get("completionLevel"))
+    if issue_type == "缺失" or completion_level == "未完成":
+        return False
     return (
         normalize_optional_float(result.get("detectedStartSec")) is not None
         or normalize_optional_float(result.get("detectedEndSec")) is not None
@@ -158,6 +119,18 @@ def determine_included_in_score(step: SopStep, result: dict) -> bool:
     if step.stepType == "optional":
         return step_result_indicates_execution(result)
     return bool(result.get("applicable"))
+
+
+def step_result_is_abnormal(result: dict) -> bool:
+    issue_type = normalize_issue_type(result.get("issueType"))
+    completion_level = normalize_completion_level(result.get("completionLevel"))
+    return (
+        not bool(result.get("passed"))
+        or issue_type != "正常"
+        or completion_level in {"部分完成", "未完成", "无法判断"}
+        or bool(result.get("orderIssue"))
+        or bool(result.get("prerequisiteViolated"))
+    )
 
 
 def resolve_prerequisite_violation(step: SopStep, result: dict, processed_results: dict) -> bool:
@@ -218,24 +191,37 @@ def apply_duration_constraint(step: SopStep, result: dict) -> dict:
     return result
 
 
-def post_process_evaluation_result(
-    sop: SopData, evaluation: dict, penalty_config: Optional[dict] = None
+def apply_default_sequence_constraint(
+    previous_result: Optional[dict], current_result: dict
 ) -> dict:
+    if (
+        not previous_result
+        or not current_result.get("includedInScore")
+        or not step_result_indicates_execution(current_result)
+    ):
+        return current_result
+    previous_end = normalize_optional_float(previous_result.get("detectedEndSec"))
+    current_start = normalize_optional_float(current_result.get("detectedStartSec"))
+    if previous_end is None or current_start is None or current_start >= previous_end:
+        return current_result
+
+    current_result["orderIssue"] = True
+    if normalize_issue_type(current_result.get("issueType")) == "正常":
+        current_result["issueType"] = "过早执行"
+    current_result["evidence"] = append_rule_note(
+        current_result.get("evidence") or "",
+        (
+            f"后端规则判断该步骤开始时间 {current_start:.1f}s "
+            f"早于上一计分步骤结束时间 {previous_end:.1f}s"
+        ),
+    )
+    return current_result
+
+
+def post_process_evaluation_result(sop: SopData, evaluation: dict) -> dict:
     """
     Apply rule-based post-processing to the raw model evaluation result.
-
-    penalty_config: optional override dict; if None uses DEFAULT_ISSUE_TYPE_PENALTIES.
-                    Pass sop.penaltyConfig to apply per-SOP weights.
     """
-    effective_penalties = dict(DEFAULT_ISSUE_TYPE_PENALTIES)
-    if penalty_config:
-        for k, v in penalty_config.items():
-            if k in effective_penalties:
-                try:
-                    effective_penalties[k] = max(0, min(100, int(v)))
-                except (TypeError, ValueError):
-                    pass
-
     raw_step_results = {
         int(item.get("stepNo") or 0): dict(item)
         for item in (evaluation.get("stepResults") or [])
@@ -243,9 +229,9 @@ def post_process_evaluation_result(
     }
     processed_steps = []
     processed_map = {}
-    weighted_score_sum = 0.0
-    weighted_score_total = 0.0
-    hard_failed = False
+    included_step_count = 0
+    abnormal_count = 0
+    previous_included_step_result = None
 
     for step in sop.steps:
         raw_result = raw_step_results.get(step.stepNo, {})
@@ -254,7 +240,6 @@ def post_process_evaluation_result(
             "stepNo": step.stepNo,
             "description": raw_result.get("description") or step.description,
             "passed": bool(raw_result.get("passed")),
-            "score": clamp_score(raw_result.get("score")),
             "confidence": max(0.0, min(1.0, float(raw_result.get("confidence") or 0))),
             "applicable": applicable,
             "includedInScore": True,
@@ -272,7 +257,12 @@ def post_process_evaluation_result(
         }
 
         step_result["includedInScore"] = determine_included_in_score(step, step_result)
-        step_result["prerequisiteViolated"] = resolve_prerequisite_violation(
+        if not step_result_indicates_execution(step_result):
+            step_result["prerequisiteViolated"] = False
+            step_result["orderIssue"] = False
+        step_result["prerequisiteViolated"] = bool(
+            step_result["prerequisiteViolated"]
+        ) or resolve_prerequisite_violation(
             step, step_result, processed_map
         )
 
@@ -284,18 +274,15 @@ def post_process_evaluation_result(
             )
 
         step_result = apply_duration_constraint(step, step_result)
-
-        base_penalty = effective_penalties.get(
-            step_result["issueType"], effective_penalties.get(DEFAULT_ISSUE_TYPE, 15)
+        step_result = apply_default_sequence_constraint(
+            previous_included_step_result, step_result
         )
-        prerequisite_penalty = 20 if step_result["prerequisiteViolated"] else 0
 
         if step_result["includedInScore"]:
-            adjusted_score = clamp_score(step_result["score"] - base_penalty - prerequisite_penalty)
-            step_result["score"] = adjusted_score
-            step_result["passed"] = adjusted_score >= STEP_PASS_THRESHOLD
-            weighted_score_sum += adjusted_score * step_result["stepWeight"]
-            weighted_score_total += step_result["stepWeight"]
+            included_step_count += 1
+            step_result["passed"] = not step_result_is_abnormal(step_result)
+            if not step_result["passed"]:
+                abnormal_count += 1
         else:
             step_result["passed"] = True
             if step.stepType == "optional" and not step_result_indicates_execution(step_result):
@@ -307,25 +294,17 @@ def post_process_evaluation_result(
                     step_result["evidence"], "该步骤被判定为本次场景不适用，不计入总分"
                 )
 
-        if (
-            step.stepType in {"required", "conditional"}
-            and step_result["applicable"]
-            and step_result["score"] < STEP_PASS_THRESHOLD
-        ):
-            hard_failed = True
-
         processed_steps.append(step_result)
         processed_map[step.stepNo] = step_result
+        if step_result["includedInScore"]:
+            previous_included_step_result = step_result
 
-    overall_score = (
-        clamp_score(weighted_score_sum / weighted_score_total) if weighted_score_total else 0.0
-    )
     order_issue_count = sum(
         1
         for item in processed_steps
         if item.get("orderIssue") or item.get("prerequisiteViolated")
     )
-    if weighted_score_total == 0:
+    if included_step_count == 0:
         sequence_assessment = "无法判断顺序"
     elif order_issue_count == 0:
         sequence_assessment = "顺序正确"
@@ -342,13 +321,13 @@ def post_process_evaluation_result(
                 issues.append(issue_label)
 
     feedback = (evaluation.get("feedback") or "").strip()
-    rule_summary = f"最终得分 {overall_score:.1f}，已按步骤权重和前置依赖进行规则修正。"
+    final_status = "通过" if abnormal_count == 0 else "异常"
+    rule_summary = f"最终结论：{final_status}，已按步骤状态、前置依赖和耗时规则进行修正。"
     feedback = f"{feedback}\n\n{rule_summary}" if feedback else rule_summary
 
     return {
         **evaluation,
-        "passed": (not hard_failed) and overall_score >= PASS_THRESHOLD,
-        "score": overall_score,
+        "passed": abnormal_count == 0,
         "feedback": feedback,
         "issues": issues,
         "sequenceAssessment": sequence_assessment,

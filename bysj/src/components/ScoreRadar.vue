@@ -1,6 +1,6 @@
 <template>
   <div class="score-radar" v-if="hasData">
-    <div class="radar-label">得分分布雷达图</div>
+    <div class="radar-label">步骤状态雷达图</div>
     <svg
       :width="size"
       :height="size"
@@ -44,7 +44,7 @@
         :cx="pt.x"
         :cy="pt.y"
         r="3"
-        :fill="strokeColor"
+        :fill="statusColor(sortedSteps[i])"
       />
 
       <!-- Labels -->
@@ -62,7 +62,7 @@
         步骤{{ axis.stepNo }}
       </text>
 
-      <!-- Score values near dots -->
+      <!-- Status values near dots -->
       <text
         v-for="(pt, i) in dataCoords"
         :key="`val-${i}`"
@@ -70,10 +70,10 @@
         :y="pt.y - 6"
         text-anchor="middle"
         :font-size="valueFontSize"
-        :fill="scoreColor(sortedSteps[i].score)"
+        :fill="statusColor(sortedSteps[i])"
         class="radar-value"
       >
-        {{ Math.round(sortedSteps[i].score) }}
+        {{ statusText(sortedSteps[i]) }}
       </text>
     </svg>
   </div>
@@ -148,7 +148,7 @@ function ringPoints(r) {
 const dataCoords = computed(() =>
   sortedSteps.value.map((step, i) => {
     const angle = angleForIndex(i)
-    const r = (Math.max(0, Math.min(100, step.score)) / 100) * maxRadius.value
+    const r = (isStepPassed(step) ? 1 : 0.18) * maxRadius.value
     return {
       x: cx.value + r * Math.cos(angle),
       y: cy.value + r * Math.sin(angle),
@@ -160,10 +160,16 @@ const dataPoints = computed(() =>
   dataCoords.value.map(pt => `${pt.x},${pt.y}`).join(' ')
 )
 
-function scoreColor(score) {
-  if (score >= 80) return '#4ade80'
-  if (score >= 60) return '#facc15'
-  return '#f87171'
+function isStepPassed(step) {
+  return step.includedInScore === false || Boolean(step.passed)
+}
+
+function statusText(step) {
+  return isStepPassed(step) ? '通过' : '异常'
+}
+
+function statusColor(step) {
+  return isStepPassed(step) ? '#4ade80' : '#f87171'
 }
 </script>
 

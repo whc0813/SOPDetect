@@ -27,7 +27,7 @@
             <template v-if="step.stepNo === hoveredStep">
               <div class="tooltip-title">步骤 {{ step.stepNo }}: {{ step.description }}</div>
               <div class="tooltip-row">
-                <span>得分：</span><span :class="scoreClass(step.score)">{{ Math.round(step.score) }}</span>
+                <span>状态：</span><span :class="step.passed ? 'status-passed' : 'status-failed'">{{ step.passed ? '通过' : '异常' }}</span>
               </div>
               <div class="tooltip-row" v-if="step.detectedStartSec != null">
                 <span>区间：</span><span>{{ step.detectedStartSec.toFixed(1) }}s – {{ (step.detectedEndSec ?? '?') }}s</span>
@@ -104,12 +104,6 @@ function segmentClass(step) {
   if (step.detectedStartSec == null) return 'undetected'
   if (step.passed) return 'passed'
   return 'failed'
-}
-
-function scoreClass(score) {
-  if (score >= 80) return 'score-good'
-  if (score >= 60) return 'score-ok'
-  return 'score-bad'
 }
 
 function segmentStyle(step) {
@@ -238,9 +232,8 @@ const tooltipStyle = computed(() => ({
   margin-top: 2px;
 }
 
-.score-good { color: #4ade80; }
-.score-ok   { color: #facc15; }
-.score-bad  { color: #f87171; }
+.status-passed { color: #4ade80; }
+.status-failed { color: #f87171; }
 
 .timeline-legend {
   display: flex;

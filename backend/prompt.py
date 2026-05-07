@@ -197,7 +197,6 @@ def build_response_schema(step_count: int):
                 "additionalProperties": False,
                 "properties": {
                     "passed": {"type": "boolean"},
-                    "score": {"type": "integer", "minimum": 0, "maximum": 100},
                     "feedback": {"type": "string"},
                     "issues": {"type": "array", "items": {"type": "string"}},
                     "sequenceAssessment": {
@@ -215,7 +214,6 @@ def build_response_schema(step_count: int):
                                 "stepNo": {"type": "integer", "minimum": 1},
                                 "description": {"type": "string"},
                                 "passed": {"type": "boolean"},
-                                "score": {"type": "integer", "minimum": 0, "maximum": 100},
                                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                                 "applicable": {"type": "boolean"},
                                 "issueType": {
@@ -233,7 +231,7 @@ def build_response_schema(step_count: int):
                                 "evidence": {"type": "string"},
                             },
                             "required": [
-                                "stepNo", "description", "passed", "score", "confidence",
+                                "stepNo", "description", "passed", "confidence",
                                 "applicable", "issueType", "completionLevel", "orderIssue",
                                 "prerequisiteViolated", "detectedStartSec", "detectedEndSec",
                                 "evidence",
@@ -242,7 +240,7 @@ def build_response_schema(step_count: int):
                     },
                 },
                 "required": [
-                    "passed", "score", "feedback", "issues", "sequenceAssessment",
+                    "passed", "feedback", "issues", "sequenceAssessment",
                     "prerequisiteViolated", "stepResults",
                 ],
             },
@@ -305,7 +303,6 @@ def build_per_step_evaluation_schema():
                 "properties": {
                     "stepNo": {"type": "integer", "minimum": 1},
                     "passed": {"type": "boolean"},
-                    "score": {"type": "integer", "minimum": 0, "maximum": 100},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "applicable": {"type": "boolean"},
                     "issueType": {"type": "string", "enum": sorted(ISSUE_TYPE_VALUES)},
@@ -317,7 +314,7 @@ def build_per_step_evaluation_schema():
                     "evidence": {"type": "string"},
                 },
                 "required": [
-                    "stepNo", "passed", "score", "confidence", "applicable",
+                    "stepNo", "passed", "confidence", "applicable",
                     "issueType", "completionLevel", "orderIssue", "prerequisiteViolated",
                     "detectedStartSec", "detectedEndSec", "evidence",
                 ],
@@ -580,7 +577,10 @@ def build_global_validation_system_prompt():
         "3. 是否需要把顺序结论回写到具体步骤上。\n"
         "- sequenceAssessment 只能从以下值中选择：['顺序正确', '轻微顺序偏差', '明显顺序错误', '无法判断顺序']。\n"
         "- feedback 和 issues 使用中文。\n"
-        "- stepOverrides 只填写需要修正的步骤；如果某一步需要改判，请明确给出 issueType、orderIssue、prerequisiteViolated 和 evidenceNote。\n"
+        "- stepOverrides 只填写需要修正的步骤；如果某一步需要改判，只能使用 stepNo 标识步骤，不要使用 stepId。\n"
+        "- stepOverrides 中 orderIssue 和 prerequisiteViolated 必须是布尔值 true/false，不能写成“抢先执行”“滞后执行”或步骤名称。\n"
+        "- stepOverrides 中 issueType 必须使用枚举值，例如“顺序颠倒”“过早执行”“延后执行”“前置条件缺失”，不要写“顺序问题”。\n"
+        "- 每个 stepOverrides 项必须明确给出 stepNo、issueType、orderIssue、prerequisiteViolated 和 evidenceNote。\n"
         "- 如果步骤结果显示实际耗时违反该步骤配置的最短/最长耗时限制，可以改判为“过快完成”或“超时完成”；无时间限制的步骤不要做时间类改判。\n"
         "只返回合法 JSON，不要输出任何额外说明。"
     )
@@ -604,7 +604,7 @@ def build_global_validation_content(sop: SopData, step_results: list, segments: 
         step_results_lines.append(
             f"步骤 {step.stepNo}: {step.description}\n"
             f"  判断={'通过' if result.get('passed') else '未通过'} | "
-            f"得分={result.get('score', 0)} | 问题类型={result.get('issueType', '未知')} | "
+            f"问题类型={result.get('issueType', '未知')} | "
             f"检测区间={time_range} | 顺序问题={'是' if result.get('orderIssue') else '否'} | "
             f"前置依赖={prerequisite_text} | 步骤耗时限制={duration_constraint_text}\n"
             f"  证据：{result.get('evidence', '无')}"
@@ -631,7 +631,6 @@ def build_global_validation_schema():
                 "additionalProperties": False,
                 "properties": {
                     "passed": {"type": "boolean"},
-                    "score": {"type": "integer", "minimum": 0, "maximum": 100},
                     "feedback": {"type": "string"},
                     "issues": {"type": "array", "items": {"type": "string"}},
                     "sequenceAssessment": {
@@ -667,7 +666,6 @@ def build_global_validation_schema():
                 },
                 "required": [
                     "passed",
-                    "score",
                     "feedback",
                     "issues",
                     "sequenceAssessment",
@@ -777,7 +775,6 @@ def build_batch_step_evaluation_schema(step_count: int):
                             "properties": {
                                 "stepNo": {"type": "integer", "minimum": 1},
                                 "passed": {"type": "boolean"},
-                                "score": {"type": "integer", "minimum": 0, "maximum": 100},
                                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                                 "applicable": {"type": "boolean"},
                                 "issueType": {"type": "string", "enum": sorted(ISSUE_TYPE_VALUES)},
@@ -791,7 +788,6 @@ def build_batch_step_evaluation_schema(step_count: int):
                             "required": [
                                 "stepNo",
                                 "passed",
-                                "score",
                                 "confidence",
                                 "applicable",
                                 "issueType",

@@ -34,7 +34,6 @@ export function normalizeHistory(record = {}) {
 export function buildEvaluationResultFromHistory(record = {}) {
   return {
     passed: record.status === 'passed',
-    score: record.score,
     feedback: record.detail?.feedback || '',
     issues: Array.isArray(record.detail?.issues) ? record.detail.issues : [],
     sequenceAssessment: record.detail?.sequenceAssessment || '',

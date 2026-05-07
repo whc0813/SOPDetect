@@ -147,7 +147,6 @@
 - `user_id`
 - `uploaded_video_media_id`
 - `finish_time`
-- `score`
 - `ai_status`
 - `feedback`
 - `sequence_assessment`
@@ -170,7 +169,6 @@
 - `step_no`
 - `description`
 - `passed`
-- `score`
 - `confidence`
 - `issue_type`
 - `completion_level`

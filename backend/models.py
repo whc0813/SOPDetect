@@ -58,14 +58,12 @@ class SopData(BaseModel):
     scene: Optional[str] = None
     stepCount: int
     steps: List[SopStep] = Field(default_factory=list)
-    penaltyConfig: Optional[dict] = None  # Per-SOP configurable penalty weights (Phase 4)
 
 
 class StepResultPayload(BaseModel):
     stepNo: int
     description: str
     passed: bool
-    score: float
     confidence: float
     applicable: bool = True
     includedInScore: bool = True
@@ -84,7 +82,6 @@ class StepResultPayload(BaseModel):
 
 class EvaluationResultPayload(BaseModel):
     passed: bool
-    score: float
     feedback: str
     issues: List[str] = Field(default_factory=list)
     sequenceAssessment: str = ""

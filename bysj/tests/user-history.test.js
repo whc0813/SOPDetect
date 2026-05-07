@@ -29,7 +29,6 @@ test('buildEvaluationResultFromHistory exposes token usage for result card', asy
   const { buildEvaluationResultFromHistory } = await loadUserHistoryModule()
   const result = buildEvaluationResultFromHistory({
     status: 'passed',
-    score: 96,
     detail: {
       feedback: '通过',
       tokenUsage: {
@@ -41,6 +40,7 @@ test('buildEvaluationResultFromHistory exposes token usage for result card', asy
   })
 
   assert.equal(result.passed, true)
+  assert.equal(Object.prototype.hasOwnProperty.call(result, 'score'), false)
   assert.deepEqual(result.tokenUsage, {
     inputTokens: 200,
     outputTokens: 40,
@@ -298,3 +298,4 @@ test('formatTokenUsage falls back when token usage is missing', async () => {
   const { formatTokenUsage } = await loadUserHistoryModule()
   assert.equal(formatTokenUsage(null), '暂无')
 })
+

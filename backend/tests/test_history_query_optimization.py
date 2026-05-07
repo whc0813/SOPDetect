@@ -21,7 +21,6 @@ class _FakeCursor:
                     "user_id": 3,
                     "uploaded_video_media_id": 100,
                     "finish_time": "2026-04-12 10:00:00",
-                    "score": 92.5,
                     "ai_status": "passed",
                     "feedback": "模型反馈",
                     "sequence_assessment": "顺序正常",
@@ -94,3 +93,5 @@ class HistoryQueryOptimizationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

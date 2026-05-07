@@ -56,6 +56,7 @@ try:
         create_evaluation_job,
         create_user,
         create_user_session,
+        delete_history,
         delete_sop,
         get_config,
         get_evaluation_job,
@@ -135,6 +136,7 @@ except ImportError:
         create_evaluation_job,
         create_user,
         create_user_session,
+        delete_history,
         delete_sop,
         get_config,
         get_evaluation_job,
@@ -220,7 +222,6 @@ class CreateSopRequest(BaseModel):
     steps: List[StepVideoInput] = Field(default_factory=list)
     workflowVideoDataUrl: str = ""
     workflowVideoMeta: Optional[StepVideoMeta] = None
-    penaltyConfig: Optional[dict] = None  # Phase 4: per-SOP penalty weights
 
 
 class UpdateStepDemoVideoRequest(BaseModel):
@@ -730,7 +731,6 @@ async def create_sop(req: CreateSopRequest, current_user=Depends(require_admin))
         "createTime": now_display(),
         "createdAtMs": int(time.time() * 1000),
         "steps": step_items,
-        "penaltyConfig": req.penaltyConfig or None,  # Phase 4
     }
     add_sop(sop, created_by=current_user)
     return {
@@ -875,6 +875,13 @@ async def fetch_history_detail(record_id: str, current_user=Depends(get_current_
     return {"success": True, "data": serialize_history(record)}
 
 
+@app.delete("/api/history/{record_id}")
+async def remove_history(record_id: str, _current_user=Depends(require_admin)):
+    if not delete_history(record_id):
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return {"success": True}
+
+
 @app.post("/api/history")
 async def create_history(req: CreateHistoryRequest, current_user=Depends(get_current_user)):
     sop = get_sop(req.taskId)
@@ -915,7 +922,6 @@ async def create_history(req: CreateHistoryRequest, current_user=Depends(get_cur
         "taskName": sop.get("name"),
         "scene": sop.get("scene"),
         "finishTime": now_display(),
-        "score": evaluation.get("score"),
         "status": "passed" if evaluation.get("passed") else "failed",
         "manualReview": None,
         "detail": {

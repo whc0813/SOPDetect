@@ -265,6 +265,10 @@ export async function getHistoryDetail(recordId) {
   return apiRequest(`/api/history/${recordId}`)
 }
 
+export async function deleteHistory(recordId) {
+  return apiRequest(`/api/history/${recordId}`, { method: 'DELETE' })
+}
+
 export async function createHistory(payload) {
   return apiRequest('/api/history', {
     method: 'POST',

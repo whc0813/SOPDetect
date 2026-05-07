@@ -287,7 +287,6 @@
               <el-icon class="result-icon" v-else><WarningFilled /></el-icon>
               <h3>{{ evaluationResult.passed ? '验证通过' : '验证未通过' }}</h3>
             </div>
-            <div class="result-score">综合得分：{{ formatScore(evaluationResult.score, '-') }}</div>
             <div v-if="currentSopHasNoDemoVideo" class="result-note">
               当前 SOP 没有上传示范视频，本次仅依据步骤文字和你上传的视频进行判断。
             </div>
@@ -318,7 +317,7 @@
                   <div class="step-result-title">步骤 {{ item.stepNo }}: {{ item.description }}</div>
                   <StatusBadge :type="item.includedInScore === false ? 'default' : (item.passed ? 'success' : 'danger')">{{ item.includedInScore === false ? '未计分' : getStepResultText(item.passed) }}</StatusBadge>
                 </div>
-                <div class="step-result-meta">得分 {{ formatScore(item.score, '-') }} / 置信度 {{ formatConfidence(item.confidence) }}</div>
+                <div class="step-result-meta">状态 {{ item.passed ? '通过' : '异常' }} / 置信度 {{ formatConfidence(item.confidence) }}</div>
                 <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }} / 权重 {{ formatStepWeight(item.stepWeight) }}</div>
                 <div class="step-result-meta">适用 {{ item.applicable === false ? '否' : '是' }} / 前置依赖 {{ item.prerequisiteViolated ? '违反' : '正常' }}</div>
                 <div class="step-result-meta">检测区间 {{ formatDetectedRange(item.detectedStartSec, item.detectedEndSec) }}</div>
@@ -467,7 +466,7 @@
               <div class="step-result-title">步骤 {{ item.stepNo }}: {{ item.description }}</div>
               <StatusBadge :type="item.includedInScore === false ? 'default' : (item.passed ? 'success' : 'danger')">{{ item.includedInScore === false ? '未计分' : getStepResultText(item.passed) }}</StatusBadge>
             </div>
-            <div class="step-result-meta">得分 {{ formatScore(item.score, '-') }}</div>
+            <div class="step-result-meta">问题类型 {{ item.issueType || '正常' }}</div>
             <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }} / 权重 {{ formatStepWeight(item.stepWeight) }}</div>
             <div class="step-result-meta">适用 {{ item.applicable === false ? '否' : '是' }} / 前置依赖 {{ item.prerequisiteViolated ? '违反' : '正常' }}</div>
             <div class="step-result-meta">检测区间 {{ formatDetectedRange(item.detectedStartSec, item.detectedEndSec) }}</div>
@@ -569,7 +568,7 @@ const progressState = computed(() => {
       type: evaluationResult.value.passed ? 'success' : 'danger',
       label: evaluationResult.value.passed ? '已完成' : '已结束',
       title: evaluationResult.value.passed ? '评测已完成' : '评测已结束',
-      description: '可以查看评测结果、问题明细和步骤得分。',
+      description: '可以查看评测结果、问题明细和步骤状态。',
       meta: '结果已生成'
     }
   }
@@ -831,11 +830,6 @@ async function openHistoryDetail(row) {
 function formatConfidence(value) {
   const num = Number(value)
   return Number.isFinite(num) ? num.toFixed(2) : '-'
-}
-
-function formatScore(value, fallback = '-') {
-  const num = Number(value)
-  return Number.isFinite(num) ? `${num} / 100` : fallback
 }
 
 function formatStepType(stepType) {
@@ -1946,13 +1940,6 @@ onUnmounted(() => {
   font-weight: 700;
   color: var(--text-main);
   letter-spacing: -0.02em;
-}
-
-.result-score {
-  font-size: var(--fs-subheadline);
-  font-weight: 600;
-  color: var(--text-main);
-  margin-bottom: var(--sp-3);
 }
 
 .result-note {

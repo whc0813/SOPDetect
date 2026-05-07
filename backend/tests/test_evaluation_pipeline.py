@@ -42,11 +42,18 @@ def _build_test_sop():
 
 
 class EvaluationPipelineRegressionTests(unittest.TestCase):
-    def test_duration_issue_types_are_known_and_penalized(self):
+    def test_duration_issue_types_are_known(self):
         self.assertEqual(scoring.normalize_issue_type("过快完成"), "过快完成")
         self.assertEqual(scoring.normalize_issue_type("超时完成"), "超时完成")
-        self.assertEqual(scoring.DEFAULT_ISSUE_TYPE_PENALTIES["过快完成"], 25)
-        self.assertEqual(scoring.DEFAULT_ISSUE_TYPE_PENALTIES["超时完成"], 25)
+
+    def test_response_schemas_do_not_request_numeric_scores(self):
+        schema_text = str(prompt.build_response_schema(1))
+        batch_schema_text = str(prompt.build_batch_step_evaluation_schema(1))
+        global_schema_text = str(prompt.build_global_validation_schema())
+
+        self.assertNotIn("score", schema_text)
+        self.assertNotIn("score", batch_schema_text)
+        self.assertNotIn("score", global_schema_text)
 
     def test_post_process_marks_step_as_too_fast_when_under_min_duration(self):
         sop = SopData(
@@ -62,7 +69,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         )
         evaluation_payload = {
             "passed": True,
-            "score": 100,
             "feedback": "",
             "issues": [],
             "sequenceAssessment": "",
@@ -72,7 +78,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                     "stepNo": 1,
                     "description": "擦拭消毒至少 3 秒",
                     "passed": True,
-                    "score": 100,
                     "confidence": 0.95,
                     "applicable": True,
                     "issueType": "正常",
@@ -89,7 +94,9 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         result = scoring.post_process_evaluation_result(sop, evaluation_payload)
 
         self.assertEqual(result["stepResults"][0]["issueType"], "过快完成")
-        self.assertEqual(result["stepResults"][0]["score"], 75)
+        self.assertFalse(result["stepResults"][0]["passed"])
+        self.assertFalse(result["passed"])
+        self.assertNotIn("score", result["stepResults"][0])
         self.assertIn("最短耗时", result["stepResults"][0]["evidence"])
         self.assertIn("步骤 1 过快完成", result["issues"])
 
@@ -107,7 +114,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         )
         evaluation_payload = {
             "passed": True,
-            "score": 100,
             "feedback": "",
             "issues": [],
             "sequenceAssessment": "",
@@ -117,7 +123,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                     "stepNo": 1,
                     "description": "拧紧螺丝需在 2 秒内完成",
                     "passed": True,
-                    "score": 100,
                     "confidence": 0.95,
                     "applicable": True,
                     "issueType": "正常",
@@ -134,7 +139,9 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         result = scoring.post_process_evaluation_result(sop, evaluation_payload)
 
         self.assertEqual(result["stepResults"][0]["issueType"], "超时完成")
-        self.assertEqual(result["stepResults"][0]["score"], 75)
+        self.assertFalse(result["stepResults"][0]["passed"])
+        self.assertFalse(result["passed"])
+        self.assertNotIn("score", result["stepResults"][0])
         self.assertIn("最长耗时", result["stepResults"][0]["evidence"])
         self.assertIn("步骤 1 超时完成", result["issues"])
 
@@ -146,7 +153,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         )
         evaluation_payload = {
             "passed": True,
-            "score": 100,
             "feedback": "",
             "issues": [],
             "sequenceAssessment": "",
@@ -156,7 +162,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                     "stepNo": 1,
                     "description": "普通步骤",
                     "passed": True,
-                    "score": 100,
                     "confidence": 0.95,
                     "applicable": True,
                     "issueType": "正常",
@@ -173,7 +178,9 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         result = scoring.post_process_evaluation_result(sop, evaluation_payload)
 
         self.assertEqual(result["stepResults"][0]["issueType"], "正常")
-        self.assertEqual(result["stepResults"][0]["score"], 100)
+        self.assertTrue(result["stepResults"][0]["passed"])
+        self.assertTrue(result["passed"])
+        self.assertNotIn("score", result["stepResults"][0])
 
     def test_validate_sop_step_rejects_min_duration_greater_than_max_duration(self):
         step = main.StepVideoInput(
@@ -225,7 +232,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 "stepNo": 1,
                 "description": "做出“1”手势",
                 "passed": True,
-                "score": 100,
                 "confidence": 1.0,
                 "applicable": True,
                 "issueType": "正常",
@@ -240,7 +246,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 "stepNo": 2,
                 "description": "做出“2”手势",
                 "passed": True,
-                "score": 100,
                 "confidence": 0.98,
                 "applicable": True,
                 "issueType": "正常",
@@ -272,6 +277,286 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertEqual(merged[1]["issueType"], "延后执行")
         self.assertIn("顺序异常", merged[1]["evidence"])
 
+    def test_apply_global_validation_overrides_accepts_legacy_step_id_and_string_flags(self):
+        step_results = [
+            {
+                "stepNo": 10,
+                "description": "扣合电池排线",
+                "passed": True,
+                "confidence": 0.98,
+                "applicable": True,
+                "issueType": "正常",
+                "completionLevel": "完整",
+                "orderIssue": False,
+                "prerequisiteViolated": False,
+                "detectedStartSec": 33.9,
+                "detectedEndSec": 37.7,
+                "evidence": "动作正确",
+            }
+        ]
+        global_result = {
+            "stepOverrides": [
+                {
+                    "stepId": 10,
+                    "issueType": "顺序问题",
+                    "orderIssue": "抢先执行",
+                    "prerequisiteViolated": "true",
+                    "evidenceNote": "步骤10在步骤9尚未完全结束时即已开始并完成。",
+                }
+            ]
+        }
+
+        merged = evaluation.apply_global_validation_overrides(step_results, global_result)
+
+        self.assertTrue(merged[0]["orderIssue"])
+        self.assertTrue(merged[0]["prerequisiteViolated"])
+        self.assertEqual(merged[0]["issueType"], "过早执行")
+        self.assertIn("步骤9尚未完全结束", merged[0]["evidence"])
+
+    def test_post_process_marks_default_sequence_overlap_as_order_issue_and_fails_result(self):
+        sop = SopData(
+            name="组装手机",
+            stepCount=2,
+            steps=[
+                SopStep(stepNo=9, description="安装振动马达及扬声器盖板"),
+                SopStep(stepNo=10, description="扣合电池排线"),
+            ],
+        )
+        evaluation_payload = {
+            "passed": True,
+            "feedback": "",
+            "issues": [],
+            "sequenceAssessment": "",
+            "prerequisiteViolated": False,
+            "stepResults": [
+                {
+                    "stepNo": 9,
+                    "description": "安装振动马达及扬声器盖板",
+                    "passed": True,
+                    "confidence": 0.98,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 32.0,
+                    "detectedEndSec": 40.6,
+                    "evidence": "底部组件安装完成",
+                },
+                {
+                    "stepNo": 10,
+                    "description": "扣合电池排线",
+                    "passed": True,
+                    "confidence": 0.98,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 33.9,
+                    "detectedEndSec": 37.7,
+                    "evidence": "电池排线已扣合",
+                },
+            ],
+        }
+
+        result = scoring.post_process_evaluation_result(sop, evaluation_payload)
+
+        step10 = result["stepResults"][1]
+        self.assertFalse(result["passed"])
+        self.assertFalse(step10["passed"])
+        self.assertTrue(step10["orderIssue"])
+        self.assertFalse(step10["prerequisiteViolated"])
+        self.assertEqual(step10["issueType"], "过早执行")
+        self.assertFalse(step10["passed"])
+        self.assertNotIn("score", step10)
+        self.assertIn("步骤 10 过早执行", result["issues"])
+        self.assertEqual(result["sequenceAssessment"], "轻微顺序偏差")
+
+    def test_post_process_keeps_normal_default_sequence_as_passed(self):
+        sop = SopData(
+            name="线性流程",
+            stepCount=2,
+            steps=[
+                SopStep(stepNo=1, description="第一步"),
+                SopStep(stepNo=2, description="第二步"),
+            ],
+        )
+        evaluation_payload = {
+            "passed": True,
+            "feedback": "",
+            "issues": [],
+            "sequenceAssessment": "",
+            "prerequisiteViolated": False,
+            "stepResults": [
+                {
+                    "stepNo": 1,
+                    "description": "第一步",
+                    "passed": True,
+                    "confidence": 0.98,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 1.0,
+                    "detectedEndSec": 2.0,
+                    "evidence": "ok1",
+                },
+                {
+                    "stepNo": 2,
+                    "description": "第二步",
+                    "passed": True,
+                    "confidence": 0.98,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 2.0,
+                    "detectedEndSec": 3.0,
+                    "evidence": "ok2",
+                },
+            ],
+        }
+
+        result = scoring.post_process_evaluation_result(sop, evaluation_payload)
+
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["sequenceAssessment"], "顺序正确")
+        self.assertEqual(result["issues"], [])
+
+    def test_explicit_prerequisite_violation_keeps_prerequisite_issue_priority(self):
+        sop = SopData(
+            name="前置优先",
+            stepCount=2,
+            steps=[
+                SopStep(stepNo=1, description="第一步"),
+                SopStep(stepNo=2, description="第二步", prerequisiteStepNos=[1]),
+            ],
+        )
+        evaluation_payload = {
+            "passed": True,
+            "feedback": "",
+            "issues": [],
+            "sequenceAssessment": "",
+            "prerequisiteViolated": False,
+            "stepResults": [
+                {
+                    "stepNo": 1,
+                    "description": "第一步",
+                    "passed": True,
+                    "confidence": 0.98,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 5.0,
+                    "detectedEndSec": 6.0,
+                    "evidence": "ok1",
+                },
+                {
+                    "stepNo": 2,
+                    "description": "第二步",
+                    "passed": True,
+                    "confidence": 0.98,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 3.0,
+                    "detectedEndSec": 4.0,
+                    "evidence": "ok2",
+                },
+            ],
+        }
+
+        result = scoring.post_process_evaluation_result(sop, evaluation_payload)
+
+        step2 = result["stepResults"][1]
+        self.assertFalse(result["passed"])
+        self.assertFalse(step2["passed"])
+        self.assertTrue(step2["orderIssue"])
+        self.assertTrue(step2["prerequisiteViolated"])
+        self.assertEqual(step2["issueType"], "前置条件缺失")
+
+    def test_missing_step_keeps_missing_priority_even_with_overlapping_detected_range(self):
+        sop = SopData(
+            name="组装手机",
+            stepCount=3,
+            steps=[
+                SopStep(stepNo=12, description="拧紧机身内部固定螺丝"),
+                SopStep(stepNo=13, description="压合手机后盖"),
+                SopStep(stepNo=14, description="启动手机并进行基础开机检查", prerequisiteStepNos=[13]),
+            ],
+        )
+        evaluation_payload = {
+            "passed": True,
+            "feedback": "",
+            "issues": [],
+            "sequenceAssessment": "",
+            "prerequisiteViolated": False,
+            "stepResults": [
+                {
+                    "stepNo": 12,
+                    "description": "拧紧机身内部固定螺丝",
+                    "passed": True,
+                    "confidence": 0.98,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 43.1,
+                    "detectedEndSec": 47.8,
+                    "evidence": "螺丝拧紧完成",
+                },
+                {
+                    "stepNo": 13,
+                    "description": "压合手机后盖",
+                    "passed": True,
+                    "confidence": 0.98,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 47.8,
+                    "detectedEndSec": 49.7,
+                    "evidence": "后盖安装完成",
+                },
+                {
+                    "stepNo": 14,
+                    "description": "启动手机并进行基础开机检查",
+                    "passed": False,
+                    "confidence": 0.9,
+                    "applicable": True,
+                    "issueType": "缺失",
+                    "completionLevel": "未完成",
+                    "orderIssue": False,
+                    "prerequisiteViolated": True,
+                    "detectedStartSec": 46.2,
+                    "detectedEndSec": 49.7,
+                    "evidence": "视频结束时仅显示后盖安装完成，未实际执行开机动作。",
+                },
+            ],
+        }
+
+        result = scoring.post_process_evaluation_result(sop, evaluation_payload)
+
+        step14 = result["stepResults"][2]
+        self.assertFalse(result["passed"])
+        self.assertFalse(step14["passed"])
+        self.assertEqual(step14["issueType"], "缺失")
+        self.assertFalse(step14["orderIssue"])
+        self.assertFalse(step14["prerequisiteViolated"])
+        self.assertFalse(step14["passed"])
+        self.assertNotIn("score", step14)
+        self.assertIn("步骤 14 缺失", result["issues"])
+        self.assertNotIn("步骤 14 前置条件缺失", result["issues"])
+
     def test_global_validation_content_prefers_step_detected_range_over_stage1_segment(self):
         sop = _build_test_sop()
         step_results = [
@@ -279,7 +564,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 "stepNo": 1,
                 "description": "做出“1”手势",
                 "passed": True,
-                "score": 100,
                 "issueType": "正常",
                 "orderIssue": False,
                 "detectedStartSec": 1.2,
@@ -423,13 +707,13 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                     "message": {
                         "content": (
                             '{"stepResults":['
-                            '{"stepNo":1,"passed":true,"score":100,"confidence":1.0,"applicable":true,'
+                            '{"stepNo":1,"passed":true,"confidence":1.0,"applicable":true,'
                             '"issueType":"姝ｅ父","completionLevel":"瀹屾暣","orderIssue":false,'
                             '"prerequisiteViolated":false,"detectedStartSec":1.1,"detectedEndSec":1.9,"evidence":"ok1"},'
-                            '{"stepNo":2,"passed":true,"score":90,"confidence":0.9,"applicable":true,'
+                            '{"stepNo":2,"passed":true,"confidence":0.9,"applicable":true,'
                             '"issueType":"姝ｅ父","completionLevel":"瀹屾暣","orderIssue":false,'
                             '"prerequisiteViolated":false,"detectedStartSec":3.2,"detectedEndSec":3.9,"evidence":"ok2"},'
-                            '{"stepNo":3,"passed":false,"score":60,"confidence":0.8,"applicable":true,'
+                            '{"stepNo":3,"passed":false,"confidence":0.8,"applicable":true,'
                             '"issueType":"杩囨棭鎵ц","completionLevel":"瀹屾暣","orderIssue":true,'
                             '"prerequisiteViolated":false,"detectedStartSec":0.6,"detectedEndSec":1.8,"evidence":"ok3"}'
                             ']}'
@@ -478,13 +762,13 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                     "message": {
                         "content": (
                             '{"stepResults":['
-                            '{"stepNo":1,"passed":true,"score":100,"confidence":1.0,"applicable":true,',
+                            '{"stepNo":1,"passed":true,"confidence":1.0,"applicable":true,',
                             '"issueType":"正常","completionLevel":"完整","orderIssue":false,',
                             '"prerequisiteViolated":false,"detectedStartSec":1.0,"detectedEndSec":2.0,"evidence":"ok"},',
-                            '{"stepNo":2,"passed":true,"score":100,"confidence":1.0,"applicable":true,',
+                            '{"stepNo":2,"passed":true,"confidence":1.0,"applicable":true,',
                             '"issueType":"正常","completionLevel":"完整","orderIssue":false,',
                             '"prerequisiteViolated":false,"detectedStartSec":3.0,"detectedEndSec":4.0,"evidence":"ok"},',
-                            '{"stepNo":3,"passed":true,"score":100,"confidence":1.0,"applicable":true,',
+                            '{"stepNo":3,"passed":true,"confidence":1.0,"applicable":true,',
                             '"issueType":"正常","completionLevel":"完整","orderIssue":false,',
                             '"prerequisiteViolated":false,"detectedStartSec":5.0,"detectedEndSec":6.0,"evidence":"ok"}'
                             ']}'
@@ -531,10 +815,10 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                     "message": {
                         "content": (
                             '{"stepResults":['
-                            '{"stepNo":1,"passed":true,"score":100,"confidence":1.0,"applicable":true,',
+                            '{"stepNo":1,"passed":true,"confidence":1.0,"applicable":true,',
                             '"issueType":"正常","completionLevel":"完整","orderIssue":false,',
                             '"prerequisiteViolated":false,"detectedStartSec":1.0,"detectedEndSec":2.0,"evidence":"ok"},',
-                            '{"stepNo":3,"passed":true,"score":95,"confidence":0.9,"applicable":true,',
+                            '{"stepNo":3,"passed":true,"confidence":0.9,"applicable":true,',
                             '"issueType":"正常","completionLevel":"完整","orderIssue":false,',
                             '"prerequisiteViolated":false,"detectedStartSec":5.0,"detectedEndSec":6.0,"evidence":"ok"}'
                             ']}'
@@ -565,7 +849,7 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertEqual(len(results), 3)
         self.assertEqual(results[1]["stepNo"], 2)
         self.assertFalse(results[1]["passed"])
-        self.assertEqual(results[1]["score"], 0)
+        self.assertNotIn("score", results[1])
         self.assertEqual(results[1]["issueType"], "证据不足")
 
     def test_sanitize_step_result_clamps_range_and_strips_impossible_timestamps(self):
@@ -573,7 +857,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
             "stepNo": 3,
             "description": "做出“3”手势",
             "passed": False,
-            "score": 0,
             "confidence": 0.8,
             "applicable": True,
             "issueType": "动作错误",
@@ -599,7 +882,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
             "stepNo": 3,
             "description": "做出“3”手势",
             "passed": False,
-            "score": 0,
             "confidence": 1.0,
             "applicable": True,
             "issueType": "缺失",
@@ -634,7 +916,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 "stepNo": 1,
                 "description": "做出“1”手势",
                 "passed": True,
-                "score": 100,
                 "confidence": 1.0,
                 "applicable": True,
                 "issueType": "正常",
@@ -653,7 +934,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 "stepNo": 2,
                 "description": "做出“2”手势",
                 "passed": True,
-                "score": 100,
                 "confidence": 1.0,
                 "applicable": True,
                 "issueType": "正常",
@@ -672,7 +952,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 "stepNo": 3,
                 "description": "做出“3”手势",
                 "passed": False,
-                "score": 60,
                 "confidence": 1.0,
                 "applicable": True,
                 "issueType": "过早执行",
@@ -690,7 +969,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         ]
         global_result = {
             "passed": False,
-            "score": 60,
             "feedback": "全局判断",
             "issues": ["顺序错误"],
             "sequenceAssessment": "明显顺序错误",
@@ -725,7 +1003,7 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
             return_value=global_result,
         ), mock.patch(
             "backend.evaluation.post_process_evaluation_result",
-            side_effect=lambda _sop, merged, penalty_config=None: merged,
+            side_effect=lambda _sop, merged: merged,
         ):
             result, normalized_segments, detected_duration = evaluation.asyncio.run(
                 evaluation._run_multistage_evaluation(
@@ -781,7 +1059,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 "stepNo": 1,
                 "description": "步骤1",
                 "passed": True,
-                "score": 100,
                 "confidence": 1.0,
                 "applicable": True,
                 "issueType": "姝ｅ父",
@@ -797,7 +1074,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         ]
         global_result = {
             "passed": True,
-            "score": 100,
             "feedback": "ok",
             "issues": [],
             "sequenceAssessment": "椤哄簭姝ｇ‘",
@@ -821,7 +1097,7 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
             return_value=global_result,
         ), mock.patch(
             "backend.evaluation.post_process_evaluation_result",
-            side_effect=lambda _sop, merged, penalty_config=None: merged,
+            side_effect=lambda _sop, merged: merged,
         ):
             result, _normalized_segments, _detected_duration = evaluation.asyncio.run(
                 evaluation._run_multistage_evaluation(
@@ -842,3 +1118,4 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

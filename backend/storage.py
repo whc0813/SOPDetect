@@ -249,7 +249,6 @@ def _run_schema_migrations(connection):
         ("execution_step_results", "step_type_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN step_type_snapshot VARCHAR(20) NOT NULL DEFAULT 'required' AFTER step_weight_snapshot",
         ("execution_step_results", "min_duration_sec_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN min_duration_sec_snapshot DECIMAL(8,3) NULL AFTER step_type_snapshot",
         ("execution_step_results", "max_duration_sec_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN max_duration_sec_snapshot DECIMAL(8,3) NULL AFTER min_duration_sec_snapshot",
-        ("sops", "penalty_config"): "ALTER TABLE sops ADD COLUMN penalty_config JSON NULL AFTER demo_video_count",
     }
 
     for (table_name, column_name), statement in column_statements.items():
@@ -264,6 +263,9 @@ def _run_schema_migrations(connection):
         ("sop_steps", "time_window_end_sec"): "ALTER TABLE sop_steps DROP COLUMN time_window_end_sec",
         ("execution_step_results", "timing_status"): "ALTER TABLE execution_step_results DROP COLUMN timing_status",
         ("execution_step_results", "risk_level_snapshot"): "ALTER TABLE execution_step_results DROP COLUMN risk_level_snapshot",
+        ("sops", "penalty_config"): "ALTER TABLE sops DROP COLUMN penalty_config",
+        ("sop_executions", "score"): "ALTER TABLE sop_executions DROP COLUMN score",
+        ("execution_step_results", "score"): "ALTER TABLE execution_step_results DROP COLUMN score",
     }
 
     for (table_name, column_name), statement in drop_column_statements.items():
@@ -1838,7 +1840,7 @@ def _fetch_history_rows(
 ):
     sql = """
         SELECT e.id, e.execution_code, e.sop_id, e.user_id, e.uploaded_video_media_id, e.finish_time,
-               e.score, e.ai_status, e.prerequisite_violated, e.created_at,
+               e.ai_status, e.prerequisite_violated, e.created_at,
                s.sop_code, s.name AS task_name, s.scene,
                u.username AS user_name, u.display_name AS user_display_name
         FROM sop_executions e
@@ -2005,7 +2007,6 @@ def _build_history_records(
                 "stepNo": int(row.get("step_no") or 0),
                 "description": row.get("description") or "",
                 "passed": bool(row.get("passed")),
-                "score": float(row.get("score") or 0),
                 "confidence": float(row.get("confidence") or 0),
                 "applicable": bool(row.get("applicable")) if row.get("applicable") is not None else True,
                 "includedInScore": bool(row.get("included_in_score")) if row.get("included_in_score") is not None else True,
@@ -2062,7 +2063,6 @@ def _build_history_records(
                 "userName": row.get("user_name") or "",
                 "userDisplayName": row.get("user_display_name") or row.get("user_name") or "",
                 "finishTime": _parse_datetime(row.get("finish_time")),
-                "score": float(row.get("score")) if row.get("score") is not None else None,
                 "status": row.get("ai_status") or "failed",
                 "manualReview": review_map.get(row["id"]),
                 "detail": {
@@ -2100,6 +2100,52 @@ def get_history(record_id, current_user=None):
         return records[0] if records else None
 
 
+def delete_history(record_id):
+    with _get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, uploaded_video_media_id
+                FROM sop_executions
+                WHERE execution_code = %s
+                LIMIT 1
+                """,
+                (record_id,),
+            )
+            execution_row = cursor.fetchone()
+            if not execution_row:
+                return False
+
+            execution_id = execution_row["id"]
+            uploaded_video_media_id = execution_row.get("uploaded_video_media_id")
+
+            media_filters = ["related_execution_id = %s"]
+            media_params = [execution_id]
+            if uploaded_video_media_id:
+                media_filters.append("id = %s")
+                media_params.append(uploaded_video_media_id)
+
+            cursor.execute(
+                f"""
+                SELECT storage_path
+                FROM media_files
+                WHERE {" OR ".join(media_filters)}
+                """,
+                media_params,
+            )
+            media_paths = [row["storage_path"] for row in cursor.fetchall()]
+
+            cursor.execute(
+                f"DELETE FROM media_files WHERE {' OR '.join(media_filters)}",
+                media_params,
+            )
+            cursor.execute("DELETE FROM sop_executions WHERE id = %s", (execution_id,))
+
+        connection.commit()
+        _delete_files(media_paths)
+        return True
+
+
 def add_history(record, current_user=None):
     with _get_connection() as connection:
         sop_row = _fetch_sop_row_by_code(connection, record.get("taskId"))
@@ -2118,9 +2164,9 @@ def add_history(record, current_user=None):
             cursor.execute(
                 """
                 INSERT INTO sop_executions (
-                  execution_code, sop_id, user_id, uploaded_video_media_id, finish_time, score, ai_status,
+                  execution_code, sop_id, user_id, uploaded_video_media_id, finish_time, ai_status,
                   feedback, sequence_assessment, prerequisite_violated, payload_preview, raw_model_result
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     record.get("id"),
@@ -2128,7 +2174,6 @@ def add_history(record, current_user=None):
                     current_user.get("id") if current_user else None,
                     uploaded_video_db_id,
                     datetime.now(),
-                    record.get("score"),
                     record.get("status") or "failed",
                     (record.get("detail") or {}).get("feedback") or "",
                     (record.get("detail") or {}).get("sequenceAssessment") or "",
@@ -2160,11 +2205,11 @@ def add_history(record, current_user=None):
                 cursor.execute(
                     """
                     INSERT INTO execution_step_results (
-                      execution_id, sop_step_id, step_no, description, passed, score, confidence, applicable,
+                      execution_id, sop_step_id, step_no, description, passed, confidence, applicable,
                       included_in_score, issue_type, completion_level, order_issue, prerequisite_violated,
                       detected_start_sec, detected_end_sec, step_weight_snapshot, step_type_snapshot,
                       min_duration_sec_snapshot, max_duration_sec_snapshot, evidence
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         execution_id,
@@ -2172,7 +2217,6 @@ def add_history(record, current_user=None):
                         item.get("stepNo") or 0,
                         item.get("description") or "",
                         1 if item.get("passed") else 0,
-                        item.get("score") or 0,
                         item.get("confidence") or 0,
                         1 if item.get("applicable", True) else 0,
                         1 if item.get("includedInScore", True) else 0,
@@ -2318,21 +2362,12 @@ def build_stats():
             "totalCount": 0,
             "passedCount": 0,
             "pendingReviewCount": 0,
-            "scoreSum": 0,
-            "scoreCount": 0,
         }
         item["totalCount"] += 1
         if record.get("status") == "passed":
             item["passedCount"] += 1
         if not (record.get("manualReview") or {}).get("status"):
             item["pendingReviewCount"] += 1
-        try:
-            score = float(record.get("score"))
-        except Exception:
-            score = None
-        if score is not None:
-            item["scoreSum"] += score
-            item["scoreCount"] += 1
         bucket[key] = item
 
     issue_bucket = {}
@@ -2355,7 +2390,6 @@ def build_stats():
                 "passedCount": item["passedCount"],
                 "pendingReviewCount": item["pendingReviewCount"],
                 "passRate": (item["passedCount"] / total * 100) if total else 0,
-                "averageScore": (item["scoreSum"] / item["scoreCount"]) if item["scoreCount"] else None,
             }
         )
 

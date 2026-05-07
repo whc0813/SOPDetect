@@ -22,7 +22,6 @@ class RemoveRiskTimeTests(unittest.TestCase):
 
         evaluation = {
             "passed": True,
-            "score": 95,
             "feedback": "模型反馈",
             "issues": [],
             "sequenceAssessment": "",
@@ -32,7 +31,6 @@ class RemoveRiskTimeTests(unittest.TestCase):
                     "stepNo": 1,
                     "description": "步骤一",
                     "passed": True,
-                    "score": 95,
                     "confidence": 0.9,
                     "applicable": True,
                     "issueType": "正常",
@@ -87,7 +85,6 @@ class RemoveRiskTimeTests(unittest.TestCase):
                 "taskName": "测试SOP",
                 "scene": "实验室",
                 "status": "passed",
-                "score": 90,
                 "manualReview": None,
                 "detail": {
                     "stepResults": [
@@ -126,3 +123,5 @@ class RemoveRiskTimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

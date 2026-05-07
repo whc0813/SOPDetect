@@ -22,6 +22,7 @@ try:
         AIReferencePlan,
         ApiConfig,
         EvaluationResultPayload,
+        ISSUE_TYPE_VALUES,
         SopData,
         SopStep,
     )
@@ -47,7 +48,7 @@ try:
         normalize_messages_for_model,
         parse_json_content,
     )
-    from .scoring import get_penalty_config, post_process_evaluation_result
+    from .scoring import post_process_evaluation_result
     from .storage import (
         append_evaluation_job_log,
         attach_media,
@@ -79,6 +80,7 @@ except ImportError:
         AIReferencePlan,
         ApiConfig,
         EvaluationResultPayload,
+        ISSUE_TYPE_VALUES,
         SopData,
         SopStep,
     )
@@ -104,7 +106,7 @@ except ImportError:
         normalize_messages_for_model,
         parse_json_content,
     )
-    from scoring import get_penalty_config, post_process_evaluation_result
+    from scoring import post_process_evaluation_result
     from storage import (
         append_evaluation_job_log,
         attach_media,
@@ -396,17 +398,47 @@ def reconcile_order_issue_from_evidence(step: SopStep, result: dict, duration_se
     return cleaned
 
 
+def _coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    return text in {"true", "1", "yes", "y", "是", "有", "存在", "违反", "抢先执行", "滞后执行", "延后执行"}
+
+
+def _normalize_override_issue_type(issue_type, order_issue=None) -> str:
+    text = str(issue_type or "").strip()
+    order_text = str(order_issue or "").strip()
+    combined = f"{text} {order_text}"
+    if "抢先" in combined or "过早" in combined or "提前" in combined:
+        return "过早执行"
+    if "滞后" in combined or "延后" in combined or "过晚" in combined:
+        return "延后执行"
+    if text == "顺序问题":
+        return "顺序颠倒"
+    return text if text in ISSUE_TYPE_VALUES else ""
+
+
 def apply_global_validation_overrides(step_results: list, global_result: Optional[dict]) -> list:
     """Merge Stage 3 sequence/prerequisite corrections back into step-level results."""
     override_map = {}
     for item in (global_result or {}).get("stepOverrides") or []:
         try:
-            step_no = int(item.get("stepNo") or 0)
+            step_no = int(item.get("stepNo") or item.get("stepId") or 0)
         except (TypeError, ValueError):
             continue
         if step_no <= 0:
             continue
-        override_map[step_no] = dict(item)
+        normalized = dict(item)
+        normalized["stepNo"] = step_no
+        raw_order_issue = normalized.get("orderIssue")
+        normalized["orderIssue"] = _coerce_bool(normalized.get("orderIssue"))
+        normalized["prerequisiteViolated"] = _coerce_bool(normalized.get("prerequisiteViolated"))
+        normalized_issue = _normalize_override_issue_type(
+            normalized.get("issueType"), raw_order_issue
+        )
+        if normalized_issue:
+            normalized["issueType"] = normalized_issue
+        override_map[step_no] = normalized
 
     merged_results = []
     for result in step_results:
@@ -903,7 +935,6 @@ def build_sop_model_from_record(record: dict) -> SopData:
             "scene": record.get("scene") or "",
             "stepCount": record.get("stepCount") or len(steps),
             "steps": steps,
-            "penaltyConfig": record.get("penaltyConfig") or None,
         }
     )
 
@@ -1077,7 +1108,6 @@ async def run_per_step_evaluation_batch(
             "stepNo": step.stepNo,
             "description": step.description,
             "passed": False,
-            "score": 0,
             "confidence": 0.0,
             "applicable": True,
             "issueType": "证据不足",
@@ -1280,9 +1310,8 @@ async def _run_multistage_evaluation(
         "rawModelResult": raw_model_result,
     }
 
-    # Apply rule-based post-processing with SOP-specific penalties
-    penalty_config = sop.penaltyConfig or None
-    result = post_process_evaluation_result(sop, merged, penalty_config=penalty_config)
+    # Apply rule-based post-processing.
+    result = post_process_evaluation_result(sop, merged)
     return result, segments, detected_duration
 
 
@@ -1333,7 +1362,6 @@ def build_history_record_from_result(sop_record: dict, uploaded_video: dict, eva
         "taskName": sop_record.get("name"),
         "scene": sop_record.get("scene"),
         "finishTime": now_display(),
-        "score": evaluation.get("score"),
         "status": "passed" if evaluation.get("passed") else "failed",
         "manualReview": None,
         "detail": {

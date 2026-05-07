@@ -135,14 +135,13 @@
           </div>
 
           <div class="section-block">
-            <SectionHeader title="SOP 维度统计" subtitle="按流程查看执行次数、通过率和平均得分" />
+            <SectionHeader title="SOP 维度统计" subtitle="按流程查看执行次数、通过率和待复核情况" />
             <GroupedList
               :columns="sopStatsColumns"
               :data="sopStatsList"
               empty-text="暂无统计数据"
             >
               <template #cell-passRate="{ value }">{{ formatRate(value) }}</template>
-              <template #cell-averageScore="{ value }">{{ formatAverageScore(value) }}</template>
             </GroupedList>
           </div>
 
@@ -218,6 +217,7 @@
               <template #cell-actions="{ row }">
                 <button class="text-btn" @click="openHistoryDetail(row)">详情</button>
                 <button class="text-btn" @click="openReviewDialog(row)">复核</button>
+                <button class="text-btn danger" @click="deleteHistoryRecord(row)">删除记录</button>
               </template>
             </GroupedList>
           </div>
@@ -288,58 +288,6 @@
           </div>
         </div>
 
-        <!-- ─── 罚分参数配置 ─────────────────────────── -->
-        <div class="penalty-section">
-          <button type="button" class="penalty-toggle" @click="showPenaltyConfig = !showPenaltyConfig">
-            <span class="penalty-toggle-left">
-              <svg class="penalty-chevron" :class="{ open: showPenaltyConfig }" width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M3 5l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <span>自定义罚分参数</span>
-              <span v-if="customizedPenaltyCount > 0" class="penalty-modified-badge">{{ customizedPenaltyCount }} 项已调整</span>
-            </span>
-            <span class="penalty-optional-tag">可选</span>
-          </button>
-          <Transition name="penalty-expand">
-            <div v-if="showPenaltyConfig" class="penalty-grid">
-              <div class="penalty-hint">
-                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style="flex-shrink:0;margin-top:1px"><circle cx="6.5" cy="6.5" r="6" stroke="currentColor" stroke-width="1"/><path d="M6.5 5.5v4M6.5 3.5v1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-                默认使用系统内置罚分权重，可按场景需求调整。修改后仅对本 SOP 生效。
-              </div>
-              <div class="penalty-columns">
-                <div
-                  v-for="item in PENALTY_ISSUE_TYPES"
-                  :key="item.key"
-                  class="penalty-item"
-                  :class="{ 'is-modified': sopForm.penaltyConfig[item.key] !== undefined }"
-                >
-                  <span class="severity-dot" :style="{ background: getPenaltySeverityColor(DEFAULT_PENALTY_VALUES[item.key]) }"></span>
-                  <div class="penalty-label">
-                    <span class="penalty-name">{{ item.label }}</span>
-                    <span class="penalty-desc">{{ item.description }}</span>
-                  </div>
-                  <div class="penalty-control">
-                    <el-input-number
-                      :model-value="sopForm.penaltyConfig[item.key] ?? DEFAULT_PENALTY_VALUES[item.key]"
-                      @update:model-value="val => { if (val !== DEFAULT_PENALTY_VALUES[item.key]) sopForm.penaltyConfig[item.key] = val; else delete sopForm.penaltyConfig[item.key] }"
-                      :min="0" :max="100" :step="5" size="small"
-                    />
-                    <button
-                      v-if="sopForm.penaltyConfig[item.key] !== undefined"
-                      type="button"
-                      class="penalty-reset-btn"
-                      title="还原默认值"
-                      @click="delete sopForm.penaltyConfig[item.key]"
-                    >↺</button>
-                  </div>
-                </div>
-              </div>
-              <div v-if="customizedPenaltyCount > 0" class="penalty-footer">
-                <button type="button" class="penalty-reset-all" @click="sopForm.penaltyConfig = {}">还原全部默认值</button>
-              </div>
-            </div>
-          </Transition>
-        </div>
       </el-form>
       <template #footer>
         <div class="dialog-footer">
@@ -473,7 +421,7 @@
             </div>
             <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }} / 权重 {{ Number(item.stepWeight || 1).toFixed(1) }}</div>
             <div class="step-result-meta">适用 {{ item.applicable === false ? '否' : '是' }} / 前置依赖 {{ item.prerequisiteViolated ? '违反' : '正常' }}</div>
-            <div class="step-result-meta">检测区间 {{ item.detectedStartSec ?? '-' }}s ~ {{ item.detectedEndSec ?? '-' }}s / 得分 {{ item.score ?? '-' }}</div>
+            <div class="step-result-meta">检测区间 {{ item.detectedStartSec ?? '-' }}s ~ {{ item.detectedEndSec ?? '-' }}s / 问题类型 {{ item.issueType || '正常' }}</div>
             <div class="detail-text">{{ item.evidence || '暂无证据说明' }}</div>
           </div>
         </div>
@@ -514,7 +462,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataLine, Document, Fold, Monitor, Plus, SwitchButton } from '@element-plus/icons-vue'
-import { clearAuthSession, createSop, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getConfig, getCurrentUser, getHistoryDetail, getSopDetail, getStats, isAuthSessionError, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateConfig, updateSopStepDemoVideo, updateSopStepReferenceMetadata, updateSopStepSegmentation, updateUserStatus } from '../api/client'
+import { clearAuthSession, createSop, deleteHistory, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getConfig, getCurrentUser, getHistoryDetail, getSopDetail, getStats, isAuthSessionError, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateConfig, updateSopStepDemoVideo, updateSopStepReferenceMetadata, updateSopStepSegmentation, updateUserStatus } from '../api/client'
 import AppBlobs from '../components/AppBlobs.vue'
 import GroupedList from '../components/GroupedList.vue'
 import SectionHeader from '../components/SectionHeader.vue'
@@ -551,7 +499,7 @@ const historyFilters = reactive({
   reviewStatus: '',
   sortOrder: 'desc'
 })
-const sopForm = reactive({ name: '', scene: '', stepCount: 1, workflowVideo: null, steps: [], penaltyConfig: {} })
+const sopForm = reactive({ name: '', scene: '', stepCount: 1, workflowVideo: null, steps: [] })
 const currentUser = ref(getCurrentUser())
 const DEFAULT_API_CONFIG = {
   apiKey: '',
@@ -567,35 +515,6 @@ const STEP_TYPE_OPTIONS = [
   { label: '条件触发', value: 'conditional' }
 ]
 
-const PENALTY_ISSUE_TYPES = [
-  { key: '正常', label: '正常', description: '操作符合标准' },
-  { key: '证据不足', label: '证据不足', description: '操作存在但画面不清晰' },
-  { key: '重复操作', label: '重复操作', description: '同一步骤多次执行' },
-  { key: '部分完成', label: '部分完成', description: '步骤仅完成一部分' },
-  { key: '过早执行', label: '过早执行', description: '在规定时机之前执行' },
-  { key: '延后执行', label: '延后执行', description: '在规定时机之后执行' },
-  { key: '过快完成', label: '过快完成', description: '未达到规定持续时间' },
-  { key: '超时完成', label: '超时完成', description: '超过步骤规定完成时限' },
-  { key: '动作错误', label: '动作错误', description: '执行了错误的操作' },
-  { key: '顺序颠倒', label: '顺序颠倒', description: '步骤执行顺序错误' },
-  { key: '前置条件缺失', label: '前置条件缺失', description: '前置步骤未完成即执行' },
-  { key: '缺失', label: '缺失', description: '该步骤未被执行' }
-]
-const DEFAULT_PENALTY_VALUES = {
-  '正常': 0, '证据不足': 15, '重复操作': 10, '部分完成': 20,
-  '过早执行': 25, '延后执行': 25, '过快完成': 25, '超时完成': 25, '动作错误': 35,
-  '顺序颠倒': 40, '前置条件缺失': 45, '缺失': 60
-}
-
-const showPenaltyConfig = ref(false)
-const customizedPenaltyCount = computed(() => Object.keys(sopForm.penaltyConfig).length)
-
-function getPenaltySeverityColor(value) {
-  if (value === 0) return 'var(--system-green)'
-  if (value <= 15) return 'var(--system-yellow)'
-  if (value <= 30) return 'var(--system-orange)'
-  return 'var(--system-red)'
-}
 const apiConfig = reactive({ ...DEFAULT_API_CONFIG })
 
 const currentUserName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '管理员')
@@ -646,7 +565,7 @@ const sopStatsColumns = [
   { key: 'totalCount', label: '执行次数', align: 'center' },
   { key: 'passedCount', label: '通过次数', align: 'center' },
   { key: 'passRate', label: '通过率', align: 'center' },
-  { key: 'averageScore', label: '平均得分', align: 'center' }
+  { key: 'pendingReviewCount', label: '待复核', align: 'center' }
 ]
 const historyColumns = [
   { key: 'taskName', label: 'SOP 名称' },
@@ -814,8 +733,6 @@ function openCreateDialog() {
   sopForm.stepCount = 1
   sopForm.workflowVideo = null
   sopForm.steps = [createEmptyStep()]
-  sopForm.penaltyConfig = {}
-  showPenaltyConfig.value = false
   dialogVisible.value = true
 }
 
@@ -908,8 +825,7 @@ async function saveSop() {
         type: sopForm.workflowVideo.type || '',
         size: sopForm.workflowVideo.size ?? null,
         lastModified: sopForm.workflowVideo.lastModified ?? null
-      },
-      penaltyConfig: Object.keys(sopForm.penaltyConfig).length > 0 ? sopForm.penaltyConfig : null
+      }
     })
     dialogVisible.value = false
     await reloadCurrentView()
@@ -957,6 +873,27 @@ async function openHistoryDetail(row) {
     historyDetailVisible.value = true
   } catch (error) {
     showErrorMessage(error, '加载详情失败')
+  }
+}
+
+async function deleteHistoryRecord(row) {
+  try {
+    await ElMessageBox.confirm('确定删除该评测历史记录吗？删除后不可恢复。', '提示', { type: 'warning', customClass: 'apple-msgbox' })
+    await deleteHistory(row.id)
+    if (selectedHistoryRecord.value?.id === row.id) {
+      historyDetailVisible.value = false
+      selectedHistoryRecord.value = null
+      revokeVideoUrl(historyVideoUrl)
+    }
+    if (reviewTarget.value?.id === row.id) {
+      reviewDialogVisible.value = false
+      reviewTarget.value = null
+      revokeVideoUrl(reviewVideoUrl)
+    }
+    await Promise.all([loadHistoryList(), loadStats()])
+    ElMessage.success('历史记录已删除')
+  } catch (error) {
+    if (error !== 'cancel') showErrorMessage(error, '删除历史记录失败')
   }
 }
 
@@ -1127,11 +1064,6 @@ async function replaceStepDemoVideo(step) {
   } finally {
     step.demoVideoUploadLoading = false
   }
-}
-
-function formatAverageScore(value) {
-  const num = Number(value)
-  return Number.isFinite(num) ? `${num.toFixed(1)} / 100` : '-'
 }
 
 function formatRate(value) {
