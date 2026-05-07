@@ -73,6 +73,8 @@ class StepResultPayload(BaseModel):
     prerequisiteViolated: bool = False
     detectedStartSec: Optional[float] = None
     detectedEndSec: Optional[float] = None
+    repeatedExecution: bool = False
+    detectedOccurrences: List[dict] = Field(default_factory=list)
     minDurationSec: Optional[float] = None
     maxDurationSec: Optional[float] = None
     stepType: str = DEFAULT_STEP_TYPE

@@ -689,10 +689,91 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertIn("stepResults", system_prompt)
         self.assertIn("stepNo", system_prompt)
         self.assertIn("mm:ss", system_prompt)
+        self.assertIn("重复操作", system_prompt)
+        self.assertIn("detectedOccurrences", str(prompt.build_batch_step_evaluation_schema(3)))
         self.assertIn(
             "stepResults",
             prompt.build_batch_step_evaluation_schema(3)["json_schema"]["schema"]["required"],
         )
+
+    def test_post_process_marks_repeated_step_occurrences_as_duplicate_operation(self):
+        sop = _build_test_sop()
+        evaluation_payload = {
+            "passed": True,
+            "feedback": "",
+            "issues": [],
+            "sequenceAssessment": "",
+            "prerequisiteViolated": False,
+            "stepResults": [
+                {
+                    "stepNo": 1,
+                    "description": "做出“1”手势",
+                    "passed": True,
+                    "confidence": 0.95,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 0.5,
+                    "detectedEndSec": 1.0,
+                    "repeatedExecution": False,
+                    "detectedOccurrences": [
+                        {"startSec": 0.5, "endSec": 1.0, "note": "第一次形成手势1"}
+                    ],
+                    "evidence": "步骤1正常完成。",
+                },
+                {
+                    "stepNo": 2,
+                    "description": "做出“2”手势",
+                    "passed": True,
+                    "confidence": 0.95,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 2.0,
+                    "detectedEndSec": 3.0,
+                    "repeatedExecution": True,
+                    "detectedOccurrences": [
+                        {"startSec": 2.0, "endSec": 3.0, "note": "第一次形成手势2"},
+                        {"startSec": 4.5, "endSec": 5.2, "note": "重复形成手势2"},
+                    ],
+                    "evidence": "步骤2动作完成。",
+                },
+                {
+                    "stepNo": 3,
+                    "description": "做出“3”手势",
+                    "passed": True,
+                    "confidence": 0.95,
+                    "applicable": True,
+                    "issueType": "正常",
+                    "completionLevel": "完整",
+                    "orderIssue": False,
+                    "prerequisiteViolated": False,
+                    "detectedStartSec": 6.0,
+                    "detectedEndSec": 7.0,
+                    "repeatedExecution": False,
+                    "detectedOccurrences": [
+                        {"startSec": 6.0, "endSec": 7.0, "note": "第一次形成手势3"}
+                    ],
+                    "evidence": "步骤3正常完成。",
+                },
+            ],
+        }
+
+        result = scoring.post_process_evaluation_result(sop, evaluation_payload)
+        step2 = result["stepResults"][1]
+
+        self.assertFalse(result["passed"])
+        self.assertFalse(step2["passed"])
+        self.assertEqual(step2["issueType"], "重复操作")
+        self.assertEqual(step2["detectedStartSec"], 2.0)
+        self.assertEqual(step2["detectedEndSec"], 5.2)
+        self.assertEqual(len(step2["detectedOccurrences"]), 2)
+        self.assertIn("步骤 2 重复操作", result["issues"])
+        self.assertIn("后端规则判断该步骤重复出现 2 次", step2["evidence"])
 
     def test_run_per_step_evaluation_batch_calls_model_once_and_returns_all_steps(self):
         sop = _build_test_sop()

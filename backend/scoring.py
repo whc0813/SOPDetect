@@ -58,6 +58,25 @@ def normalize_duration_limit(value):
     return number
 
 
+def normalize_detected_occurrences(value):
+    occurrences = []
+    for item in value or []:
+        if not isinstance(item, dict):
+            continue
+        start = normalize_optional_float(item.get("startSec"))
+        end = normalize_optional_float(item.get("endSec"))
+        if start is None or end is None or end < start:
+            continue
+        occurrences.append(
+            {
+                "startSec": start,
+                "endSec": end,
+                "note": (item.get("note") or "").strip(),
+            }
+        )
+    return sorted(occurrences, key=lambda item: (item["startSec"], item["endSec"]))
+
+
 def normalize_step_weight(value):
     try:
         weight = round(float(value), 1)
@@ -191,6 +210,25 @@ def apply_duration_constraint(step: SopStep, result: dict) -> dict:
     return result
 
 
+def apply_repeated_execution_constraint(step: SopStep, result: dict) -> dict:
+    occurrences = normalize_detected_occurrences(result.get("detectedOccurrences"))
+    result["detectedOccurrences"] = occurrences
+    if len(occurrences) <= 1:
+        return result
+    if not bool(result.get("repeatedExecution")) and normalize_issue_type(result.get("issueType")) != "重复操作":
+        return result
+
+    result["repeatedExecution"] = True
+    result["issueType"] = "重复操作"
+    result["detectedStartSec"] = occurrences[0]["startSec"]
+    result["detectedEndSec"] = occurrences[-1]["endSec"]
+    result["evidence"] = append_rule_note(
+        result.get("evidence") or "",
+        f"后端规则判断该步骤重复出现 {len(occurrences)} 次",
+    )
+    return result
+
+
 def apply_default_sequence_constraint(
     previous_result: Optional[dict], current_result: dict
 ) -> dict:
@@ -249,6 +287,8 @@ def post_process_evaluation_result(sop: SopData, evaluation: dict) -> dict:
             "prerequisiteViolated": bool(raw_result.get("prerequisiteViolated")),
             "detectedStartSec": normalize_optional_float(raw_result.get("detectedStartSec")),
             "detectedEndSec": normalize_optional_float(raw_result.get("detectedEndSec")),
+            "repeatedExecution": bool(raw_result.get("repeatedExecution")),
+            "detectedOccurrences": normalize_detected_occurrences(raw_result.get("detectedOccurrences")),
             "minDurationSec": normalize_duration_limit(getattr(step, "minDurationSec", None)),
             "maxDurationSec": normalize_duration_limit(getattr(step, "maxDurationSec", None)),
             "stepType": step.stepType,
@@ -274,6 +314,7 @@ def post_process_evaluation_result(sop: SopData, evaluation: dict) -> dict:
             )
 
         step_result = apply_duration_constraint(step, step_result)
+        step_result = apply_repeated_execution_constraint(step, step_result)
         step_result = apply_default_sequence_constraint(
             previous_included_step_result, step_result
         )

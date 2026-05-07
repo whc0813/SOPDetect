@@ -252,6 +252,16 @@ def build_response_schema(step_count: int):
 
 
 def build_temporal_segmentation_schema(step_count: int):
+    occurrence_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "startSec": {"type": ["number", "null"], "minimum": 0},
+            "endSec": {"type": ["number", "null"], "minimum": 0},
+            "note": {"type": "string"},
+        },
+        "required": ["startSec", "endSec", "note"],
+    }
     return {
         "type": "json_schema",
         "json_schema": {
@@ -273,11 +283,17 @@ def build_temporal_segmentation_schema(step_count: int):
                                 "detected": {"type": "boolean"},
                                 "startSec": {"type": ["number", "null"], "minimum": 0},
                                 "endSec": {"type": ["number", "null"], "minimum": 0},
+                                "occurrenceCount": {"type": "integer", "minimum": 0},
+                                "occurrences": {
+                                    "type": "array",
+                                    "items": occurrence_schema,
+                                },
                                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                                 "note": {"type": "string"},
                             },
                             "required": [
-                                "stepNo", "detected", "startSec", "endSec", "confidence", "note",
+                                "stepNo", "detected", "startSec", "endSec",
+                                "occurrenceCount", "occurrences", "confidence", "note",
                             ],
                         },
                     },
@@ -519,6 +535,8 @@ def build_temporal_segmentation_system_prompt():
         "请结合步骤说明、参考摘要、ROI 提示、关键时刻和参考关键帧来定位动作。\n"
         "注意事项：\n"
         "- 如果某个步骤没有出现，detected=false，startSec/endSec=null。\n"
+        "- 如果同一 SOP 步骤在视频中出现多次，occurrences 必须列出每一次出现的起止时间，occurrenceCount 填写出现次数。\n"
+        "- startSec/endSec 使用该步骤最早一次有效出现的起止时间；重复出现不要合并成一个长时间窗。\n"
         "- 时间精度保留一位小数即可。\n"
         "- 步骤可能乱序发生，请如实输出实际顺序。\n"
         "- 对外观相似的步骤，例如 1/2/3 手势，务必区分手指数量、姿态变化和先后顺序。\n"
@@ -555,6 +573,7 @@ def build_temporal_segmentation_blocks(sop: SopData, user_video_data_url: str, u
                 f"适用场景：{sop.scene or '未提供'}\n\n"
                 f"该 SOP 共 {sop.stepCount} 个步骤，下面依次给出每个步骤的参考信息。\n"
                 "请分析用户操作视频，识别每个步骤在视频中的大致起止时间（秒）。\n"
+                "如果同一步骤出现多次，请列出每一次出现，不要只保留第一次或最后一次。\n"
                 "只返回 JSON，不要输出额外说明。"
             ),
         },
@@ -570,16 +589,17 @@ def build_temporal_segmentation_blocks(sop: SopData, user_video_data_url: str, u
 def build_global_validation_system_prompt():
     return (
         "你是一个 SOP 全局顺序校验助手。\n"
-        "你将基于每个步骤的独立评估结果和检测时间，判断整体执行顺序、前置依赖和是否存在乱序。\n"
+        "你将基于每个步骤的独立评估结果和检测时间，判断整体执行顺序、前置依赖、重复执行和是否存在乱序。\n"
         "重点关注：\n"
         "1. 是否存在后续步骤抢先执行。\n"
         "2. 是否存在某一步虽然动作正确，但实际发生顺序错误，应改判为顺序问题。\n"
-        "3. 是否需要把顺序结论回写到具体步骤上。\n"
+        "3. 是否存在某一步被不必要地重复执行，应改判为“重复操作”。\n"
+        "4. 是否需要把顺序或重复结论回写到具体步骤上。\n"
         "- sequenceAssessment 只能从以下值中选择：['顺序正确', '轻微顺序偏差', '明显顺序错误', '无法判断顺序']。\n"
         "- feedback 和 issues 使用中文。\n"
         "- stepOverrides 只填写需要修正的步骤；如果某一步需要改判，只能使用 stepNo 标识步骤，不要使用 stepId。\n"
         "- stepOverrides 中 orderIssue 和 prerequisiteViolated 必须是布尔值 true/false，不能写成“抢先执行”“滞后执行”或步骤名称。\n"
-        "- stepOverrides 中 issueType 必须使用枚举值，例如“顺序颠倒”“过早执行”“延后执行”“前置条件缺失”，不要写“顺序问题”。\n"
+        "- stepOverrides 中 issueType 必须使用枚举值，例如“顺序颠倒”“过早执行”“延后执行”“前置条件缺失”“重复操作”，不要写“顺序问题”。\n"
         "- 每个 stepOverrides 项必须明确给出 stepNo、issueType、orderIssue、prerequisiteViolated 和 evidenceNote。\n"
         "- 如果步骤结果显示实际耗时违反该步骤配置的最短/最长耗时限制，可以改判为“过快完成”或“超时完成”；无时间限制的步骤不要做时间类改判。\n"
         "只返回合法 JSON，不要输出任何额外说明。"
@@ -601,12 +621,28 @@ def build_global_validation_content(sop: SopData, step_results: list, segments: 
         time_range = f"{start:.1f}s~{end:.1f}s" if (start is not None and end is not None) else "未定位"
         prerequisite_text = ", ".join([str(item) for item in step.prerequisiteStepNos]) or "无"
         duration_constraint_text = format_duration_constraint(step)
+        occurrences = result.get("detectedOccurrences") or []
+        occurrence_text = "无"
+        if occurrences:
+            occurrence_parts = []
+            for index, occurrence in enumerate(occurrences[:5], start=1):
+                occurrence_start = occurrence.get("startSec")
+                occurrence_end = occurrence.get("endSec")
+                if occurrence_start is None or occurrence_end is None:
+                    continue
+                occurrence_parts.append(
+                    f"第{index}次 {float(occurrence_start):.1f}s~{float(occurrence_end):.1f}s"
+                )
+            if occurrence_parts:
+                occurrence_text = "; ".join(occurrence_parts)
         step_results_lines.append(
             f"步骤 {step.stepNo}: {step.description}\n"
             f"  判断={'通过' if result.get('passed') else '未通过'} | "
             f"问题类型={result.get('issueType', '未知')} | "
             f"检测区间={time_range} | 顺序问题={'是' if result.get('orderIssue') else '否'} | "
-            f"前置依赖={prerequisite_text} | 步骤耗时限制={duration_constraint_text}\n"
+            f"重复执行={'是' if result.get('repeatedExecution') else '否'} | "
+            f"出现片段={occurrence_text} | 前置依赖={prerequisite_text} | "
+            f"步骤耗时限制={duration_constraint_text}\n"
             f"  证据：{result.get('evidence', '无')}"
         )
 
@@ -616,7 +652,7 @@ def build_global_validation_content(sop: SopData, step_results: list, segments: 
         f"期望步骤顺序：{step_order_text}\n\n"
         "以下是各步骤的单独评估结果：\n\n"
         + "\n\n".join(step_results_lines)
-        + "\n\n请根据以上各步骤结果，给出整体综合判断。如果某一步动作本身正确但顺序不对，请通过 stepOverrides 明确改判。"
+        + "\n\n请根据以上各步骤结果，给出整体综合判断。如果某一步动作本身正确但顺序不对，或存在不必要的重复执行，请通过 stepOverrides 明确改判。"
     )
 
 
@@ -690,6 +726,8 @@ def build_batch_step_evaluation_system_prompt():
         "5. feedback、issues、evidence 全部使用中文。\n"
         "6. issueType 只能从给定枚举中选择，completionLevel 只能从给定枚举中选择。\n"
         "7. 步骤配置最短耗时时，实际动作持续时间短于限制应标记“过快完成”；配置最长耗时时，实际动作持续时间超过限制应标记“超时完成”。无时间限制时不要使用时间类问题。\n"
+        "8. 必须检查同一目标步骤在完整视频中是否出现多次，并在 detectedOccurrences 中列出每次目标动作出现的时间段。\n"
+        "9. 如果同一步骤出现两次及以上，且步骤说明、条件说明或参考摘要没有明确允许多对象/多次执行，应设置 repeatedExecution=true，issueType=“重复操作”；如果明确允许（例如双显卡安装、两件物品依次安装），不要因多次出现判为重复操作，并在 evidence 中说明允许依据。\n"
         "只返回合法 JSON，不要输出任何额外说明。"
     )
 
@@ -726,6 +764,20 @@ def build_batch_step_evaluation_blocks(
             segment_text = f"{float(start_sec):.1f}s - {float(end_sec):.1f}s"
         else:
             segment_text = "未稳定定位"
+        occurrence_text = "无"
+        occurrences = segment_info.get("occurrences") or []
+        if occurrences:
+            occurrence_items = []
+            for index, occurrence in enumerate(occurrences[:5], start=1):
+                occurrence_start = occurrence.get("startSec")
+                occurrence_end = occurrence.get("endSec")
+                if occurrence_start is None or occurrence_end is None:
+                    continue
+                occurrence_items.append(
+                    f"第{index}次 {float(occurrence_start):.1f}s - {float(occurrence_end):.1f}s"
+                )
+            if occurrence_items:
+                occurrence_text = "; ".join(occurrence_items)
         blocks.append(
             {
                 "type": "text",
@@ -741,6 +793,8 @@ def build_batch_step_evaluation_blocks(
                     f"ROI 提示：{step.roiHint or '无'}\n"
                     f"参考关键时刻：{substeps_text}\n"
                     f"阶段1候选时间窗：{segment_text}\n"
+                    f"阶段1疑似出现次数：{segment_info.get('occurrenceCount') or len(occurrences) or 0}\n"
+                    f"阶段1疑似出现片段：{occurrence_text}\n"
                     "请结合完整用户视频判断该步骤是否出现、完成度如何、是否存在顺序问题。"
                 ),
             }
@@ -757,6 +811,16 @@ def build_batch_step_evaluation_blocks(
 
 
 def build_batch_step_evaluation_schema(step_count: int):
+    occurrence_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "startSec": {"type": "number", "minimum": 0},
+            "endSec": {"type": "number", "minimum": 0},
+            "note": {"type": "string"},
+        },
+        "required": ["startSec", "endSec", "note"],
+    }
     return {
         "type": "json_schema",
         "json_schema": {
@@ -783,6 +847,11 @@ def build_batch_step_evaluation_schema(step_count: int):
                                 "prerequisiteViolated": {"type": "boolean"},
                                 "detectedStartSec": {"type": ["number", "null"], "minimum": 0},
                                 "detectedEndSec": {"type": ["number", "null"], "minimum": 0},
+                                "repeatedExecution": {"type": "boolean"},
+                                "detectedOccurrences": {
+                                    "type": "array",
+                                    "items": occurrence_schema,
+                                },
                                 "evidence": {"type": "string"},
                             },
                             "required": [
@@ -796,6 +865,8 @@ def build_batch_step_evaluation_schema(step_count: int):
                                 "prerequisiteViolated",
                                 "detectedStartSec",
                                 "detectedEndSec",
+                                "repeatedExecution",
+                                "detectedOccurrences",
                                 "evidence",
                             ],
                         },

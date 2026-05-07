@@ -216,11 +216,22 @@ def ensure_step_segments(sop: SopData, segments: Optional[dict], video_path: str
                 has_valid_window = False
 
         if current.get("detected") and has_valid_window:
+            occurrences = _normalize_segment_occurrences(current.get("occurrences"))
+            if not occurrences:
+                occurrences = [
+                    {
+                        "startSec": round(float(start), 3),
+                        "endSec": round(float(end), 3),
+                        "note": (current.get("note") or "").strip(),
+                    }
+                ]
             normalized_segments[step.stepNo] = {
                 "stepNo": step.stepNo,
                 "detected": True,
                 "startSec": round(float(start), 3),
                 "endSec": round(float(end), 3),
+                "occurrenceCount": int(current.get("occurrenceCount") or len(occurrences)),
+                "occurrences": occurrences,
                 "confidence": max(0.0, min(1.0, float(current.get("confidence") or 0))),
                 "note": (current.get("note") or "").strip(),
             }
@@ -243,11 +254,39 @@ def ensure_step_segments(sop: SopData, segments: Optional[dict], video_path: str
             "detected": False,
             "startSec": round(float(fallback_start or 0), 3) if fallback_start is not None else None,
             "endSec": round(float(fallback_end or 0), 3) if fallback_end is not None else None,
+            "occurrenceCount": 0,
+            "occurrences": [],
             "confidence": 0.0,
             "note": note,
         }
 
     return normalized_segments
+
+
+def _normalize_segment_occurrences(value) -> list:
+    occurrences = []
+    for item in value or []:
+        if not isinstance(item, dict):
+            continue
+        start = item.get("startSec")
+        end = item.get("endSec")
+        if start is None or end is None:
+            continue
+        try:
+            start = round(float(start), 3)
+            end = round(float(end), 3)
+        except (TypeError, ValueError):
+            continue
+        if end < start:
+            continue
+        occurrences.append(
+            {
+                "startSec": start,
+                "endSec": end,
+                "note": (item.get("note") or "").strip(),
+            }
+        )
+    return sorted(occurrences, key=lambda item: (item["startSec"], item["endSec"]))
 
 
 def _append_evidence_note(evidence: str, note: str) -> str:
