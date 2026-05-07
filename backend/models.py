@@ -11,7 +11,6 @@ ISSUE_TYPE_VALUES = {
 }
 COMPLETION_LEVEL_VALUES = {"完整", "部分完成", "未完成", "无法判断"}
 DEFAULT_STEP_TYPE = "required"
-DEFAULT_STEP_WEIGHT = 1.0
 DEFAULT_ISSUE_TYPE = "证据不足"
 DEFAULT_COMPLETION_LEVEL = "无法判断"
 
@@ -41,7 +40,6 @@ class SopStep(BaseModel):
     stepNo: int
     description: str
     stepType: str = DEFAULT_STEP_TYPE
-    stepWeight: float = DEFAULT_STEP_WEIGHT
     conditionText: str = ""
     prerequisiteStepNos: List[int] = Field(default_factory=list)
     minDurationSec: Optional[float] = None
@@ -78,7 +76,6 @@ class StepResultPayload(BaseModel):
     minDurationSec: Optional[float] = None
     maxDurationSec: Optional[float] = None
     stepType: str = DEFAULT_STEP_TYPE
-    stepWeight: float = DEFAULT_STEP_WEIGHT
     evidence: str = ""
 
 

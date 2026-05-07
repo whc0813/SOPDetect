@@ -35,7 +35,6 @@ DEFAULT_CONFIG = {
 
 STEP_TYPE_VALUES = {"required", "optional", "conditional"}
 DEFAULT_STEP_TYPE = "required"
-DEFAULT_STEP_WEIGHT = 1.0
 
 
 def _load_env_file():
@@ -237,16 +236,14 @@ def _column_exists(connection, table_name, column_name):
 def _run_schema_migrations(connection):
     column_statements = {
         ("sop_steps", "step_type"): "ALTER TABLE sop_steps ADD COLUMN step_type ENUM('required', 'optional', 'conditional') NOT NULL DEFAULT 'required' AFTER description",
-        ("sop_steps", "step_weight"): "ALTER TABLE sop_steps ADD COLUMN step_weight DECIMAL(4,1) NOT NULL DEFAULT 1.0 AFTER step_type",
-        ("sop_steps", "condition_text"): "ALTER TABLE sop_steps ADD COLUMN condition_text TEXT NULL AFTER step_weight",
+        ("sop_steps", "condition_text"): "ALTER TABLE sop_steps ADD COLUMN condition_text TEXT NULL AFTER step_type",
         ("sop_steps", "min_duration_sec"): "ALTER TABLE sop_steps ADD COLUMN min_duration_sec DECIMAL(8,3) NULL AFTER condition_text",
         ("sop_steps", "max_duration_sec"): "ALTER TABLE sop_steps ADD COLUMN max_duration_sec DECIMAL(8,3) NULL AFTER min_duration_sec",
         ("execution_step_results", "applicable"): "ALTER TABLE execution_step_results ADD COLUMN applicable TINYINT(1) NOT NULL DEFAULT 1 AFTER confidence",
         ("execution_step_results", "included_in_score"): "ALTER TABLE execution_step_results ADD COLUMN included_in_score TINYINT(1) NOT NULL DEFAULT 1 AFTER applicable",
         ("execution_step_results", "detected_start_sec"): "ALTER TABLE execution_step_results ADD COLUMN detected_start_sec DECIMAL(8,3) NULL AFTER prerequisite_violated",
         ("execution_step_results", "detected_end_sec"): "ALTER TABLE execution_step_results ADD COLUMN detected_end_sec DECIMAL(8,3) NULL AFTER detected_start_sec",
-        ("execution_step_results", "step_weight_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN step_weight_snapshot DECIMAL(4,1) NOT NULL DEFAULT 1.0 AFTER detected_end_sec",
-        ("execution_step_results", "step_type_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN step_type_snapshot VARCHAR(20) NOT NULL DEFAULT 'required' AFTER step_weight_snapshot",
+        ("execution_step_results", "step_type_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN step_type_snapshot VARCHAR(20) NOT NULL DEFAULT 'required' AFTER detected_end_sec",
         ("execution_step_results", "min_duration_sec_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN min_duration_sec_snapshot DECIMAL(8,3) NULL AFTER step_type_snapshot",
         ("execution_step_results", "max_duration_sec_snapshot"): "ALTER TABLE execution_step_results ADD COLUMN max_duration_sec_snapshot DECIMAL(8,3) NULL AFTER min_duration_sec_snapshot",
     }
@@ -266,6 +263,8 @@ def _run_schema_migrations(connection):
         ("sops", "penalty_config"): "ALTER TABLE sops DROP COLUMN penalty_config",
         ("sop_executions", "score"): "ALTER TABLE sop_executions DROP COLUMN score",
         ("execution_step_results", "score"): "ALTER TABLE execution_step_results DROP COLUMN score",
+        ("sop_steps", "step_weight"): "ALTER TABLE sop_steps DROP COLUMN step_weight",
+        ("execution_step_results", "step_weight_snapshot"): "ALTER TABLE execution_step_results DROP COLUMN step_weight_snapshot",
     }
 
     for (table_name, column_name), statement in drop_column_statements.items():
@@ -295,14 +294,6 @@ def _run_schema_migrations(connection):
 def _normalize_step_type(value):
     text = str(value or "").strip().lower()
     return text if text in STEP_TYPE_VALUES else DEFAULT_STEP_TYPE
-
-
-def _normalize_step_weight(value):
-    try:
-        weight = round(float(value), 1)
-    except Exception:
-        return DEFAULT_STEP_WEIGHT
-    return min(5.0, max(0.5, weight))
 
 
 def _normalize_optional_float(value):
@@ -339,10 +330,11 @@ def _normalize_prerequisite_step_nos(values, current_step_no=None):
 
 def _normalize_step_record(step):
     step_no = int(step.get("stepNo") or 0)
+    legacy_step_weight_field = "step" + "Weight"
+    sanitized = {key: value for key, value in step.items() if key != legacy_step_weight_field}
     return {
-        **step,
+        **sanitized,
         "stepType": _normalize_step_type(step.get("stepType")),
-        "stepWeight": _normalize_step_weight(step.get("stepWeight")),
         "conditionText": (step.get("conditionText") or "").strip(),
         "prerequisiteStepNos": _normalize_prerequisite_step_nos(step.get("prerequisiteStepNos"), step_no or None),
         "minDurationSec": _normalize_duration_limit(step.get("minDurationSec")),
@@ -976,7 +968,6 @@ def _build_sop_records(connection, sop_codes=None):
             {
                 "stepNo": int(step.get("step_no") or 0),
                 "stepType": step.get("step_type"),
-                "stepWeight": step.get("step_weight"),
                 "conditionText": step.get("condition_text"),
                 "prerequisiteStepNos": prerequisite_map.get(step["id"], []),
                 "minDurationSec": step.get("min_duration_sec"),
@@ -991,7 +982,6 @@ def _build_sop_records(connection, sop_codes=None):
                 "videoMeta": demo_video,
                 "demoVideo": demo_video,
                 "stepType": normalized_step["stepType"],
-                "stepWeight": normalized_step["stepWeight"],
                 "conditionText": normalized_step["conditionText"],
                 "prerequisiteStepNos": normalized_step["prerequisiteStepNos"],
                 "minDurationSec": normalized_step["minDurationSec"],
@@ -1172,18 +1162,17 @@ def _upsert_sop_content(connection, sop_data, created_by_id=None):
             cursor.execute(
                 """
                 INSERT INTO sop_steps (
-                  sop_id, step_no, description, step_type, step_weight, condition_text,
+                  sop_id, step_no, description, step_type, condition_text,
                   min_duration_sec, max_duration_sec, reference_mode,
                   reference_summary, roi_hint, ai_used, reference_duration_sec, reference_fps,
                   reference_frame_count, raw_ai_result
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     sop_id,
                     step.get("stepNo") or 0,
                     step.get("description") or "",
                     step.get("stepType") or DEFAULT_STEP_TYPE,
-                    step.get("stepWeight") or DEFAULT_STEP_WEIGHT,
                     step.get("conditionText") or "",
                     step.get("minDurationSec"),
                     step.get("maxDurationSec"),
@@ -2016,7 +2005,6 @@ def _build_history_records(
                 "prerequisiteViolated": bool(row.get("prerequisite_violated")),
                 "detectedStartSec": float(row.get("detected_start_sec")) if row.get("detected_start_sec") is not None else None,
                 "detectedEndSec": float(row.get("detected_end_sec")) if row.get("detected_end_sec") is not None else None,
-                "stepWeight": _normalize_step_weight(row.get("step_weight_snapshot")),
                 "stepType": _normalize_step_type(row.get("step_type_snapshot")),
                 "minDurationSec": _normalize_duration_limit(row.get("min_duration_sec_snapshot")),
                 "maxDurationSec": _normalize_duration_limit(row.get("max_duration_sec_snapshot")),
@@ -2207,9 +2195,9 @@ def add_history(record, current_user=None):
                     INSERT INTO execution_step_results (
                       execution_id, sop_step_id, step_no, description, passed, confidence, applicable,
                       included_in_score, issue_type, completion_level, order_issue, prerequisite_violated,
-                      detected_start_sec, detected_end_sec, step_weight_snapshot, step_type_snapshot,
+                      detected_start_sec, detected_end_sec, step_type_snapshot,
                       min_duration_sec_snapshot, max_duration_sec_snapshot, evidence
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         execution_id,
@@ -2226,7 +2214,6 @@ def add_history(record, current_user=None):
                         1 if item.get("prerequisiteViolated") else 0,
                         item.get("detectedStartSec"),
                         item.get("detectedEndSec"),
-                        _normalize_step_weight(item.get("stepWeight")),
                         _normalize_step_type(item.get("stepType")),
                         _normalize_duration_limit(item.get("minDurationSec")),
                         _normalize_duration_limit(item.get("maxDurationSec")),
@@ -2310,7 +2297,6 @@ def serialize_sop_summary(sop):
                 "videoMeta": serialize_media_reference(step.get("demoVideo")),
                 "demoVideo": serialize_media_reference(step.get("demoVideo")),
                 "stepType": _normalize_step_type(step.get("stepType")),
-                "stepWeight": _normalize_step_weight(step.get("stepWeight")),
                 "conditionText": (step.get("conditionText") or "").strip(),
                 "prerequisiteStepNos": _normalize_prerequisite_step_nos(step.get("prerequisiteStepNos"), step.get("stepNo")),
                 "minDurationSec": _normalize_duration_limit(step.get("minDurationSec")),

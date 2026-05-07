@@ -1,8 +1,16 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+
+const userVuePath = path.resolve(__dirname, '../src/views/User.vue')
 
 async function loadUserHistoryModule() {
   return import('../src/utils/user-history.mjs')
+}
+
+function readUserVue() {
+  return fs.readFileSync(userVuePath, 'utf8')
 }
 
 test('normalizeHistory keeps token usage in detail', async () => {
@@ -46,6 +54,14 @@ test('buildEvaluationResultFromHistory exposes token usage for result card', asy
     outputTokens: 40,
     totalTokens: 240,
   })
+})
+
+test('user views no longer display step weight', () => {
+  const source = readUserVue()
+
+  assert.doesNotMatch(source, /stepWeight/)
+  assert.doesNotMatch(source, /步骤权重/)
+  assert.doesNotMatch(source, /权重 \{\{/)
 })
 
 test('normalizeHistory builds evaluation process stages from multistage traces', async () => {

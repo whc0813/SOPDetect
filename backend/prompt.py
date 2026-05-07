@@ -87,7 +87,7 @@ def build_evaluation_system_prompt():
         "5. 重复操作或多余操作，出现不必要的重复、额外动作或潜在风险动作。\n"
         "6. 动作错误或替代动作，虽然有动作，但不符合该步骤真实意图。\n"
         "7. 证据不足，画面遮挡、模糊、采样过 sparse 或无法支持高置信判断。\n"
-        "8. 前置条件未满足，如果某一步依赖前一步先完成，则顺序错误要明确扣分。\n"
+        "8. 前置条件未满足，如果某一步依赖前一步先完成，则顺序错误要明确判为异常。\n"
         "输出要求：\n"
         "- feedback、issues、evidence 全部使用中文。\n"
         "- issues 用简短中文短语概括最重要的问题。\n"
@@ -95,7 +95,7 @@ def build_evaluation_system_prompt():
         "- passed=true 只能在整个 SOP 基本按正确顺序完成、没有明显漏做/错做/严重错序时给出。\n"
         "- 顶层字段 sequenceAssessment 只能从以下值中选择：['顺序正确', '轻微顺序偏差', '明显顺序错误', '无法判断顺序']。\n"
         "- 每个步骤的 issueType 只能从以下值中选择：['正常', '缺失', '顺序颠倒', '过早执行', '延后执行', '重复操作', '动作错误', '部分完成', '证据不足', '前置条件缺失', '过快完成', '超时完成']。\n"
-        "- 只有步骤明确给出时间限制时才判断耗时问题：低于最短耗时使用“过快完成”，超过最长耗时使用“超时完成”；无时间限制时不得因耗时长短扣分。\n"
+        "- 只有步骤明确给出时间限制时才判断耗时问题：低于最短耗时使用“过快完成”，超过最长耗时使用“超时完成”；无时间限制时不得因耗时长短判为异常。\n"
         "- 每个步骤的 completionLevel 只能从以下值中选择：['完整', '部分完成', '未完成', '无法判断']。\n"
         "- orderIssue 表示该步骤是否存在顺序问题；prerequisiteViolated 表示该步骤是否存在前置条件问题。\n"
         "- evidence 必须点明你为什么这样判断，必要时明确写出\"顺序颠倒\"\"过早执行\"\"延后执行\"\"证据不足\"等。\n"
@@ -141,7 +141,7 @@ def build_content_blocks(sop: SopData, user_video_data_url: str, user_video_fps:
         {
             "type": "text",
             "text": (
-                "下面是整段用户测试视频。请结合步骤类型、权重和前置依赖，"
+                "下面是整段用户测试视频。请结合步骤类型和前置依赖，"
                 "判断每一步是否适用、是否出现、起止时间大致是多少，并输出结构化结果。"
             ),
         }
@@ -168,7 +168,6 @@ def build_content_blocks(sop: SopData, user_video_data_url: str, user_video_fps:
                     f"步骤 {step.stepNo}\n"
                     f"步骤说明：{step.description}\n"
                     f"步骤类型：{step.stepType}\n"
-                    f"步骤权重：{step.stepWeight}\n"
                     f"条件说明：{step.conditionText or '无'}\n"
                     f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
                     f"步骤耗时限制：{duration_constraint_text}\n"
@@ -479,7 +478,6 @@ def build_per_step_evaluation_blocks(
                 f"当前需要评估的步骤：步骤 {step.stepNo}\n"
                 f"步骤说明：{step.description}\n"
                 f"步骤类型：{step.stepType}\n"
-                f"步骤权重：{step.stepWeight}\n"
                 f"条件说明：{step.conditionText or '无'}\n"
                 f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
                 f"步骤耗时限制：{duration_constraint_text}\n"
@@ -785,7 +783,6 @@ def build_batch_step_evaluation_blocks(
                     f"步骤 {step.stepNo}\n"
                     f"步骤说明：{step.description}\n"
                     f"步骤类型：{step.stepType}\n"
-                    f"步骤权重：{step.stepWeight}\n"
                     f"条件说明：{step.conditionText or '无'}\n"
                     f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
                     f"步骤耗时限制：{duration_constraint_text}\n"

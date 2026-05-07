@@ -49,6 +49,7 @@ class RemoveRiskTimeTests(unittest.TestCase):
 
         self.assertNotIn("riskLevel", result["stepResults"][0])
         self.assertNotIn("timingStatus", result["stepResults"][0])
+        self.assertNotIn("stepWeight", result["stepResults"][0])
         self.assertNotIn("风险等级", result["feedback"])
         self.assertNotIn("时间约束", result["feedback"])
 
@@ -76,6 +77,7 @@ class RemoveRiskTimeTests(unittest.TestCase):
 
         self.assertNotIn("riskLevel", result["steps"][0])
         self.assertNotIn("timeConstraint", result["steps"][0])
+        self.assertNotIn("stepWeight", result["steps"][0])
 
     def test_build_stats_drops_risk_and_timing_stats(self):
         history = [

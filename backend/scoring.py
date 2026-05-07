@@ -6,7 +6,6 @@ try:
         DEFAULT_COMPLETION_LEVEL,
         DEFAULT_ISSUE_TYPE,
         DEFAULT_STEP_TYPE,
-        DEFAULT_STEP_WEIGHT,
         ISSUE_TYPE_VALUES,
         STEP_TYPE_VALUES,
         SopData,
@@ -18,7 +17,6 @@ except ImportError:
         DEFAULT_COMPLETION_LEVEL,
         DEFAULT_ISSUE_TYPE,
         DEFAULT_STEP_TYPE,
-        DEFAULT_STEP_WEIGHT,
         ISSUE_TYPE_VALUES,
         STEP_TYPE_VALUES,
         SopData,
@@ -77,14 +75,6 @@ def normalize_detected_occurrences(value):
     return sorted(occurrences, key=lambda item: (item["startSec"], item["endSec"]))
 
 
-def normalize_step_weight(value):
-    try:
-        weight = round(float(value), 1)
-    except Exception:
-        return DEFAULT_STEP_WEIGHT
-    return min(5.0, max(0.5, weight))
-
-
 def normalize_prerequisite_step_nos(values, current_step_no=None):
     result = []
     current = int(current_step_no or 0)
@@ -104,10 +94,11 @@ def normalize_prerequisite_step_nos(values, current_step_no=None):
 
 def normalize_step_payload(step: dict) -> dict:
     step_no = int(step.get("stepNo") or 0)
+    legacy_step_weight_field = "step" + "Weight"
+    sanitized = {key: value for key, value in step.items() if key != legacy_step_weight_field}
     return {
-        **step,
+        **sanitized,
         "stepType": normalize_step_type(step.get("stepType")),
-        "stepWeight": normalize_step_weight(step.get("stepWeight")),
         "conditionText": (step.get("conditionText") or "").strip(),
         "prerequisiteStepNos": normalize_prerequisite_step_nos(
             step.get("prerequisiteStepNos"), step_no or None
@@ -292,7 +283,6 @@ def post_process_evaluation_result(sop: SopData, evaluation: dict) -> dict:
             "minDurationSec": normalize_duration_limit(getattr(step, "minDurationSec", None)),
             "maxDurationSec": normalize_duration_limit(getattr(step, "maxDurationSec", None)),
             "stepType": step.stepType,
-            "stepWeight": normalize_step_weight(step.stepWeight),
             "evidence": (raw_result.get("evidence") or "").strip(),
         }
 
@@ -328,11 +318,11 @@ def post_process_evaluation_result(sop: SopData, evaluation: dict) -> dict:
             step_result["passed"] = True
             if step.stepType == "optional" and not step_result_indicates_execution(step_result):
                 step_result["evidence"] = append_rule_note(
-                    step_result["evidence"], "该步骤为可选步骤且未执行，本次不计入总分"
+                    step_result["evidence"], "该步骤为可选步骤且未执行，本次不计入整体结论"
                 )
             if step.stepType == "conditional" and not step_result["applicable"]:
                 step_result["evidence"] = append_rule_note(
-                    step_result["evidence"], "该步骤被判定为本次场景不适用，不计入总分"
+                    step_result["evidence"], "该步骤被判定为本次场景不适用，不计入整体结论"
                 )
 
         processed_steps.append(step_result)

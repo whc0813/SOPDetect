@@ -26,8 +26,8 @@
 - 创建 SOP，录入步骤说明，支持**必要步骤**与**条件步骤**（含前置步骤约束）
 - 可选上传整段工作流视频，后端自动按步骤分割、抽帧，调用多模态模型生成步骤摘要、关键时刻和 ROI 提示
 - 支持手动覆盖时间戳重建关键帧（`manual-segmentation-override`），或替换单步示范视频
-- 配置步骤权重与惩罚规则（`penaltyConfig`），精细控制评分策略
-- 查看 SOP 维度统计（执行次数、通过率、平均得分）
+- 配置步骤类型、耗时约束与前置依赖，控制二值化评估规则
+- 查看 SOP 维度统计（执行次数、通过率、待复核记录）
 - 对执行记录进行人工复核（通过 / 不通过 / 需整改）
 - 管理用户状态（启用 / 禁用）
 - 配置 AI 接口参数（API Key、BaseURL、模型、fps、temperature、超时）
@@ -36,7 +36,7 @@
 - 注册、登录，浏览待执行 SOP 列表
 - 进入 SOP 查看各步骤说明与参考摘要，上传完整执行视频
 - 后端异步评测，前端以 3 秒间隔轮询任务状态
-- 查看评测结果（是否通过、综合得分、反馈、步骤级得分与证据）
+- 查看评测结果（是否通过、反馈、问题类型、步骤状态与证据）
 - 查看历史执行记录及人工复核结论
 
 ---
@@ -89,7 +89,7 @@ FastAPI (backend/main.py)
 │   ├── storage.py           # MySQL 存储层：建表、CRUD、序列化、统计
 │   ├── evaluation.py        # 评估核心流程与后台 Worker
 │   ├── models.py            # Pydantic 请求/响应模型
-│   ├── scoring.py           # 步骤权重计算与后处理
+│   ├── scoring.py           # 二值状态判定与规则后处理
 │   ├── video.py             # 视频工具函数（帧提取、FFmpeg 调用）
 │   ├── prompt.py            # Prompt 构建（SOP 上下文 + JSON Schema）
 │   ├── requirements.txt     # Python 依赖
@@ -271,15 +271,15 @@ VUE_APP_API_BASE_URL=http://你的后端地址:8000
 | `users` | 用户信息、角色、状态 |
 | `user_login_sessions` | 登录会话，限制同账号只有一个活跃会话 |
 | `ai_configs` | 模型接口配置（apiKey 加密存储、baseURL、model、fps 等） |
-| `sops` | SOP 主表（名称、场景、步骤数、惩罚配置） |
+| `sops` | SOP 主表（名称、场景、步骤数、发布状态） |
 | `sop_steps` | SOP 步骤（描述、摘要、ROI、参考模式、步骤类型、前置条件） |
 | `media_files` | 媒体文件索引（路径、类型、归属） |
 | `sop_step_keyframes` | 步骤关键帧（base64 图像，按顺序排列） |
 | `sop_step_substeps` | 步骤关键时刻（标题 + 时间戳） |
 | `evaluation_jobs` | 评测任务队列（状态、进度、阶段、日志） |
-| `sop_executions` | 执行记录主表（得分、是否通过、反馈） |
+| `sop_executions` | 执行记录主表（是否通过、反馈、顺序判断） |
 | `execution_issues` | 执行问题列表 |
-| `execution_step_results` | 步骤级评测结果（得分、置信度、证据） |
+| `execution_step_results` | 步骤级评测结果（通过状态、问题类型、置信度、证据） |
 | `manual_reviews` | 人工复核记录（结论、意见） |
 
 ---
@@ -310,10 +310,10 @@ VUE_APP_API_BASE_URL=http://你的后端地址:8000
 7. 通过 httpx 调用多模态大模型接口（兼容 OpenAI 格式）
        │
        ▼
-8. 解析结构化结果（整体得分、通过状态、步骤级结果、问题列表）
+8. 解析结构化结果（通过状态、步骤级结果、问题列表）
        │
        ▼
-9. 应用 penaltyConfig 惩罚规则，重新计算加权综合分
+9. 应用步骤类型、前置依赖和耗时约束进行二值状态修正
        │
        ▼
 10. 写入 sop_executions / execution_step_results / execution_issues
@@ -326,10 +326,9 @@ VUE_APP_API_BASE_URL=http://你的后端地址:8000
 **评估结果结构：**
 
 - `passed`：是否通过
-- `score`：综合得分（0–100）
 - `feedback`：整体反馈文本
 - `issues`：问题标签列表
-- `stepResults[]`：每步的 `passed`、`score`、`confidence`、`evidence`
+- `stepResults[]`：每步的 `passed`、`issueType`、`confidence`、`evidence`
 
 **SOP 退化策略：**  
 步骤示范视频为可选项；无视频时系统退化为"仅基于文字 SOP 的评估"，评测仍可执行但缺少视觉参考。

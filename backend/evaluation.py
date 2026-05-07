@@ -879,7 +879,6 @@ async def store_demo_video_and_prepare_bundle(
 def build_text_only_reference_bundle(step_no: int, description: str):
     return {
         "stepType": "required",
-        "stepWeight": 1.0,
         "conditionText": "",
         "prerequisiteStepNos": [],
         "referenceFrames": [],
@@ -943,7 +942,6 @@ def build_sop_model_from_record(record: dict) -> SopData:
             {
                 "stepNo": step.get("stepNo") or index + 1,
                 "stepType": step.get("stepType"),
-                "stepWeight": step.get("stepWeight"),
                 "conditionText": step.get("conditionText"),
                 "prerequisiteStepNos": step.get("prerequisiteStepNos"),
                 "minDurationSec": step.get("minDurationSec"),
@@ -955,7 +953,6 @@ def build_sop_model_from_record(record: dict) -> SopData:
                 "stepNo": normalized_step["stepNo"],
                 "description": step.get("description") or "",
                 "stepType": normalized_step["stepType"],
-                "stepWeight": normalized_step["stepWeight"],
                 "conditionText": normalized_step["conditionText"],
                 "prerequisiteStepNos": normalized_step["prerequisiteStepNos"],
                 "minDurationSec": normalized_step["minDurationSec"],

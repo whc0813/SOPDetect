@@ -44,7 +44,6 @@ try:
         normalize_duration_limit,
         normalize_prerequisite_step_nos,
         normalize_step_type,
-        normalize_step_weight,
         post_process_evaluation_result,
     )
     from .storage import (
@@ -124,7 +123,6 @@ except ImportError:
         normalize_duration_limit,
         normalize_prerequisite_step_nos,
         normalize_step_type,
-        normalize_step_weight,
         post_process_evaluation_result,
     )
     from storage import (
@@ -207,7 +205,6 @@ class StepVideoMeta(BaseModel):
 class StepVideoInput(BaseModel):
     description: str
     stepType: str = "required"
-    stepWeight: float = 1.0
     conditionText: str = ""
     prerequisiteStepNos: List[int] = Field(default_factory=list)
     minDurationSec: Optional[float] = None
@@ -702,7 +699,6 @@ async def create_sop(req: CreateSopRequest, current_user=Depends(require_admin))
                 "videoMeta": req.workflowVideoMeta.model_dump() if req.workflowVideoMeta else None,
                 "demoVideo": demo_video,
                 "stepType": normalize_step_type(step.stepType),
-                "stepWeight": normalize_step_weight(step.stepWeight),
                 "conditionText": (step.conditionText or "").strip(),
                 "prerequisiteStepNos": normalize_prerequisite_step_nos(
                     step.prerequisiteStepNos, step_no

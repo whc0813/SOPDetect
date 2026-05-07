@@ -260,9 +260,6 @@
                   <el-option v-for="option in STEP_TYPE_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
                 </el-select>
               </el-form-item>
-              <el-form-item label="步骤权重" class="flex-1">
-                <el-input-number v-model="step.stepWeight" :min="0.5" :max="5" :step="0.5" />
-              </el-form-item>
             </div>
             <div class="form-row">
               <el-form-item label="最短耗时(秒)" class="flex-1">
@@ -374,7 +371,6 @@
               <el-button type="primary" plain class="manual-btn" :loading="step.referenceMetadataSaving" @click="saveStepReferenceMetadata(step)">保存预处理信息</el-button>
             </div>
             <div class="detail-text">步骤类型：{{ formatStepType(step.stepType) }}</div>
-            <div class="detail-text">步骤权重：{{ Number(step.stepWeight || 1).toFixed(1) }}</div>
             <div class="detail-text">耗时限制：{{ formatDurationLimit(step) }}</div>
             <div class="detail-text">条件说明：{{ step.conditionText || '无' }}</div>
             <div class="detail-text">前置依赖：{{ (step.prerequisiteStepNos || []).length ? step.prerequisiteStepNos.join(', ') : '无' }}</div>
@@ -419,7 +415,7 @@
               <div class="step-result-title">步骤 {{ item.stepNo }}: {{ item.description }}</div>
               <StatusBadge :type="item.includedInScore === false ? 'default' : (item.passed ? 'success' : 'danger')">{{ item.includedInScore === false ? '未计分' : (item.passed ? '通过' : '异常') }}</StatusBadge>
             </div>
-            <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }} / 权重 {{ Number(item.stepWeight || 1).toFixed(1) }}</div>
+            <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }}</div>
             <div class="step-result-meta">适用 {{ item.applicable === false ? '否' : '是' }} / 前置依赖 {{ item.prerequisiteViolated ? '违反' : '正常' }}</div>
             <div class="step-result-meta">检测区间 {{ item.detectedStartSec ?? '-' }}s ~ {{ item.detectedEndSec ?? '-' }}s / 问题类型 {{ item.issueType || '正常' }}</div>
             <div class="detail-text">{{ item.evidence || '暂无证据说明' }}</div>
@@ -592,7 +588,6 @@ function createEmptyStep() {
     description: '',
     video: { __workflowPlaceholder: true },
     stepType: 'required',
-    stepWeight: 1,
     conditionText: '',
     prerequisiteStepNos: [],
     minDurationSec: null,
@@ -761,10 +756,6 @@ function handleStepTypeChange(step) {
 
 function validateStepConfig(step, index) {
   const stepNo = index + 1
-  const weight = Number(step.stepWeight)
-  if (!Number.isFinite(weight) || weight < 0.5 || weight > 5) {
-    return `步骤 ${stepNo} 的权重必须在 0.5 到 5.0 之间`
-  }
   if (step.stepType === 'conditional' && !String(step.conditionText || '').trim()) {
     return `步骤 ${stepNo} 是条件触发步骤，必须填写触发说明`
   }
@@ -802,7 +793,6 @@ async function saveSop() {
     const steps = await Promise.all(sopForm.steps.map(async (item) => ({
       description: item.description.trim(),
       stepType: item.stepType,
-      stepWeight: Number(item.stepWeight),
       conditionText: String(item.conditionText || '').trim(),
       prerequisiteStepNos: (item.prerequisiteStepNos || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
       minDurationSec: normalizeOptionalDuration(item.minDurationSec),

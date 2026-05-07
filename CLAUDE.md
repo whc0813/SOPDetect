@@ -47,7 +47,7 @@ npm run lint                            # ESLint 检查
 | `backend/storage.py` | MySQL 数据层：建表、CRUD、序列化、统计（文件最大，约 88KB） |
 | `backend/evaluation.py` | 评估核心：参考包构建、Prompt 组装、大模型调用、异步 Worker |
 | `backend/models.py` | Pydantic v2 请求/响应模型 |
-| `backend/scoring.py` | 步骤权重计算、惩罚规则后处理 |
+| `backend/scoring.py` | 二值状态判定、前置依赖与耗时规则后处理 |
 | `backend/video.py` | OpenCV/FFmpeg 视频帧提取与转码 |
 | `backend/prompt.py` | Prompt 模板与 JSON Schema 约束构建 |
 
@@ -82,7 +82,7 @@ npm run lint                            # ESLint 检查
 1. 用户提交视频 → 创建 `evaluation_job`（queued）
 2. 后台 Worker 线程每 2 秒轮询队列 → 领取任务（processing）
 3. 读取 SOP 步骤信息、关键帧、ROI → 组装 Prompt（SOP 上下文 + Base64 视频帧 + JSON Schema）
-4. 调用多模态大模型 → 解析结构化结果 → 应用惩罚规则
+4. 调用多模态大模型 → 解析结构化结果 → 应用二值状态修正规则
 5. 写入 `sop_executions` / `execution_step_results` / `execution_issues`
 6. 前端 3 秒间隔轮询任务状态（`/api/evaluation-jobs/{job_id}`），完成后停止
 

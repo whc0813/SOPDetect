@@ -4,9 +4,9 @@
 
 标准操作流程（Standard Operating Procedure，SOP）是企业生产、实验操作、设备维护和培训考核等场景中保证作业一致性与过程可追溯性的重要管理手段。传统 SOP 执行检查主要依赖人工观察、现场记录或事后抽查，存在检查成本高、主观性强、反馈滞后、过程证据保存不完整等问题。随着多模态大模型和视频理解技术的发展，利用视觉分析能力对操作视频进行步骤识别、顺序判断和规范性评估，能够为 SOP 管理提供更加自动化、结构化和可复核的技术路径。
 
-本文围绕标准操作流程执行过程的智能评估需求，设计并实现了一套基于多模态视觉分析的 SOP 智能评估系统。系统采用前后端分离架构，前端基于 Vue 3、Vue Router 和 Element Plus 实现管理员端与用户端交互界面，后端基于 FastAPI、Pydantic、PyMySQL、OpenCV、FFmpeg 以及 httpx 构建业务接口、视频处理和模型调用服务，数据持久化采用 MySQL，本地媒体文件按照管理员示范视频和用户执行视频分类存储。系统支持管理员创建 SOP、配置步骤描述、步骤类型、权重、前置条件和评分惩罚规则，并上传完整示范视频；后端根据步骤信息对示范视频进行预处理，生成参考摘要、关键帧、关键时刻和关注区域提示。普通用户可选择 SOP 任务并上传一段完整执行视频，系统通过异步评估任务队列调用兼容 OpenAI Chat Completions 格式的多模态模型接口，对用户视频进行时序定位、步骤级评估和全局顺序校验，最终结合规则化后处理生成综合得分、通过状态、问题列表、步骤证据和改进反馈。
+本文围绕标准操作流程执行过程的智能评估需求，设计并实现了一套基于多模态视觉分析的 SOP 智能评估系统。系统采用前后端分离架构，前端基于 Vue 3、Vue Router 和 Element Plus 实现管理员端与用户端交互界面，后端基于 FastAPI、Pydantic、PyMySQL、OpenCV、FFmpeg 以及 httpx 构建业务接口、视频处理和模型调用服务，数据持久化采用 MySQL，本地媒体文件按照管理员示范视频和用户执行视频分类存储。系统支持管理员创建 SOP、配置步骤描述、步骤类型、前置条件和耗时约束，并上传完整示范视频；后端根据步骤信息对示范视频进行预处理，生成参考摘要、关键帧、关键时刻和关注区域提示。普通用户可选择 SOP 任务并上传一段完整执行视频，系统通过异步评估任务队列调用兼容 OpenAI Chat Completions 格式的多模态模型接口，对用户视频进行时序定位、步骤级评估和全局顺序校验，最终结合规则化后处理生成通过状态、问题列表、步骤证据和改进反馈。
 
-系统实现中重点解决了 SOP 步骤配置、完整视频上传、后台异步评测、模型结构化输出约束、评分规则修正、历史记录保存和人工复核闭环等问题。评估结果不仅记录 AI 判定结论，还保留模型调用过程、步骤级证据、用户上传视频和管理员复核状态，为后续追踪、复查和统计分析提供数据基础。通过本系统的设计与实现，验证了多模态视觉分析技术在 SOP 执行过程评估中的可行性，为标准化作业管理从人工检查向智能辅助评估转变提供了一种可落地的实现方案。
+系统实现中重点解决了 SOP 步骤配置、完整视频上传、后台异步评测、模型结构化输出约束、状态规则修正、历史记录保存和人工复核闭环等问题。评估结果不仅记录 AI 判定结论，还保留模型调用过程、步骤级证据、用户上传视频和管理员复核状态，为后续追踪、复查和统计分析提供数据基础。通过本系统的设计与实现，验证了多模态视觉分析技术在 SOP 执行过程评估中的可行性，为标准化作业管理从人工检查向智能辅助评估转变提供了一种可落地的实现方案。
 
 关键词：标准操作流程；多模态视觉分析；视频理解；智能评估；FastAPI；Vue；MySQL
 
@@ -14,7 +14,7 @@ Abstract
 
 Standard Operating Procedure (SOP) is an important management method for ensuring operational consistency, process standardization, and traceability in scenarios such as industrial production, laboratory operation, equipment maintenance, and training assessment. Traditional SOP inspection usually relies on manual observation, on-site recording, or post-event sampling review. This approach is costly, subjective, delayed in feedback, and insufficient in preserving process evidence. With the development of multimodal large models and video understanding technologies, it becomes feasible to evaluate SOP execution by analyzing operation videos, identifying step completion, checking execution order, and generating structured assessment results.
 
-This thesis designs and implements an intelligent SOP evaluation system based on multimodal visual analysis. The system adopts a front-end and back-end separated architecture. The front end is developed with Vue 3, Vue Router, and Element Plus, providing separate workspaces for administrators and ordinary users. The back end is implemented with FastAPI, Pydantic, PyMySQL, OpenCV, FFmpeg, and httpx, supporting business APIs, video processing, model invocation, and asynchronous evaluation tasks. MySQL is used for persistent storage, while local media files are organized according to administrator demo videos and user execution videos. Administrators can create SOPs, configure step descriptions, step types, weights, prerequisites, and penalty rules, and upload a complete demo video. The back end preprocesses the demo video according to the configured steps and generates reference summaries, key frames, key moments, and ROI hints. Users can select an SOP task and upload a complete execution video. The system then invokes a multimodal model through an asynchronous worker and evaluates the video through temporal segmentation, batch step-level assessment, and global sequence validation. The final result includes the overall score, pass/fail status, issue list, step-level evidence, and improvement feedback.
+This thesis designs and implements an intelligent SOP evaluation system based on multimodal visual analysis. The system adopts a front-end and back-end separated architecture. The front end is developed with Vue 3, Vue Router, and Element Plus, providing separate workspaces for administrators and ordinary users. The back end is implemented with FastAPI, Pydantic, PyMySQL, OpenCV, FFmpeg, and httpx, supporting business APIs, video processing, model invocation, and asynchronous evaluation tasks. MySQL is used for persistent storage, while local media files are organized according to administrator demo videos and user execution videos. Administrators can create SOPs, configure step descriptions, step types, prerequisites, and duration constraints, and upload a complete demo video. The back end preprocesses the demo video according to the configured steps and generates reference summaries, key frames, key moments, and ROI hints. Users can select an SOP task and upload a complete execution video. The system then invokes a multimodal model through an asynchronous worker and evaluates the video through temporal segmentation, batch step-level assessment, and global sequence validation. The final result includes the pass/fail status, issue list, step-level evidence, and improvement feedback.
 
 The implementation focuses on SOP management, complete video upload, asynchronous evaluation, structured model output constraints, rule-based scoring adjustment, history persistence, and manual review. The system stores not only AI assessment results but also model invocation traces, step-level evidence, uploaded videos, and manual review status, which provides a basis for later review, tracking, and statistical analysis. The design and implementation demonstrate the feasibility of applying multimodal visual analysis to SOP execution evaluation and provide a practical solution for transforming traditional manual inspection into intelligent assisted assessment.
 
@@ -41,23 +41,23 @@ Key words: Standard Operating Procedure; Multimodal Visual Analysis; Video Under
 
 此外，传统人工方式在过程证据保存和统计分析方面也存在不足。现场口头反馈难以完整记录，纸质记录难以关联视频证据，简单表单也难以描述每个步骤的具体问题。当管理者需要分析某类 SOP 的通过率、常见错误步骤或用户历史表现时，缺少结构化数据支撑。即使保存了视频文件，如果没有步骤级评估结果、问题类型、置信度和人工复核结论，后续查询和复盘仍然不方便。
 
-本文系统针对上述问题，在设计上采用“AI 初评 + 规则修正 + 人工复核”的闭环机制。AI 初评负责从完整执行视频中提取步骤完成情况和证据说明，规则修正负责根据步骤类型、权重、问题类型和前置依赖统一计算得分，人工复核则保留管理员最终确认与纠偏能力。这样既降低了人工从零观看和判断的工作量，又避免完全依赖模型结论，使系统结果具备一定可解释性和可复核性。
+本文系统针对上述问题，在设计上采用“AI 初评 + 规则修正 + 人工复核”的闭环机制。AI 初评负责从完整执行视频中提取步骤完成情况和证据说明，规则修正负责根据步骤类型、问题类型、前置依赖和耗时约束统一生成二值状态结论，人工复核则保留管理员最终确认与纠偏能力。这样既降低了人工从零观看和判断的工作量，又避免完全依赖模型结论，使系统结果具备一定可解释性和可复核性。
 
 1.1.3 多模态视觉分析在 SOP 评估中的应用价值
 
 多模态视觉分析是指综合利用图像、视频、文本等多种信息进行理解和推理的技术。在 SOP 执行评估场景中，系统既需要理解管理员配置的文字步骤，也需要分析示范视频中的标准动作，还需要判断用户上传的完整执行视频是否与规范要求一致。这类任务天然具有多模态特征，单纯依靠文本规则或传统图像分类方法难以完整覆盖。
 
-与传统计算机视觉方法相比，多模态大模型具备更强的开放场景理解能力。对于不同 SOP 场景，管理员只需提供步骤描述和示范视频，系统即可通过结构化提示词将 SOP 名称、适用场景、期望步骤顺序、参考摘要、关注区域、关键时刻和用户视频共同组织为模型输入，引导模型输出综合得分、通过状态、问题类型、步骤证据和反馈建议。当前项目后端通过兼容 OpenAI Chat Completions 格式的接口调用多模态模型，并在 Prompt 中限制模型返回 JSON 结构，从而使模型结果能够被系统稳定解析和持久化。
+与传统计算机视觉方法相比，多模态大模型具备更强的开放场景理解能力。对于不同 SOP 场景，管理员只需提供步骤描述和示范视频，系统即可通过结构化提示词将 SOP 名称、适用场景、期望步骤顺序、参考摘要、关注区域、关键时刻和用户视频共同组织为模型输入，引导模型输出通过状态、问题类型、步骤证据和反馈建议。当前项目后端通过兼容 OpenAI Chat Completions 格式的接口调用多模态模型，并在 Prompt 中限制模型返回 JSON 结构，从而使模型结果能够被系统稳定解析和持久化。
 
 在具体评估流程上，多模态视觉分析可以发挥三方面作用。第一，它能够辅助管理员处理示范视频，生成步骤参考摘要、关键帧、关键时刻和 ROI 提示，减少手工拆解视频的负担。第二，它能够对用户完整执行视频进行时序定位和步骤级判断，识别每个步骤是否出现、完成度如何以及是否存在动作错误、漏做、重复操作或证据不足。第三，它能够结合全流程顺序进行校验，判断步骤之间是否存在顺序颠倒、过早执行、延后执行和前置条件缺失等问题。
 
-本文系统并没有将多模态模型的输出直接作为最终结论，而是在模型输出之后增加了规则化后处理。后端根据 SOP 中配置的步骤类型、步骤权重、前置依赖和惩罚配置，对模型返回的步骤结果进行归一化处理和扣分修正，并按照通过阈值生成最终状态。这种方式将模型的语义理解能力与业务规则的确定性结合起来，使评估结果更适合在管理系统中展示、存档和复核。
+本文系统并没有将多模态模型的输出直接作为最终结论，而是在模型输出之后增加了规则化后处理。后端根据 SOP 中配置的步骤类型、前置依赖和耗时约束，对模型返回的步骤结果进行归一化处理和二值状态修正，并根据是否存在异常步骤生成最终状态。这种方式将模型的语义理解能力与业务规则的确定性结合起来，使评估结果更适合在管理系统中展示、存档和复核。
 
 1.2 主要研究内容
 
 1.2.1 SOP 流程管理功能设计
 
-本文首先研究并实现 SOP 流程管理功能。系统将用户划分为管理员和普通用户两类角色，并通过登录认证、Bearer Token、会话表和前端路由守卫实现权限控制。管理员负责维护 SOP 数据，包括 SOP 名称、适用场景、步骤数量、步骤描述、步骤类型、步骤权重、条件说明、前置依赖和评分惩罚配置等内容。系统要求管理员上传完整示范视频，后端根据步骤信息对示范视频进行时序预分析和参考数据构建，为后续用户视频评估提供标准依据。
+本文首先研究并实现 SOP 流程管理功能。系统将用户划分为管理员和普通用户两类角色，并通过登录认证、Bearer Token、会话表和前端路由守卫实现权限控制。管理员负责维护 SOP 数据，包括 SOP 名称、适用场景、步骤数量、步骤描述、步骤类型、条件说明、前置依赖和耗时约束等内容。系统要求管理员上传完整示范视频，后端根据步骤信息对示范视频进行时序预分析和参考数据构建，为后续用户视频评估提供标准依据。
 
 在数据设计上，系统使用 MySQL 对业务数据进行持久化。用户信息、登录会话、AI 配置、SOP 主表、SOP 步骤表、媒体文件表、步骤关键帧表、关键时刻表、前置依赖表、评估任务表、执行记录表、步骤结果表、问题表和人工复核表等共同构成系统的数据基础。媒体文件通过统一的 media_files 表记录元数据，并在本地文件系统中按照 Admin 和 User 分类保存，避免示范视频和执行视频混杂。这样的设计有利于后续权限控制、文件追踪、历史查询和统计分析。
 
@@ -67,19 +67,19 @@ Key words: Standard Operating Procedure; Multimodal Visual Analysis; Video Under
 
 本文的核心研究内容是基于视频理解的 SOP 执行过程评估。不同于要求用户按步骤分别上传多个短视频的方式，系统面向真实操作场景，采用“用户上传一段完整执行视频”的交互方式。这种方式更符合用户实际录制习惯，也避免了分步上传导致的操作中断。但完整视频评估需要系统解决步骤定位、动作判断和顺序校验等问题。
 
-当前后端实现了多阶段评估流程。第一阶段为用户视频时序定位，系统调用多模态模型分析完整视频中各步骤的大致起止时间，并在必要时采用兜底策略保证每个步骤都有可参考的时间范围。第二阶段为步骤级批量评估，系统将 SOP 步骤说明、步骤类型、步骤权重、条件说明、前置依赖、参考摘要、ROI 提示、关键时刻以及阶段一候选时间窗，与完整用户视频一同发送给多模态模型，要求模型一次性返回全部步骤的评估结果。第三阶段为全局顺序校验，系统结合各步骤结果和时序信息判断整体流程是否存在明显顺序问题，并对步骤结果进行修正。
+当前后端实现了多阶段评估流程。第一阶段为用户视频时序定位，系统调用多模态模型分析完整视频中各步骤的大致起止时间，并在必要时采用兜底策略保证每个步骤都有可参考的时间范围。第二阶段为步骤级批量评估，系统将 SOP 步骤说明、步骤类型、条件说明、前置依赖、耗时约束、参考摘要、ROI 提示、关键时刻以及阶段一候选时间窗，与完整用户视频一同发送给多模态模型，要求模型一次性返回全部步骤的评估结果。第三阶段为全局顺序校验，系统结合各步骤结果和时序信息判断整体流程是否存在明显顺序问题，并对步骤结果进行修正。
 
-为了提高模型输出的稳定性，系统在 Prompt 中明确要求返回合法 JSON，并通过 JSON Schema 约束顶层字段和步骤级字段。输出内容包括 passed、score、feedback、issues、sequenceAssessment、prerequisiteViolated 以及 stepResults 等。其中每个步骤结果包含 stepNo、description、passed、score、confidence、applicable、issueType、completionLevel、orderIssue、prerequisiteViolated、detectedStartSec、detectedEndSec 和 evidence 等字段。后端解析模型响应后，会进行时间戳清洗、问题类型归一化、前置条件校验和加权评分。
+为了提高模型输出的稳定性，系统在 Prompt 中明确要求返回合法 JSON，并通过 JSON Schema 约束顶层字段和步骤级字段。输出内容包括 passed、feedback、issues、sequenceAssessment、prerequisiteViolated 以及 stepResults 等。其中每个步骤结果包含 stepNo、description、passed、confidence、applicable、issueType、completionLevel、orderIssue、prerequisiteViolated、detectedStartSec、detectedEndSec 和 evidence 等字段。后端解析模型响应后，会进行时间戳清洗、问题类型归一化、前置条件校验和二值状态修正。
 
-评估算法并非单纯依赖模型给出的分数。系统在 scoring 模块中定义了不同问题类型的默认扣分规则，例如证据不足、部分完成、动作错误、顺序颠倒、前置条件缺失和缺失等问题对应不同扣分值；同时支持在 SOP 级别通过 penaltyConfig 覆盖默认惩罚配置。系统根据步骤权重计算综合分，并设置步骤通过阈值和整体通过阈值，从而让评估结果更符合 SOP 管理中的业务要求。
+评估算法并非单纯依赖模型给出的自由结论。系统在 scoring 模块中定义了统一的问题类型和状态修正规则，将证据不足、部分完成、动作错误、顺序颠倒、前置条件缺失、过快完成、超时完成和缺失等情况归一化为步骤异常。系统根据计分步骤中是否存在异常生成整体通过状态，从而让评估结果更符合当前二值化 SOP 管理要求。
 
 1.2.3 评估结果存储、展示与人工复核机制
 
 本文还研究了评估结果的持久化、可视化展示和人工复核机制。由于多模态视频评估耗时较长，系统采用异步任务队列方式处理用户上传的视频。用户提交任务后，后端创建 evaluation_jobs 记录，后台 Worker 线程定期轮询队列并处理任务，前端以固定间隔轮询任务状态。任务状态包括 queued、processing、succeeded 和 failed，同时记录当前阶段、进度百分比、失败原因、失败详情和任务日志。该机制能够避免长时间同步请求阻塞页面，也便于用户查看评估进度和失败提示。
 
-当评估任务成功完成后，系统将结果写入历史记录。历史记录不仅保存 SOP 名称、用户、完成时间、综合得分和通过状态，还保存用户上传视频、问题列表、步骤级评估结果、时序片段预览、模型调用过程预览、原始模型结果和整体反馈。前端在用户端和管理员端分别提供历史记录列表与详情页，用户可以查看自己的执行结果、步骤证据和改进建议；管理员可以查看所有执行记录，结合筛选条件分析失败记录、待复核记录和不同用户的执行情况。
+当评估任务成功完成后，系统将结果写入历史记录。历史记录不仅保存 SOP 名称、用户、完成时间和通过状态，还保存用户上传视频、问题列表、步骤级评估结果、时序片段预览、模型调用过程预览、原始模型结果和整体反馈。前端在用户端和管理员端分别提供历史记录列表与详情页，用户可以查看自己的执行结果、步骤证据和改进建议；管理员可以查看所有执行记录，结合筛选条件分析失败记录、待复核记录和不同用户的执行情况。
 
-人工复核机制是系统闭环管理的重要组成部分。对于 AI 判定结果，管理员可以进入历史记录详情，查看用户上传视频、AI 给出的步骤证据、综合得分和问题描述，并给出通过、不通过或需整改等复核结论及备注。复核结果写入 manual_reviews 表，与执行记录形成一对一关系。这样既保留了 AI 自动评估的效率，也允许管理员在关键场景中进行最终确认，使系统更适合用于毕业设计中的完整业务闭环展示。
+人工复核机制是系统闭环管理的重要组成部分。对于 AI 判定结果，管理员可以进入历史记录详情，查看用户上传视频、AI 给出的步骤证据、异常类型和问题描述，并给出通过、不通过或需整改等复核结论及备注。复核结果写入 manual_reviews 表，与执行记录形成一对一关系。这样既保留了 AI 自动评估的效率，也允许管理员在关键场景中进行最终确认，使系统更适合用于毕业设计中的完整业务闭环展示。
 
 1.3 论文组织结构
 

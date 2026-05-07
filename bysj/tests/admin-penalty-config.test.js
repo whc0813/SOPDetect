@@ -26,6 +26,14 @@ test('admin SOP stats use binary status metrics only', () => {
   assert.match(source, /pendingReviewCount/)
 })
 
+test('admin no longer exposes step weight configuration or display', () => {
+  const source = readAdminVue()
+
+  assert.doesNotMatch(source, /stepWeight/)
+  assert.doesNotMatch(source, /步骤权重/)
+  assert.doesNotMatch(source, /权重 \{\{/)
+})
+
 test('admin history table exposes delete record action', () => {
   const source = readAdminVue()
 

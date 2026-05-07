@@ -318,7 +318,7 @@
                   <StatusBadge :type="item.includedInScore === false ? 'default' : (item.passed ? 'success' : 'danger')">{{ item.includedInScore === false ? '未计分' : getStepResultText(item.passed) }}</StatusBadge>
                 </div>
                 <div class="step-result-meta">状态 {{ item.passed ? '通过' : '异常' }} / 置信度 {{ formatConfidence(item.confidence) }}</div>
-                <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }} / 权重 {{ formatStepWeight(item.stepWeight) }}</div>
+                <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }}</div>
                 <div class="step-result-meta">适用 {{ item.applicable === false ? '否' : '是' }} / 前置依赖 {{ item.prerequisiteViolated ? '违反' : '正常' }}</div>
                 <div class="step-result-meta">检测区间 {{ formatDetectedRange(item.detectedStartSec, item.detectedEndSec) }}</div>
                 <div class="detail-text">{{ item.evidence }}</div>
@@ -467,7 +467,7 @@
               <StatusBadge :type="item.includedInScore === false ? 'default' : (item.passed ? 'success' : 'danger')">{{ item.includedInScore === false ? '未计分' : getStepResultText(item.passed) }}</StatusBadge>
             </div>
             <div class="step-result-meta">问题类型 {{ item.issueType || '正常' }}</div>
-            <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }} / 权重 {{ formatStepWeight(item.stepWeight) }}</div>
+            <div class="step-result-meta">类型 {{ formatStepType(item.stepType) }}</div>
             <div class="step-result-meta">适用 {{ item.applicable === false ? '否' : '是' }} / 前置依赖 {{ item.prerequisiteViolated ? '违反' : '正常' }}</div>
             <div class="step-result-meta">检测区间 {{ formatDetectedRange(item.detectedStartSec, item.detectedEndSec) }}</div>
             <div class="detail-text">{{ item.evidence }}</div>
@@ -839,11 +839,6 @@ function formatStepType(stepType) {
     conditional: '条件触发'
   }
   return mapping[stepType] || stepType || '-'
-}
-
-function formatStepWeight(value) {
-  const num = Number(value)
-  return Number.isFinite(num) ? num.toFixed(1) : '1.0'
 }
 
 function formatDetectedRange(startSec, endSec) {

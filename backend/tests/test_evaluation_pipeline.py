@@ -55,6 +55,30 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertNotIn("score", batch_schema_text)
         self.assertNotIn("score", global_schema_text)
 
+    def test_prompt_blocks_do_not_include_step_weight(self):
+        sop = _build_test_sop()
+        all_step_blocks = prompt.build_content_blocks(sop, "data:video/mp4;base64,user", 2)
+        per_step_blocks = prompt.build_per_step_evaluation_blocks(
+            sop.steps[0],
+            {"detected": True, "startSec": 1.0, "endSec": 2.0},
+            "data:video/mp4;base64,user",
+            2,
+        )
+        batch_blocks = prompt.build_batch_step_evaluation_blocks(
+            sop,
+            {1: {"startSec": 1.0, "endSec": 2.0}},
+            "data:video/mp4;base64,user",
+            2,
+        )
+        text = "\n".join(
+            block.get("text", "")
+            for block in [*all_step_blocks, *per_step_blocks, *batch_blocks]
+            if block.get("type") == "text"
+        )
+
+        self.assertNotIn("步骤权重", text)
+        self.assertNotIn("权重", text)
+
     def test_post_process_marks_step_as_too_fast_when_under_min_duration(self):
         sop = SopData(
             name="计时测试",
