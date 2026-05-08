@@ -5,3 +5,6 @@ node_modules/
 __pycache__/
 *.py[cod]
 
+# Generated documents and presentation workspace
+docs/
+ppt_workspace/
