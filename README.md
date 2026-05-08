@@ -23,21 +23,22 @@
 ## 核心功能
 
 ### 管理员端
-- 创建 SOP，录入步骤说明，支持**必要步骤**与**条件步骤**（含前置步骤约束）
-- 可选上传整段工作流视频，后端自动按步骤分割、抽帧，调用多模态模型生成步骤摘要、关键时刻和 ROI 提示
+- 创建 SOP，录入步骤说明，支持**必要步骤**、**可选步骤**与**条件触发步骤**（含条件说明、前置步骤约束）
+- 创建 SOP 时上传完整工作流示范视频，后端先做时序分割，再按步骤抽帧，调用多模态模型生成步骤摘要、关键时刻和 ROI 提示
 - 支持手动覆盖时间戳重建关键帧（`manual-segmentation-override`），或替换单步示范视频
-- 配置步骤类型、耗时约束与前置依赖，控制二值化评估规则
-- 查看 SOP 维度统计（执行次数、通过率、待复核记录）
+- 配置步骤类型、最短/最长耗时约束与前置依赖，后端在模型结果后执行二值化规则修正
+- 查看 SOP 维度统计（SOP 数、执行次数、通过率、待复核记录、异常问题类型分布）
 - 对执行记录进行人工复核（通过 / 不通过 / 需整改）
+- 删除误测或重复的历史执行记录
 - 管理用户状态（启用 / 禁用）
 - 配置 AI 接口参数（API Key、BaseURL、模型、fps、temperature、超时）
 
 ### 用户端
 - 注册、登录，浏览待执行 SOP 列表
 - 进入 SOP 查看各步骤说明与参考摘要，上传完整执行视频
-- 后端异步评测，前端以 3 秒间隔轮询任务状态
-- 查看评测结果（是否通过、反馈、问题类型、步骤状态与证据）
-- 查看历史执行记录及人工复核结论
+- 后端异步评测，前端以 3 秒间隔轮询任务状态、进度和阶段日志
+- 查看评测结果（是否通过、反馈、问题类型、完成程度、检测区间、步骤状态与证据）
+- 查看历史执行记录、评测过程、Token 用量及人工复核结论
 
 ---
 
@@ -51,10 +52,10 @@
 | 后端框架 | FastAPI + Pydantic v2 | 异步 HTTP API，自动生成 OpenAPI 文档 |
 | 视频处理 | OpenCV + imageio-ffmpeg | 帧提取、帧率读取、FFmpeg 转码 |
 | HTTP 客户端 | httpx | 调用多模态大模型接口 |
-| 数据库 | MySQL 8 + PyMySQL | 持久化存储，启动时自动建表 |
+| 数据库 | MySQL 8 + PyMySQL | 持久化存储，启动时自动建表与迁移 |
 | 媒体存储 | 本地文件系统 | `backend/data/media/Admin` / `User` |
 | 鉴权 | 自定义 Bearer Token + 会话表 | 防止同一账号重复登录 |
-| 模型接口 | OpenAI Chat Completions 兼容 | 默认 DashScope `qwen-vl-plus` 等多模态模型 |
+| 模型接口 | OpenAI Chat Completions 兼容 | 默认 DashScope `qwen3.5-plus` 等多模态模型 |
 
 ---
 
@@ -72,7 +73,11 @@ FastAPI (backend/main.py)
     └── 后台评估 Worker（独立线程，每 2s 轮询队列）
             │
             ├── OpenCV / FFmpeg：视频帧提取与转码
-            ├── httpx：调用多模态大模型
+            ├── Stage 1：用户视频时序分割，定位步骤区间和出现次数
+            ├── Stage 2：批量步骤评估，判断完成度、问题类型和证据
+            ├── Stage 3：全局顺序校验，修正顺序、前置依赖和重复执行
+            ├── 后处理规则：可选 / 条件步骤、前置依赖、耗时限制二值化
+            ├── httpx：调用多模态大模型并汇总 Token 用量
             └── MySQL：读写所有持久化数据
                     └── 本地文件系统：媒体文件
 ```
@@ -91,7 +96,7 @@ FastAPI (backend/main.py)
 │   ├── models.py            # Pydantic 请求/响应模型
 │   ├── scoring.py           # 二值状态判定与规则后处理
 │   ├── video.py             # 视频工具函数（帧提取、FFmpeg 调用）
-│   ├── prompt.py            # Prompt 构建（SOP 上下文 + JSON Schema）
+│   ├── prompt.py            # Prompt 构建（三阶段提示词 + JSON Schema）
 │   ├── requirements.txt     # Python 依赖
 │   ├── mysql_schema.sql     # 独立建表脚本（可选导入）
 │   ├── mysql_design.md      # 数据库设计说明
@@ -105,6 +110,7 @@ FastAPI (backend/main.py)
 │   ├── package.json
 │   ├── vue.config.js
 │   ├── public/
+│   ├── tests/               # node:test 回归测试（历史记录、管理员统计等）
 │   └── src/
 │       ├── main.js          # 应用入口，注册 Element Plus、全局图标
 │       ├── App.vue          # 根组件，路由出口与页面过渡动画
@@ -129,7 +135,7 @@ FastAPI (backend/main.py)
 
 | 工具 | 版本要求 |
 |---|---|
-| Node.js | 16 及以上 |
+| Node.js | 18 及以上 |
 | Python | 3.10 及以上 |
 | MySQL | 8.x |
 | FFmpeg | 由 `imageio-ffmpeg` 自动管理，无需手动安装 |
@@ -151,17 +157,19 @@ MYSQL_DATABASE=sop_eval_system
 可选项（写入 `.env`）：
 
 ```env
-AUTH_TOKEN_SECRET=自定义签名密钥（不填则使用随机默认值）
+AUTH_TOKEN_SECRET=自定义签名密钥（不填则使用开发默认值）
 AUTH_TOKEN_EXPIRES_IN=28800        # Token 有效期（秒），默认 8 小时
 EVALUATION_JOB_POLL_INTERVAL_SEC=2 # 评估队列轮询间隔（秒）
 CONFIG_ENCRYPTION_KEY=自定义加密密钥（用于 AI 配置中 apiKey 的静态加密）
 ```
 
+> `AUTH_TOKEN_SECRET` 不配置时会使用开发默认值，生产部署建议显式设置。
+
 ### 2. 启动后端
 
 ```bash
 cd backend
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python main.py
 ```
 
@@ -224,10 +232,10 @@ VUE_APP_API_BASE_URL=http://你的后端地址:8000
 |---|---|---|---|
 | `GET` | `/api/sops` | 已登录 | SOP 列表 |
 | `GET` | `/api/sops/{sop_id}` | 已登录 | SOP 详情（含步骤、关键帧、关键时刻） |
-| `POST` | `/api/sops` | 管理员 | 新建 SOP；含工作流视频时自动分割步骤并预处理 |
+| `POST` | `/api/sops` | 管理员 | 新建 SOP；需上传完整工作流示范视频，自动分割步骤并预处理 |
 | `DELETE` | `/api/sops/{sop_id}` | 管理员 | 删除 SOP 及全部关联媒体 |
 | `PUT` | `/api/sops/{sop_id}/steps/{step_no}/demo-video` | 管理员 | 替换步骤示范视频并重建参考包 |
-| `PUT` | `/api/sops/{sop_id}/steps/{step_no}/manual-segmentation` | — | **已弃用（返回 410）**，请改用 `manual-segmentation-override` 或重传示范视频 |
+| `PUT` | `/api/sops/{sop_id}/steps/{step_no}/manual-segmentation` | 管理员 | **已弃用（返回 410）**，请改用 `manual-segmentation-override` 或重传示范视频 |
 | `PUT` | `/api/sops/{sop_id}/steps/{step_no}/manual-segmentation-override` | 管理员 | 手动指定时间戳，从已存储媒体重建关键帧与参考包 |
 | `PUT` | `/api/sops/{sop_id}/steps/{step_no}/reference-metadata` | 管理员 | 更新步骤参考摘要、ROI 提示和关键时刻 |
 
@@ -236,7 +244,7 @@ VUE_APP_API_BASE_URL=http://你的后端地址:8000
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | `POST` | `/api/sops/{sop_id}/evaluate` | 已登录 | **同步**评估（小文件场景，直接返回结果） |
-| `POST` | `/api/sops/{sop_id}/evaluation-jobs` | 已登录 | **异步**创建评测任务（视频作为 multipart 上传） |
+| `POST` | `/api/sops/{sop_id}/evaluation-jobs` | 已登录 | **异步**创建评测任务（请求体携带视频 DataURL） |
 | `GET` | `/api/evaluation-jobs` | 已登录 | 获取当前用户的任务列表，可按 `status` 筛选 |
 | `GET` | `/api/evaluation-jobs/{job_id}` | 已登录 | 轮询单个任务状态、进度与日志 |
 | `POST` | `/api/evaluation-jobs/{job_id}/retry` | 已登录 | 重试失败任务 |
@@ -247,6 +255,7 @@ VUE_APP_API_BASE_URL=http://你的后端地址:8000
 |---|---|---|---|
 | `GET` | `/api/history` | 已登录 | 执行历史列表；支持 `keyword`、`aiStatus`、`reviewStatus`、`sortOrder` 筛选 |
 | `GET` | `/api/history/{record_id}` | 已登录 | 执行历史详情 |
+| `DELETE` | `/api/history/{record_id}` | 管理员 | 删除历史执行记录 |
 | `POST` | `/api/history` | 已登录 | 从评估结果创建执行记录（含可选视频上传） |
 | `PUT` | `/api/history/{record_id}/review` | 管理员 | 人工复核（通过 / 不通过 / 需整改） |
 | `GET` | `/api/stats` | 管理员 | 汇总统计数据 |
@@ -273,13 +282,15 @@ VUE_APP_API_BASE_URL=http://你的后端地址:8000
 | `ai_configs` | 模型接口配置（apiKey 加密存储、baseURL、model、fps 等） |
 | `sops` | SOP 主表（名称、场景、步骤数、发布状态） |
 | `sop_steps` | SOP 步骤（描述、摘要、ROI、参考模式、步骤类型、前置条件） |
+| `sop_step_prerequisites` | 步骤前置依赖关系 |
 | `media_files` | 媒体文件索引（路径、类型、归属） |
 | `sop_step_keyframes` | 步骤关键帧（base64 图像，按顺序排列） |
 | `sop_step_substeps` | 步骤关键时刻（标题 + 时间戳） |
 | `evaluation_jobs` | 评测任务队列（状态、进度、阶段、日志） |
+| `evaluation_job_logs` | 评测任务阶段日志 |
 | `sop_executions` | 执行记录主表（是否通过、反馈、顺序判断） |
 | `execution_issues` | 执行问题列表 |
-| `execution_step_results` | 步骤级评测结果（通过状态、问题类型、置信度、证据） |
+| `execution_step_results` | 步骤级评测结果（通过状态、适用性、完成程度、问题类型、检测区间、置信度、证据） |
 | `manual_reviews` | 人工复核记录（结论、意见） |
 
 ---
@@ -301,19 +312,19 @@ VUE_APP_API_BASE_URL=http://你的后端地址:8000
 4. 读取 SOP 步骤信息、关键帧、关键时刻、ROI
        │
        ▼
-5. 用 Base64 编码用户视频帧
+5. Stage 1 调用多模态模型做时序分割，识别每步起止时间和出现次数
        │
        ▼
-6. 组装 Prompt（SOP 上下文 + 用户视频 + JSON Schema 约束）
+6. Stage 2 基于完整用户视频、参考关键帧和候选时间窗批量评估各步骤
        │
        ▼
-7. 通过 httpx 调用多模态大模型接口（兼容 OpenAI 格式）
+7. Stage 3 基于步骤结果做全局顺序校验，修正错序、前置依赖和重复执行
        │
        ▼
-8. 解析结构化结果（通过状态、步骤级结果、问题列表）
+8. 后端应用可选 / 条件步骤、最短/最长耗时等规则，生成最终二值通过状态
        │
        ▼
-9. 应用步骤类型、前置依赖和耗时约束进行二值状态修正
+9. 汇总 payloadPreview、rawModelResult 和 Token 用量，形成可追踪评测过程
        │
        ▼
 10. 写入 sop_executions / execution_step_results / execution_issues
@@ -328,10 +339,12 @@ VUE_APP_API_BASE_URL=http://你的后端地址:8000
 - `passed`：是否通过
 - `feedback`：整体反馈文本
 - `issues`：问题标签列表
-- `stepResults[]`：每步的 `passed`、`issueType`、`confidence`、`evidence`
+- `sequenceAssessment`：整体顺序评价
+- `prerequisiteViolated`：是否存在前置依赖违反
+- `stepResults[]`：每步的 `passed`、`applicable`、`includedInScore`、`issueType`、`completionLevel`、`confidence`、`detectedStartSec`、`detectedEndSec`、`repeatedExecution`、`evidence`
 
-**SOP 退化策略：**  
-步骤示范视频为可选项；无视频时系统退化为"仅基于文字 SOP 的评估"，评测仍可执行但缺少视觉参考。
+**SOP 参考策略：**
+当前存储型 SOP 创建接口要求上传完整流程示范视频，用于生成步骤参考关键帧、关键时刻和 ROI。底层评估模型仍支持文字参考模式，主要用于内联评估、历史兼容数据或后端构造的临时 SOP。
 
 ---
 
@@ -361,11 +374,18 @@ VUE_APP_API_BASE_URL=http://你的后端地址:8000
 
 ## 测试
 
-后端测试位于 `backend/tests/`，使用 **pytest**。
+后端测试位于 `backend/tests/`，使用 **pytest**。建议从仓库根目录执行，确保 `backend` 包可被正确导入。
 
 ```bash
-cd backend
-pytest tests/
+python -m pytest backend/tests
 ```
 
-测试覆盖范围包括：评估流程端到端验证、SOP 删除级联逻辑等。
+前端回归测试位于 `bysj/tests/`，使用 Node.js 内置 `node:test`：
+
+```bash
+cd bysj
+node --test tests/*.test.js
+npm run build
+```
+
+测试覆盖范围包括：评估流程、步骤耗时与问题类型后处理、历史查询优化、SOP / 历史记录删除、Token 展示、管理员统计约束等。
