@@ -144,7 +144,7 @@ def normalize_timestamps(values: List[float], duration_sec: float, limit: int):
     return cleaned[:limit]
 
 
-def frame_to_data_url(frame, max_side: int = 320, jpeg_quality: int = 65):
+def frame_to_data_url(frame, max_side: int = 512, jpeg_quality: int = 78):
     height, width = frame.shape[:2]
     longest = max(height, width)
     if longest > max_side:
@@ -176,21 +176,92 @@ def extract_frames(video_path: str, timestamps: List[float]):
     return frames
 
 
+def compute_frame_histogram(frame):
+    """Compute a normalized 2D HSV histogram for frame similarity comparison."""
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([hsv], [0, 1], None, [50, 60], [0, 180, 0, 256])
+    cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+    return hist
+
+
+def deduplicate_by_histogram(frames, timestamps, threshold: float = 0.92):
+    """
+    Remove near-duplicate frames based on HSV histogram correlation.
+
+    Returns (deduped_frames, deduped_timestamps) preserving temporal order.
+    """
+    if not frames:
+        return [], []
+
+    kept_indices = [0]
+    for i in range(1, len(frames)):
+        prev_hist = compute_frame_histogram(frames[kept_indices[-1]])
+        curr_hist = compute_frame_histogram(frames[i])
+        correlation = cv2.compareHist(prev_hist, curr_hist, cv2.HISTCMP_CORREL)
+        if correlation < threshold:
+            kept_indices.append(i)
+
+    return (
+        [frames[i] for i in kept_indices],
+        [timestamps[i] for i in kept_indices],
+    )
+
+
 def extract_analysis_samples(
     video_path: str,
     duration_sec: float,
     start_sec: float = 0,
     end_sec: Optional[float] = None,
     sample_count: int = 10,
+    sample_fps: float = 2.0,
 ):
-    """Extract evenly-spaced analysis frames, optionally within a time range."""
+    """Extract adaptive analysis frames: high-density sampling + histogram dedup.
+
+    Samples at sample_fps (default 2fps) to catch brief actions, then removes
+    near-duplicate frames via HSV histogram correlation so every frame sent to
+    the model carries distinct information.
+    """
     actual_start = max(0.0, float(start_sec or 0))
     actual_end = end_sec if end_sec is not None else duration_sec
     if duration_sec > 0:
         actual_end = min(actual_end, duration_sec)
-    timestamps = build_sample_timestamps(actual_start, actual_end if actual_end > 0 else 0.1, sample_count)
-    frames = extract_frames(video_path, timestamps)
-    return timestamps[: len(frames)], frames
+    window = max(0.1, actual_end - actual_start)
+    dense_count = max(sample_count, int(round(window * sample_fps)))
+    dense_timestamps = build_sample_timestamps(actual_start, actual_end, dense_count)
+
+    capture = open_capture(video_path)
+    raw_frames = []
+    kept_timestamps = []
+    try:
+        for second in dense_timestamps:
+            capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, float(second)) * 1000)
+            success, frame = capture.read()
+            if not success or frame is None:
+                continue
+            raw_frames.append(frame)
+            kept_timestamps.append(second)
+    finally:
+        capture.release()
+
+    if not raw_frames:
+        raise HTTPException(status_code=400, detail="Unable to extract analysis frames from video")
+
+    deduped_frames, deduped_timestamps = deduplicate_by_histogram(raw_frames, kept_timestamps)
+    # Cap to sample_count by picking evenly from the deduped set so every frame
+    # carries distinct information but total token budget stays bounded.
+    total = len(deduped_frames)
+    if total <= sample_count:
+        selected_frames = deduped_frames
+        selected_timestamps = deduped_timestamps
+    else:
+        step = (total - 1) / (sample_count - 1) if sample_count > 1 else 0
+        indices = [int(round(i * step)) for i in range(sample_count)]
+        indices = [min(i, total - 1) for i in indices]
+        selected_frames = [deduped_frames[i] for i in indices]
+        selected_timestamps = [deduped_timestamps[i] for i in indices]
+
+    encoded = [frame_to_data_url(f) for f in selected_frames]
+    return selected_timestamps[: len(encoded)], encoded
 
 
 def build_reference_bundle(

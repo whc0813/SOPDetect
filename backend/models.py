@@ -96,6 +96,7 @@ class EvaluationResultPayload(BaseModel):
 
 
 class AIReferencePlan(BaseModel):
+    reasoning: str = ""
     stepSummary: str
     roiHint: str
     keyMoments: List[KeyMoment] = Field(default_factory=list)

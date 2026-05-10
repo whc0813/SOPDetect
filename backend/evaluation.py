@@ -700,32 +700,97 @@ async def build_ai_reference_plan(
     duration_sec: float,
     sample_timestamps: List[float],
     sample_frames: List[str],
+    video_data_url: Optional[str] = None,
 ):
     if not api_config or not api_config.apiKey.strip():
         return None, None
+
+    has_video = bool((video_data_url or "").strip())
+    # When video is available the model can observe continuous motion, so we
+    # send fewer static frames to keep the token budget under control.
+    max_static_frames = 6 if has_video else len(sample_frames)
+    selected_frames = sample_frames[:max_static_frames]
+    selected_timestamps = sample_timestamps[:max_static_frames]
+
+    frame_descriptions = []
+    for index, frame in enumerate(selected_frames):
+        timestamp = selected_timestamps[index]
+        frame_descriptions.append(
+            {"type": "text", "text": f"采样帧 {index + 1}，时间戳 {timestamp:.2f}s"}
+        )
+        frame_descriptions.append({"type": "image_url", "image_url": {"url": frame}})
+
+    video_blocks = []
+    if has_video:
+        video_blocks = [
+            {
+                "type": "text",
+                "text": "下面是完整的示范视频，用于观察动作的连续变化过程：",
+            },
+            {
+                "type": "video_url",
+                "video_url": {"url": video_data_url},
+                "fps": 2.0,
+            },
+        ]
+        if selected_frames:
+            video_blocks.append({
+                "type": "text",
+                "text": "以下是从视频中按动作变化程度自适应采样得到的关键画面（已去除冗余静止帧），可作为时间点定位参考：",
+            })
 
     content_blocks = [
         {
             "type": "text",
             "text": (
-                "你正在分析一个 SOP 示范视频。\n"
-                f"步骤编号：{step_no}\n"
-                f"步骤说明：{description}\n"
-                f"视频时长：{duration_sec:.2f} 秒\n"
-                "下面会给你一组从示范视频中均匀采样得到的画面。"
-                "请根据这些画面，推断这个步骤中最关键的子动作，并按发生顺序给出时间点估计。"
-                "时间点尽量对应明显动作发生的时刻，而不是过渡阶段。"
-                "如果这个步骤本身包含连续动作，例如依次按多个按键，请把每次按键都拆成单独的子步骤。\n"
-                "只返回 JSON，不要输出额外说明。"
+                f"SOP 示范视频分析 — 步骤 {step_no}：{description}\n"
+                f"视频时长：{duration_sec:.2f}s\n"
+                "任务：定位该步骤所有关键时刻的精确时间点。\n"
+                "1. reasoning 逐帧推理：每帧动作状态、帧间变化、过渡/峰值判断。\n"
+                "2. keyMoments 优先标注动作形态峰值点（动作最典型瞬间），而非过渡态。\n"
+                "3. 连续子动作（如依次按键）必须拆分为独立 keyMoment，不合并、不遗漏。\n"
+                "4. roiHint 用简短方位描述关键观察区域。stepSummary 一句话概括动作时序。\n"
+                "时间精度一位小数，只返回 JSON。"
             ),
-        }
+        },
+        *video_blocks,
+        *frame_descriptions,
     ]
-    for index, frame in enumerate(sample_frames):
-        timestamp = sample_timestamps[index] if index < len(sample_timestamps) else 0
-        content_blocks.append(
-            {"type": "text", "text": f"采样帧 {index + 1}，估计时间点 {timestamp:.2f} 秒。"}
-        )
-        content_blocks.append({"type": "image_url", "image_url": {"url": frame}})
+
+    schema_properties = {
+        "reasoning": {
+            "type": "string",
+            "description": "逐帧推理过程：每帧画面的动作状态、帧间变化、哪些是过渡/关键时刻、子动作拆分依据",
+        },
+        "stepSummary": {
+            "type": "string",
+            "description": "一句话概括步骤整体动作流程，包含子动作时序关系",
+        },
+        "roiHint": {
+            "type": "string",
+            "description": "最关键的观察区域，简短方位描述",
+        },
+        "keyMoments": {
+            "type": "array",
+            "description": "按时间顺序排列的所有关键时刻，每个子动作对应一项",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "该关键动作的简短名称，如'按下电源键''插入卡片'",
+                    },
+                    "timestampSec": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "动作形态峰值点对应的视频时间（秒），保留一位小数",
+                    },
+                },
+                "required": ["title", "timestampSec"],
+            },
+        },
+    }
 
     payload = {
         "model": api_config.model,
@@ -733,7 +798,7 @@ async def build_ai_reference_plan(
         "messages": [
             {
                 "role": "system",
-                "content": "你是 SOP 示范视频的预处理助手。请始终返回符合给定 JSON Schema 的合法 JSON。",
+                "content": "你是 SOP 示范视频的预处理助手，专门分析操作动作视频中的关键时刻。请始终返回符合给定 JSON Schema 的合法 JSON。",
             },
             {"role": "user", "content": content_blocks},
         ],
@@ -745,23 +810,8 @@ async def build_ai_reference_plan(
                 "schema": {
                     "type": "object",
                     "additionalProperties": False,
-                    "properties": {
-                        "stepSummary": {"type": "string"},
-                        "roiHint": {"type": "string"},
-                        "keyMoments": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "additionalProperties": False,
-                                "properties": {
-                                    "title": {"type": "string"},
-                                    "timestampSec": {"type": "number", "minimum": 0},
-                                },
-                                "required": ["title", "timestampSec"],
-                            },
-                        },
-                    },
-                    "required": ["stepSummary", "roiHint", "keyMoments"],
+                    "properties": schema_properties,
+                    "required": ["reasoning", "stepSummary", "roiHint", "keyMoments"],
                 },
             },
         },
@@ -805,6 +855,7 @@ async def prepare_reference_bundle(
                     meta["durationSec"],
                     analysis_timestamps,
                     analysis_frames,
+                    video_data_url=video_data_url,
                 )
             except HTTPException:
                 raise
@@ -816,7 +867,7 @@ async def prepare_reference_bundle(
             step_no,
             description,
             temp_path,
-            max(1, min(max_frames, 8)),
+            max(1, min(max_frames, 12)),
             ai_plan=ai_plan,
             analysis_samples=analysis_timestamps,
         )
