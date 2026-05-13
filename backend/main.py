@@ -727,7 +727,7 @@ async def update_step_segmentation_override(
                     "referenceMode": "video",
                     "referenceFrames": bundle["referenceFrames"],
                     "analysisFrames": bundle["analysisFrames"],
-                    "referenceSummary": item.get("referenceSummary") or bundle["referenceSummary"],
+                    "referenceSummary": bundle["referenceSummary"],
                     "referenceFeatures": bundle["referenceFeatures"],
                     "substeps": bundle["substeps"],
                     "roiHint": item.get("roiHint") or bundle["roiHint"],
