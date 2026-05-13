@@ -958,6 +958,62 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertNotIn("score", results[1])
         self.assertEqual(results[1]["issueType"], "证据不足")
 
+    def test_prepare_reference_bundle_uses_full_video_samples_when_candidate_window_exists(self):
+        sample_calls = []
+
+        def fake_extract_samples(
+            video_path,
+            duration_sec,
+            start_sec=0,
+            end_sec=None,
+            sample_count=10,
+            sample_fps=2.0,
+        ):
+            sample_calls.append((start_sec, end_sec))
+            if float(start_sec or 0) == 0 and end_sec is None:
+                return [1.0, 3.0], ["full-frame-1", "full-frame-2"]
+            return [5.5], ["candidate-frame"]
+
+        with mock.patch(
+            "backend.evaluation.data_url_to_temp_path",
+            return_value="demo.mp4",
+        ), mock.patch(
+            "backend.evaluation.read_video_meta",
+            return_value={"durationSec": 10.0, "fps": 30.0, "frameCount": 300},
+        ), mock.patch(
+            "backend.evaluation.extract_analysis_samples",
+            side_effect=fake_extract_samples,
+        ), mock.patch(
+            "backend.evaluation.build_ai_reference_plan",
+            new=mock.AsyncMock(return_value=(None, None)),
+        ), mock.patch(
+            "backend.evaluation.build_reference_bundle",
+            return_value={
+                "referenceFrames": [],
+                "referenceSummary": "步骤 1：测试步骤",
+                "referenceFeatures": {},
+                "substeps": [],
+                "roiHint": "",
+                "analysisSampleTimestamps": [],
+            },
+        ), mock.patch("backend.evaluation.cleanup_file"):
+            bundle = evaluation.asyncio.run(
+                evaluation.prepare_reference_bundle(
+                    step_no=1,
+                    description="测试步骤",
+                    video_data_url="data:video/mp4;base64,demo",
+                    api_config=evaluation.ApiConfig(apiKey="k"),
+                    start_sec=5.0,
+                    end_sec=6.0,
+                )
+            )
+
+        self.assertTrue(
+            any(float(start or 0) == 0 and end is None for start, end in sample_calls),
+            sample_calls,
+        )
+        self.assertIn("full-frame-1", bundle["analysisFrames"])
+
     def test_sanitize_step_result_clamps_range_and_strips_impossible_timestamps(self):
         result = {
             "stepNo": 3,

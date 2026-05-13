@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -96,7 +96,49 @@ class EvaluationResultPayload(BaseModel):
 
 
 class AIReferencePlan(BaseModel):
+    detected: bool = True
+    startSec: Optional[float] = None
+    endSec: Optional[float] = None
+    confidence: float = 0
     reasoning: str = ""
     stepSummary: str
     roiHint: str
     keyMoments: List[KeyMoment] = Field(default_factory=list)
+
+
+class SegmentItem(BaseModel):
+    stepNo: int
+    startSec: float
+    endSec: float
+
+
+class ConfirmSegmentationRequest(BaseModel):
+    segments: List[SegmentItem]
+
+
+class RetryStepRequest(BaseModel):
+    stepNo: int
+
+
+class PreparationJobView(BaseModel):
+    id: int
+    sopId: Union[int, str]
+    status: str
+    phase: Optional[str] = None
+    progressMessage: Optional[str] = None
+    errorMessage: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    workflowMediaId: Optional[int] = None
+    createdAt: str
+    updatedAt: str
+
+
+class PreparationJobResponse(BaseModel):
+    success: bool = True
+    data: Optional[PreparationJobView] = None
+
+
+class CreateSopResponse(BaseModel):
+    sopId: str
+    jobId: int
+    status: str = "queued"

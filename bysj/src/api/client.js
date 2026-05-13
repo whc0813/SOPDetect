@@ -210,6 +210,53 @@ export async function createSop(payload) {
   })
 }
 
+export async function createSopDraft(payload) {
+  const payloadResult = await createSop(payload)
+  return payloadResult.data
+}
+
+export async function listDraftSops() {
+  const payload = await apiRequest('/api/admin/sops/drafts')
+  return payload.data
+}
+
+export async function getPreparationJob(jobId) {
+  const payload = await apiRequest(`/api/sop-preparation-jobs/${jobId}`)
+  return payload.data
+}
+
+export async function confirmSegmentation(jobId, segments) {
+  const payload = await apiRequest(`/api/sop-preparation-jobs/${jobId}/confirm-segmentation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ segments })
+  })
+  return payload.data
+}
+
+export async function retryPreparationStep(jobId, stepNo) {
+  const payload = await apiRequest(`/api/sop-preparation-jobs/${jobId}/retry-step`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stepNo })
+  })
+  return payload.data
+}
+
+export async function retrySegmentation(jobId) {
+  const payload = await apiRequest(`/api/sop-preparation-jobs/${jobId}/retry-segmentation`, {
+    method: 'POST'
+  })
+  return payload.data
+}
+
+export async function cancelPreparation(jobId) {
+  const payload = await apiRequest(`/api/sop-preparation-jobs/${jobId}/cancel`, {
+    method: 'POST'
+  })
+  return payload.data
+}
+
 export async function removeSop(sopId) {
   return apiRequest(`/api/sops/${sopId}`, { method: 'DELETE' })
 }

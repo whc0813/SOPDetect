@@ -693,6 +693,46 @@ def build_multistage_model_trace(stage_traces: List[dict]) -> tuple[Optional[dic
 
 # ── Demo video / reference bundle helpers ─────────────────────
 
+def _normalize_candidate_window(start_sec: float, end_sec: Optional[float], duration_sec: float):
+    if end_sec is None:
+        return None
+    try:
+        start = max(0.0, float(start_sec or 0))
+        end = float(end_sec)
+    except (TypeError, ValueError):
+        return None
+    if duration_sec and duration_sec > 0:
+        end = min(float(duration_sec), end)
+    if end <= start:
+        return None
+    return round(start, 3), round(end, 3)
+
+
+def _merge_analysis_samples(
+    primary_timestamps: List[float],
+    primary_frames: List[str],
+    secondary_timestamps: List[float],
+    secondary_frames: List[str],
+    limit: int = 12,
+):
+    merged = []
+    for timestamps, frames in (
+        (primary_timestamps or [], primary_frames or []),
+        (secondary_timestamps or [], secondary_frames or []),
+    ):
+        for timestamp, frame in zip(timestamps, frames):
+            try:
+                normalized_timestamp = round(float(timestamp), 3)
+            except (TypeError, ValueError):
+                continue
+            if any(abs(item[0] - normalized_timestamp) <= 0.08 for item in merged):
+                continue
+            merged.append((normalized_timestamp, frame))
+            if len(merged) >= limit:
+                return [item[0] for item in merged], [item[1] for item in merged]
+    return [item[0] for item in merged], [item[1] for item in merged]
+
+
 async def build_ai_reference_plan(
     api_config: Optional[ApiConfig],
     step_no: int,
@@ -708,7 +748,7 @@ async def build_ai_reference_plan(
     has_video = bool((video_data_url or "").strip())
     # When video is available the model can observe continuous motion, so we
     # send fewer static frames to keep the token budget under control.
-    max_static_frames = 6 if has_video else len(sample_frames)
+    max_static_frames = 10 if has_video else len(sample_frames)
     selected_frames = sample_frames[:max_static_frames]
     selected_timestamps = sample_timestamps[:max_static_frames]
 
@@ -736,7 +776,7 @@ async def build_ai_reference_plan(
         if selected_frames:
             video_blocks.append({
                 "type": "text",
-                "text": "以下是从视频中按动作变化程度自适应采样得到的关键画面（已去除冗余静止帧），可作为时间点定位参考：",
+                "text": "以下关键画面包含全视频采样和候选时间窗补充采样，可作为时间点定位参考；候选范围不代表最终结论。",
             })
 
     content_blocks = [
@@ -746,10 +786,13 @@ async def build_ai_reference_plan(
                 f"SOP 示范视频分析 — 步骤 {step_no}：{description}\n"
                 f"视频时长：{duration_sec:.2f}s\n"
                 "任务：定位该步骤所有关键时刻的精确时间点。\n"
+                "如果输入中包含时序分析候选范围，该范围仅供参考；必须先在完整示范视频中重新确认当前步骤的真实起止时间。\n"
+                "如果候选范围和步骤动作不一致，以完整示范视频中的实际动作和步骤说明为准。\n"
                 "1. reasoning 逐帧推理：每帧动作状态、帧间变化、过渡/峰值判断。\n"
-                "2. keyMoments 优先标注动作形态峰值点（动作最典型瞬间），而非过渡态。\n"
-                "3. 连续子动作（如依次按键）必须拆分为独立 keyMoment，不合并、不遗漏。\n"
-                "4. roiHint 用简短方位描述关键观察区域。stepSummary 一句话概括动作时序。\n"
+                "2. detected/startSec/endSec/confidence 记录你重新定位到的当前步骤真实片段。\n"
+                "3. keyMoments 优先标注动作形态峰值点（动作最典型瞬间），而非过渡态。\n"
+                "4. 连续子动作（如依次按键）必须拆分为独立 keyMoment，不合并、不遗漏。\n"
+                "5. roiHint 用简短方位描述关键观察区域。stepSummary 一句话概括动作时序。\n"
                 "时间精度一位小数，只返回 JSON。"
             ),
         },
@@ -758,6 +801,26 @@ async def build_ai_reference_plan(
     ]
 
     schema_properties = {
+        "detected": {
+            "type": "boolean",
+            "description": "是否在完整示范视频中重新定位到当前步骤",
+        },
+        "startSec": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "重新定位到的当前步骤开始时间（秒），未定位时为 null",
+        },
+        "endSec": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "重新定位到的当前步骤结束时间（秒），未定位时为 null",
+        },
+        "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "重新定位当前步骤的置信度",
+        },
         "reasoning": {
             "type": "string",
             "description": "逐帧推理过程：每帧画面的动作状态、帧间变化、哪些是过渡/关键时刻、子动作拆分依据",
@@ -811,7 +874,10 @@ async def build_ai_reference_plan(
                     "type": "object",
                     "additionalProperties": False,
                     "properties": schema_properties,
-                    "required": ["reasoning", "stepSummary", "roiHint", "keyMoments"],
+                    "required": [
+                        "detected", "startSec", "endSec", "confidence",
+                        "reasoning", "stepSummary", "roiHint", "keyMoments",
+                    ],
                 },
             },
         },
@@ -840,9 +906,30 @@ async def prepare_reference_bundle(
     try:
         temp_path = data_url_to_temp_path(video_data_url)
         meta = read_video_meta(temp_path)
-        analysis_timestamps, analysis_frames = extract_analysis_samples(
-            temp_path, meta["durationSec"], start_sec=start_sec, end_sec=end_sec
+        candidate_window = _normalize_candidate_window(
+            start_sec, end_sec, meta["durationSec"]
         )
+        base_sample_count = 6 if candidate_window else 10
+        analysis_timestamps, analysis_frames = extract_analysis_samples(
+            temp_path, meta["durationSec"], sample_count=base_sample_count
+        )
+        if candidate_window:
+            try:
+                candidate_timestamps, candidate_frames = extract_analysis_samples(
+                    temp_path,
+                    meta["durationSec"],
+                    start_sec=candidate_window[0],
+                    end_sec=candidate_window[1],
+                    sample_count=6,
+                )
+                analysis_timestamps, analysis_frames = _merge_analysis_samples(
+                    analysis_timestamps,
+                    analysis_frames,
+                    candidate_timestamps,
+                    candidate_frames,
+                )
+            except Exception:
+                pass
         ai_plan = None
         raw_ai_result = None
 

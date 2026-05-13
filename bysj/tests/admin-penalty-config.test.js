@@ -41,3 +41,12 @@ test('admin history table exposes delete record action', () => {
   assert.match(source, /deleteHistoryRecord/)
   assert.match(source, />删除记录</)
 })
+
+test('admin SOP keyframe thumbnails can be previewed larger', () => {
+  const source = readAdminVue()
+
+  assert.match(source, /<el-image[\s\S]*v-for="\(frame, index\) in step\.referenceFrames \|\| \[\]"/)
+  assert.match(source, /:preview-src-list="step\.referenceFrames \|\| \[\]"/)
+  assert.match(source, /preview-teleported/)
+  assert.doesNotMatch(source, /<img v-for="\(frame, index\) in step\.referenceFrames \|\| \[\]"/)
+})

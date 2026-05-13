@@ -235,10 +235,14 @@ def _column_exists(connection, table_name, column_name):
 
 def _run_schema_migrations(connection):
     column_statements = {
+        ("sops", "active_job_id"): "ALTER TABLE sops ADD COLUMN active_job_id BIGINT UNSIGNED NULL AFTER status",
         ("sop_steps", "step_type"): "ALTER TABLE sop_steps ADD COLUMN step_type ENUM('required', 'optional', 'conditional') NOT NULL DEFAULT 'required' AFTER description",
         ("sop_steps", "condition_text"): "ALTER TABLE sop_steps ADD COLUMN condition_text TEXT NULL AFTER step_type",
         ("sop_steps", "min_duration_sec"): "ALTER TABLE sop_steps ADD COLUMN min_duration_sec DECIMAL(8,3) NULL AFTER condition_text",
         ("sop_steps", "max_duration_sec"): "ALTER TABLE sop_steps ADD COLUMN max_duration_sec DECIMAL(8,3) NULL AFTER min_duration_sec",
+        ("sop_steps", "time_window_start_sec"): "ALTER TABLE sop_steps ADD COLUMN time_window_start_sec DECIMAL(8,3) NULL AFTER raw_ai_result",
+        ("sop_steps", "time_window_end_sec"): "ALTER TABLE sop_steps ADD COLUMN time_window_end_sec DECIMAL(8,3) NULL AFTER time_window_start_sec",
+        ("sop_steps", "segmentation_source"): "ALTER TABLE sop_steps ADD COLUMN segmentation_source VARCHAR(16) NULL AFTER time_window_end_sec",
         ("execution_step_results", "applicable"): "ALTER TABLE execution_step_results ADD COLUMN applicable TINYINT(1) NOT NULL DEFAULT 1 AFTER confidence",
         ("execution_step_results", "included_in_score"): "ALTER TABLE execution_step_results ADD COLUMN included_in_score TINYINT(1) NOT NULL DEFAULT 1 AFTER applicable",
         ("execution_step_results", "detected_start_sec"): "ALTER TABLE execution_step_results ADD COLUMN detected_start_sec DECIMAL(8,3) NULL AFTER prerequisite_violated",
@@ -256,8 +260,6 @@ def _run_schema_migrations(connection):
     drop_column_statements = {
         ("sop_steps", "risk_level"): "ALTER TABLE sop_steps DROP COLUMN risk_level",
         ("sop_steps", "time_anchor_type"): "ALTER TABLE sop_steps DROP COLUMN time_anchor_type",
-        ("sop_steps", "time_window_start_sec"): "ALTER TABLE sop_steps DROP COLUMN time_window_start_sec",
-        ("sop_steps", "time_window_end_sec"): "ALTER TABLE sop_steps DROP COLUMN time_window_end_sec",
         ("execution_step_results", "timing_status"): "ALTER TABLE execution_step_results DROP COLUMN timing_status",
         ("execution_step_results", "risk_level_snapshot"): "ALTER TABLE execution_step_results DROP COLUMN risk_level_snapshot",
         ("sops", "penalty_config"): "ALTER TABLE sops DROP COLUMN penalty_config",
@@ -289,6 +291,43 @@ def _run_schema_migrations(connection):
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """
             )
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT COLUMN_DEFAULT FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = %s
+              AND TABLE_NAME = 'sops' AND COLUMN_NAME = 'status'
+            """,
+            (MYSQL_SETTINGS["database"],),
+        )
+        row = cursor.fetchone()
+        if row and row.get("COLUMN_DEFAULT") != "draft":
+            cursor.execute(
+                "ALTER TABLE sops MODIFY COLUMN status "
+                "ENUM('draft','published','archived') NOT NULL DEFAULT 'draft'"
+            )
+
+    if (
+        _table_exists(connection, "sops")
+        and _table_exists(connection, "sop_preparation_jobs")
+        and _column_exists(connection, "sops", "active_job_id")
+    ):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+                WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'sops'
+                  AND COLUMN_NAME = 'active_job_id' AND REFERENCED_TABLE_NAME IS NOT NULL
+                """,
+                (MYSQL_SETTINGS["database"],),
+            )
+            if cursor.fetchone() is None:
+                cursor.execute(
+                    "ALTER TABLE sops ADD CONSTRAINT fk_sop_active_job "
+                    "FOREIGN KEY (active_job_id) REFERENCES sop_preparation_jobs(id) "
+                    "ON DELETE SET NULL"
+                )
 
 
 def _normalize_step_type(value):
@@ -832,17 +871,25 @@ def set_config(config):
     return merged
 
 
-def _fetch_sop_base_rows(connection, sop_codes=None):
+def _fetch_sop_base_rows(connection, sop_codes=None, include_drafts=True, created_by_id=None):
     sql = """
         SELECT s.id, s.sop_code, s.name, s.scene, s.description, s.step_count, s.demo_video_count,
-               s.status, s.created_at, s.updated_at
+               s.status, s.active_job_id, s.created_by, s.created_at, s.updated_at
         FROM sops s
     """
     params = []
+    conditions = []
     if sop_codes:
         placeholders = ", ".join(["%s"] * len(sop_codes))
-        sql += f" WHERE s.sop_code IN ({placeholders})"
+        conditions.append(f"s.sop_code IN ({placeholders})")
         params.extend(sop_codes)
+    if not include_drafts:
+        conditions.append("s.status = 'published'")
+    if created_by_id is not None:
+        conditions.append("s.created_by = %s")
+        params.append(created_by_id)
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
     sql += " ORDER BY s.created_at DESC"
 
     with connection.cursor() as cursor:
@@ -863,32 +910,60 @@ def _media_row_to_api(media_row):
     }
 
 
-def _fetch_media_for_steps(connection, step_ids):
-    if not step_ids:
-        return {}
-    placeholders = ", ".join(["%s"] * len(step_ids))
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f"""
-            SELECT *
-            FROM media_files
-            WHERE related_step_id IN ({placeholders})
-            ORDER BY id DESC
-            """,
-            step_ids,
-        )
-        rows = cursor.fetchall()
-
+def _fetch_media_for_steps(connection, step_ids, sop_db_ids=None):
     media_map = {}
-    for row in rows:
-        step_id = row.get("related_step_id")
-        if step_id and step_id not in media_map:
-            media_map[step_id] = row
+    if step_ids:
+        placeholders = ", ".join(["%s"] * len(step_ids))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT *
+                FROM media_files
+                WHERE related_step_id IN ({placeholders})
+                ORDER BY id DESC
+                """,
+                step_ids,
+            )
+            rows = cursor.fetchall()
+
+        for row in rows:
+            step_id = row.get("related_step_id")
+            if step_id and step_id not in media_map:
+                media_map[step_id] = row
+
+    # Fallback：步骤没有自己的 related_step_id 媒体行（典型场景：一段整条
+    # 示范视频被所有步骤共享，attach_media 时只关联到 sop 级），退回到该 SOP
+    # 的 sop_step_demo 最新一条共享给所有未关联步骤。
+    missing = [sid for sid in (step_ids or []) if sid not in media_map]
+    if missing and sop_db_ids:
+        sop_ph = ", ".join(["%s"] * len(sop_db_ids))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT *
+                FROM media_files
+                WHERE related_sop_id IN ({sop_ph})
+                  AND business_type = 'sop_step_demo'
+                ORDER BY id DESC
+                """,
+                list(sop_db_ids),
+            )
+            shared_rows = cursor.fetchall()
+        if shared_rows:
+            # 任取该 sop 最新一条作为所有未关联步骤的 demoVideo
+            shared = shared_rows[0]
+            for sid in missing:
+                media_map[sid] = shared
     return media_map
 
 
-def _build_sop_records(connection, sop_codes=None):
-    sop_rows = _fetch_sop_base_rows(connection, sop_codes)
+def _build_sop_records(connection, sop_codes=None, include_drafts=True, created_by_id=None):
+    sop_rows = _fetch_sop_base_rows(
+        connection,
+        sop_codes,
+        include_drafts=include_drafts,
+        created_by_id=created_by_id,
+    )
     if not sop_rows:
         return []
 
@@ -908,7 +983,7 @@ def _build_sop_records(connection, sop_codes=None):
         step_rows = cursor.fetchall()
 
     step_ids = [row["id"] for row in step_rows]
-    media_map = _fetch_media_for_steps(connection, step_ids)
+    media_map = _fetch_media_for_steps(connection, step_ids, sop_db_ids=sop_ids)
     keyframe_map = {}
     substep_map = {}
     prerequisite_map = {}
@@ -955,13 +1030,14 @@ def _build_sop_records(connection, sop_codes=None):
     steps_by_sop = {}
     for step in step_rows:
         frames = keyframe_map.get(step["id"], [])
-        reference_frames = [item.get("image_data") or "" for item in frames if item.get("frame_type") == "reference"]
+        reference_frame_rows = [item for item in frames if item.get("frame_type") == "reference"]
         analysis_frames = [item.get("image_data") or "" for item in frames if item.get("frame_type") == "analysis"]
-        sample_timestamps = [
-            float(item.get("timestamp_sec"))
-            for item in frames
-            if item.get("frame_type") == "reference" and item.get("timestamp_sec") is not None
+        reference_frames = [item.get("image_data") or "" for item in reference_frame_rows]
+        reference_frame_timestamps = [
+            float(item["timestamp_sec"]) if item.get("timestamp_sec") is not None else None
+            for item in reference_frame_rows
         ]
+        sample_timestamps = [ts for ts in reference_frame_timestamps if ts is not None]
         media_row = media_map.get(step["id"])
         demo_video = _media_row_to_api(media_row)
         normalized_step = _normalize_step_record(
@@ -972,6 +1048,9 @@ def _build_sop_records(connection, sop_codes=None):
                 "prerequisiteStepNos": prerequisite_map.get(step["id"], []),
                 "minDurationSec": step.get("min_duration_sec"),
                 "maxDurationSec": step.get("max_duration_sec"),
+                "timeWindowStartSec": step.get("time_window_start_sec"),
+                "timeWindowEndSec": step.get("time_window_end_sec"),
+                "segmentationSource": step.get("segmentation_source"),
             }
         )
 
@@ -986,8 +1065,12 @@ def _build_sop_records(connection, sop_codes=None):
                 "prerequisiteStepNos": normalized_step["prerequisiteStepNos"],
                 "minDurationSec": normalized_step["minDurationSec"],
                 "maxDurationSec": normalized_step["maxDurationSec"],
+                "timeWindowStartSec": _normalize_optional_float(normalized_step.get("timeWindowStartSec")),
+                "timeWindowEndSec": _normalize_optional_float(normalized_step.get("timeWindowEndSec")),
+                "segmentationSource": normalized_step.get("segmentationSource") or "",
                 "referenceMode": step.get("reference_mode") or ("video" if reference_frames else "text"),
                 "referenceFrames": reference_frames,
+                "referenceFrameTimestamps": reference_frame_timestamps,
                 "analysisFrames": analysis_frames,
                 "referenceSummary": step.get("reference_summary") or "",
                 "referenceFeatures": {
@@ -1015,11 +1098,14 @@ def _build_sop_records(connection, sop_codes=None):
         records.append(
             {
                 "id": row.get("sop_code"),
+                "dbId": row.get("id"),
                 "name": row.get("name") or "",
                 "scene": row.get("scene") or "未填写",
                 "description": row.get("description") or "",
                 "stepCount": int(row.get("step_count") or len(steps)),
                 "demoVideoCount": int(row.get("demo_video_count") or sum(1 for item in steps if item.get("demoVideo"))),
+                "status": row.get("status") or "published",
+                "activeJobId": row.get("active_job_id"),
                 "createTime": _parse_datetime(row.get("created_at")),
                 "createdAtMs": int(row["created_at"].timestamp() * 1000) if isinstance(row.get("created_at"), datetime) else 0,
                 "steps": steps,
@@ -1028,9 +1114,13 @@ def _build_sop_records(connection, sop_codes=None):
     return records
 
 
-def list_sops():
+def list_sops(include_drafts=False, created_by_id=None):
     with _get_connection() as connection:
-        return _build_sop_records(connection)
+        return _build_sop_records(
+            connection,
+            include_drafts=include_drafts,
+            created_by_id=created_by_id,
+        )
 
 
 def get_sop(sop_id):
@@ -1165,8 +1255,9 @@ def _upsert_sop_content(connection, sop_data, created_by_id=None):
                   sop_id, step_no, description, step_type, condition_text,
                   min_duration_sec, max_duration_sec, reference_mode,
                   reference_summary, roi_hint, ai_used, reference_duration_sec, reference_fps,
-                  reference_frame_count, raw_ai_result
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                  reference_frame_count, raw_ai_result, time_window_start_sec,
+                  time_window_end_sec, segmentation_source
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     sop_id,
@@ -1184,6 +1275,9 @@ def _upsert_sop_content(connection, sop_data, created_by_id=None):
                     reference_features.get("fps"),
                     reference_features.get("frameCount"),
                     _json_dumps(step.get("rawAIResult")),
+                    _normalize_optional_float(step.get("timeWindowStartSec")),
+                    _normalize_optional_float(step.get("timeWindowEndSec")),
+                    step.get("segmentationSource") or None,
                 ),
             )
             step_id = cursor.lastrowid
@@ -1222,6 +1316,356 @@ def update_sop(sop_id, updater):
         _upsert_sop_content(connection, updated)
         connection.commit()
     return get_sop(sop_id)
+
+
+def _fetch_sop_row_by_id(connection, sop_db_id):
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT * FROM sops WHERE id = %s LIMIT 1", (sop_db_id,))
+        return cursor.fetchone()
+
+
+def _resolve_sop_row(connection, sop_ref):
+    if isinstance(sop_ref, int):
+        return _fetch_sop_row_by_id(connection, sop_ref)
+    text = str(sop_ref or "").strip()
+    if text.isdigit():
+        row = _fetch_sop_row_by_id(connection, int(text))
+        if row:
+            return row
+    return _fetch_sop_row_by_code(connection, text)
+
+
+def _resolve_media_db_id(connection, media_ref):
+    if media_ref in (None, ""):
+        return None
+    if isinstance(media_ref, int):
+        return media_ref
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT id FROM media_files WHERE media_code = %s LIMIT 1", (media_ref,))
+        row = cursor.fetchone()
+        return row["id"] if row else None
+
+
+def _decode_preparation_job_row(row):
+    if not row:
+        return None
+    item = dict(row)
+    item["metadata"] = _json_loads(item.get("metadata"), {})
+    item["sopCode"] = item.get("sop_code") or ""
+    item["sopName"] = item.get("sop_name") or ""
+    return item
+
+
+def create_preparation_job(sop_ref, metadata=None, workflow_media_id=None):
+    payload = _json_dumps(metadata or {})
+    with _get_connection() as connection:
+        sop_row = _resolve_sop_row(connection, sop_ref)
+        if not sop_row:
+            raise ValueError("SOP not found")
+        media_db_id = _resolve_media_db_id(connection, workflow_media_id)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO sop_preparation_jobs (sop_id, status, metadata, workflow_media_id)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (sop_row["id"], "queued", payload, media_db_id),
+            )
+            job_id = cursor.lastrowid
+            cursor.execute(
+                "UPDATE sops SET active_job_id = %s, status = 'draft' WHERE id = %s",
+                (job_id, sop_row["id"]),
+            )
+        connection.commit()
+        return job_id
+
+
+def get_preparation_job(job_id):
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT j.*, s.sop_code, s.name AS sop_name, s.scene AS sop_scene
+            FROM sop_preparation_jobs j
+            JOIN sops s ON s.id = j.sop_id
+            WHERE j.id = %s
+            LIMIT 1
+            """,
+            (job_id,),
+        )
+        return _decode_preparation_job_row(cursor.fetchone())
+
+
+def update_preparation_job(
+    job_id,
+    *,
+    status=None,
+    phase=None,
+    progress_message=None,
+    error_message=None,
+    metadata_patch=None,
+    workflow_media_id=None,
+):
+    sets = []
+    params = []
+    if status is not None:
+        sets.append("status = %s")
+        params.append(status)
+    if phase is not None:
+        sets.append("phase = %s")
+        params.append(phase)
+    if progress_message is not None:
+        sets.append("progress_message = %s")
+        params.append(progress_message)
+    if error_message is not None:
+        sets.append("error_message = %s")
+        params.append(error_message)
+    if workflow_media_id is not None:
+        with _get_connection() as connection:
+            media_db_id = _resolve_media_db_id(connection, workflow_media_id)
+        sets.append("workflow_media_id = %s")
+        params.append(media_db_id)
+    if metadata_patch is not None:
+        current = get_preparation_job(job_id) or {}
+        merged = {**(current.get("metadata") or {}), **metadata_patch}
+        sets.append("metadata = %s")
+        params.append(_json_dumps(merged))
+    if not sets:
+        return
+    params.append(job_id)
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            f"UPDATE sop_preparation_jobs SET {', '.join(sets)} WHERE id = %s",
+            params,
+        )
+        connection.commit()
+
+
+def pick_preparation_job(statuses):
+    if not statuses:
+        return None
+    placeholders = ", ".join(["%s"] * len(statuses))
+    # 先用轻量列 + 索引选 id；避免把含 base64 视频的 metadata JSON 列拉进
+    # sort buffer 触发 MySQL "Out of sort memory" (1038)。
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT id FROM sop_preparation_jobs
+            WHERE status IN ({placeholders})
+            ORDER BY updated_at ASC
+            LIMIT 1
+            """,
+            list(statuses),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        job_id = row["id"] if isinstance(row, dict) else row[0]
+    return get_preparation_job(job_id)
+
+
+def delete_preparation_job(job_id):
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute("UPDATE sops SET active_job_id = NULL WHERE active_job_id = %s", (job_id,))
+        cursor.execute("DELETE FROM sop_preparation_jobs WHERE id = %s", (job_id,))
+        connection.commit()
+
+
+def list_draft_sops_for_admin(created_by_id):
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT s.sop_code AS id, s.name, s.scene, s.created_at,
+                   s.active_job_id, j.status AS job_status, j.phase AS job_phase
+            FROM sops s
+            LEFT JOIN sop_preparation_jobs j ON j.id = s.active_job_id
+            WHERE s.status = 'draft' AND s.created_by = %s
+            ORDER BY s.created_at DESC
+            """,
+            (created_by_id,),
+        )
+        rows = []
+        for row in cursor.fetchall():
+            rows.append(
+                {
+                    **row,
+                    "createdAt": _parse_datetime(row.get("created_at")),
+                }
+            )
+        return rows
+
+
+def list_sop_steps(sop_db_id):
+    """轻量获取某 SOP 的全部步骤（仅 step_no 与 description），用于校验。"""
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT step_no, description FROM sop_steps WHERE sop_id = %s ORDER BY step_no",
+            (sop_db_id,),
+        )
+        return list(cursor.fetchall() or [])
+
+
+def update_preparation_step_state(job_id, step_no, state_patch):
+    """原子合并单个步骤的 stepStates 字段，避免并发 read-modify-write race。"""
+    path = f"$.stepStates.\"{int(step_no)}\""
+    payload = _json_dumps(state_patch or {})
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            UPDATE sop_preparation_jobs
+            SET metadata = JSON_MERGE_PATCH(
+                COALESCE(metadata, '{{}}'),
+                JSON_OBJECT('stepStates', JSON_OBJECT(%s, CAST(%s AS JSON)))
+            )
+            WHERE id = %s
+            """,
+            (str(int(step_no)), payload, job_id),
+        )
+        connection.commit()
+
+
+def mark_preparation_job_cancelled(job_id):
+    """软删：把 Job 标记为 cancelled 让 worker 提前退出，由后续清理统一回收。"""
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE sop_preparation_jobs SET status = 'cancelled', phase = 'cancelled', "
+            "progress_message = '已取消，等待清理' WHERE id = %s",
+            (job_id,),
+        )
+        connection.commit()
+
+
+def reset_stalled_preparation_jobs(threshold_seconds):
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE sop_preparation_jobs
+            SET status = 'failed',
+                phase = 'worker_recovered',
+                error_message = 'Worker 进程异常退出，请重试'
+            WHERE status = 'processing_steps'
+              AND updated_at < DATE_SUB(NOW(), INTERVAL %s SECOND)
+            """,
+            (int(threshold_seconds),),
+        )
+        count = cursor.rowcount
+        connection.commit()
+        return count
+
+
+def write_confirmed_segments(sop_db_id, segments, source="manual_override"):
+    with _get_connection() as connection, connection.cursor() as cursor:
+        for segment in segments:
+            if hasattr(segment, "model_dump"):
+                segment = segment.model_dump()
+            step_no = int(segment.get("stepNo") or segment.get("step_no") or 0)
+            cursor.execute(
+                """
+                UPDATE sop_steps
+                SET time_window_start_sec = %s,
+                    time_window_end_sec = %s,
+                    segmentation_source = %s
+                WHERE sop_id = %s AND step_no = %s
+                """,
+                (
+                    _normalize_optional_float(segment.get("startSec", segment.get("start_sec"))),
+                    _normalize_optional_float(segment.get("endSec", segment.get("end_sec"))),
+                    source,
+                    sop_db_id,
+                    step_no,
+                ),
+            )
+        connection.commit()
+
+
+def update_sop_step_reference_bundle(sop_db_id, step_no, bundle, demo_video=None, segmentation_source="manual_override"):
+    reference_features = bundle.get("referenceFeatures") or {}
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE sop_steps
+            SET reference_mode = %s,
+                reference_summary = %s,
+                roi_hint = %s,
+                ai_used = %s,
+                reference_duration_sec = %s,
+                reference_fps = %s,
+                reference_frame_count = %s,
+                raw_ai_result = %s,
+                segmentation_source = COALESCE(segmentation_source, %s)
+            WHERE sop_id = %s AND step_no = %s
+            """,
+            (
+                "video" if bundle.get("referenceFrames") else "text",
+                bundle.get("referenceSummary") or "",
+                bundle.get("roiHint") or "",
+                1 if bundle.get("aiUsed") else 0,
+                reference_features.get("durationSec"),
+                reference_features.get("fps"),
+                reference_features.get("frameCount"),
+                _json_dumps(bundle.get("rawAIResult")),
+                segmentation_source,
+                sop_db_id,
+                step_no,
+            ),
+        )
+        step_row = _fetch_step_row(connection, sop_db_id, step_no)
+        if not step_row:
+            connection.commit()
+            return
+        step_id = step_row["id"]
+        cursor.execute("DELETE FROM sop_step_keyframes WHERE sop_step_id = %s", (step_id,))
+        cursor.execute("DELETE FROM sop_step_substeps WHERE sop_step_id = %s", (step_id,))
+        reference_timestamps = ((bundle.get("referenceFeatures") or {}).get("sampleTimestamps")) or []
+        for index, frame in enumerate(bundle.get("referenceFrames") or []):
+            timestamp = reference_timestamps[index] if index < len(reference_timestamps) else None
+            cursor.execute(
+                """
+                INSERT INTO sop_step_keyframes (sop_step_id, frame_type, sort_order, timestamp_sec, image_data)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (step_id, "reference", index + 1, timestamp, frame),
+            )
+        for index, frame in enumerate(bundle.get("analysisFrames") or []):
+            cursor.execute(
+                """
+                INSERT INTO sop_step_keyframes (sop_step_id, frame_type, sort_order, timestamp_sec, image_data)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (step_id, "analysis", index + 1, None, frame),
+            )
+        for index, item in enumerate(bundle.get("substeps") or []):
+            cursor.execute(
+                """
+                INSERT INTO sop_step_substeps (sop_step_id, sort_order, title, timestamp_sec)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    step_id,
+                    index + 1,
+                    item.get("title") or item.get("label") or f"关键时刻 {index + 1}",
+                    item.get("timestampSec") or 0,
+                ),
+            )
+        media_code = (demo_video or {}).get("mediaId")
+        if media_code:
+            cursor.execute(
+                """
+                UPDATE media_files
+                SET related_sop_id = %s, related_step_id = %s
+                WHERE media_code = %s
+                """,
+                (sop_db_id, step_id, media_code),
+            )
+        connection.commit()
+
+
+def publish_prepared_sop(sop_db_id, job_id):
+    with _get_connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE sops SET status = 'published', active_job_id = NULL WHERE id = %s AND active_job_id = %s",
+            (sop_db_id, job_id),
+        )
+        connection.commit()
 
 
 def _delete_files(paths):
@@ -1312,17 +1756,6 @@ def delete_sop(sop_id):
                 )
 
             cursor.execute("DELETE FROM evaluation_jobs WHERE sop_id = %s", (sop_row["id"],))
-            cursor.execute(
-                """
-                SELECT COUNT(*) AS count
-                FROM information_schema.TABLES
-                WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'evaluation_tasks'
-                """,
-                (MYSQL_SETTINGS["database"],),
-            )
-            legacy_tasks_exists = int((cursor.fetchone() or {}).get("count") or 0) > 0
-            if legacy_tasks_exists:
-                cursor.execute("DELETE FROM evaluation_tasks WHERE sop_id = %s", (sop_row["id"],))
             cursor.execute("DELETE FROM sops WHERE id = %s", (sop_row["id"],))
 
         connection.commit()

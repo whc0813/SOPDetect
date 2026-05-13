@@ -127,3 +127,35 @@ COMPLETION_LEVEL_VALUES = {"完整", "部分完成", "未完成", "无法判断"
   ```
 - 理由: "严重程度"在跨场景 SOP 中不可比（安全型 vs 效率型），按类别分组让模型在相近概念间做精细区分
 - 同理 `COMPLETION_LEVEL_VALUES`: `完整 → 部分完成 → 未完成 → 无法判断`
+
+---
+
+# Findings: 创建 SOP 示范视频预处理方案一
+
+## Requirements
+- 用户选择“方案一”：保留现有两次调用结构，但修复第一次切段不准导致第二次分析被带偏的问题。
+- 第二次模型分析不应把第一次 `startSec/endSec` 当成可信范围，只能当作候选提示。
+- 文件编辑必须遵守项目约束：UTF-8 无 BOM，不整文件重写，中文直接写入。
+
+## Research Findings
+- 创建 SOP 入口是 `backend/main.py::create_sop`。当上传完整示范视频且配置 API Key 时，会先调用 `segment_workflow_video` 得到 `workflow_segments`。
+- 每个步骤随后调用 `store_demo_video_and_prepare_bundle`，并把 `workflow_segments[stepNo].startSec/endSec` 传给 `prepare_reference_bundle`。
+- `prepare_reference_bundle` 当前用 `extract_analysis_samples(temp_path, meta["durationSec"], start_sec=start_sec, end_sec=end_sec)` 抽分析帧，因此错误候选窗会直接影响二次模型调用的静态帧输入。
+- `build_ai_reference_plan` 虽然会把完整示范视频发给模型，但 user 文本当前强调“重点关注该区间”，且采样帧来自候选窗，确实会强化错误定位。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 第二次调用继续发送完整示范视频 | 让模型有机会从全局重新定位当前步骤 |
+| 分析帧改为全视频基础采样，候选窗作为附加采样 | 避免候选窗错时所有静态证据都错，同时保留候选窗正确时的局部细节 |
+| 测试先覆盖 `prepare_reference_bundle` 的采样行为 | 这是错误时间窗污染二次分析的直接源头 |
+
+## Issues Encountered
+| Issue | Resolution |
+|-------|------------|
+| 现有计划文件属于旧任务 | 不覆盖旧内容，追加本次任务段 |
+
+## Verification Findings
+- 新增回归测试先失败，失败原因是 `prepare_reference_bundle` 只调用候选窗采样：`sample_calls == [(5.0, 6.0)]`。
+- 修改后新增测试通过，证明候选窗存在时也会先做全视频采样。
+- 全部后端测试通过：`python -m pytest backend/tests -q` 结果为 `40 passed`，仅有 FastAPI `on_event` 既有弃用警告。

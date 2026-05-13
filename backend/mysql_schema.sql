@@ -61,13 +61,15 @@ CREATE TABLE IF NOT EXISTS `sops` (
   `description` text COLLATE utf8mb4_unicode_ci,
   `step_count` int NOT NULL DEFAULT '0',
   `demo_video_count` int NOT NULL DEFAULT '0',
-  `status` enum('draft','published','archived') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'published',
+  `status` enum('draft','published','archived') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'draft',
+  `active_job_id` bigint unsigned DEFAULT NULL,
   `created_by` bigint unsigned DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_sops_code` (`sop_code`),
   KEY `idx_sops_status_created` (`status`,`created_at`),
+  KEY `idx_sops_active_job` (`active_job_id`),
   KEY `fk_sops_created_by` (`created_by`),
   CONSTRAINT `fk_sops_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -89,6 +91,9 @@ CREATE TABLE IF NOT EXISTS `sop_steps` (
   `reference_fps` decimal(6,3) DEFAULT NULL,
   `reference_frame_count` int DEFAULT NULL,
   `raw_ai_result` json DEFAULT NULL,
+  `time_window_start_sec` decimal(8,3) DEFAULT NULL,
+  `time_window_end_sec` decimal(8,3) DEFAULT NULL,
+  `segmentation_source` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -126,6 +131,24 @@ CREATE TABLE IF NOT EXISTS `media_files` (
   CONSTRAINT `fk_media_related_sop` FOREIGN KEY (`related_sop_id`) REFERENCES `sops` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_media_related_step` FOREIGN KEY (`related_step_id`) REFERENCES `sop_steps` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_media_uploaded_by` FOREIGN KEY (`uploaded_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS `sop_preparation_jobs` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `sop_id` bigint unsigned NOT NULL,
+  `status` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `phase` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `progress_message` text COLLATE utf8mb4_unicode_ci,
+  `error_message` text COLLATE utf8mb4_unicode_ci,
+  `metadata` json DEFAULT NULL,
+  `workflow_media_id` bigint unsigned DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_prep_status_updated` (`status`,`updated_at`),
+  KEY `idx_prep_sop` (`sop_id`),
+  KEY `fk_prep_job_media` (`workflow_media_id`),
+  CONSTRAINT `fk_prep_job_sop` FOREIGN KEY (`sop_id`) REFERENCES `sops` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_prep_job_media` FOREIGN KEY (`workflow_media_id`) REFERENCES `media_files` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `sop_step_keyframes` (
@@ -290,33 +313,4 @@ CREATE TABLE IF NOT EXISTS `evaluation_job_logs` (
   PRIMARY KEY (`id`),
   KEY `idx_evaluation_job_logs_job` (`job_id`,`created_at`),
   CONSTRAINT `fk_evaluation_job_logs_job` FOREIGN KEY (`job_id`) REFERENCES `evaluation_jobs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `evaluation_tasks` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `task_code` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `sop_id` bigint unsigned NOT NULL,
-  `user_id` bigint unsigned DEFAULT NULL,
-  `uploaded_video_media_id` bigint unsigned DEFAULT NULL,
-  `status` enum('queued','processing','completed','failed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'queued',
-  `progress` int NOT NULL DEFAULT '0',
-  `current_stage` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `failure_reason` text COLLATE utf8mb4_unicode_ci,
-  `retry_count` int NOT NULL DEFAULT '0',
-  `result_payload` json DEFAULT NULL,
-  `log_entries` json DEFAULT NULL,
-  `history_execution_code` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `started_at` datetime DEFAULT NULL,
-  `finished_at` datetime DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_evaluation_tasks_code` (`task_code`),
-  KEY `idx_evaluation_tasks_status_created` (`status`,`created_at`),
-  KEY `idx_evaluation_tasks_sop` (`sop_id`),
-  KEY `fk_evaluation_tasks_user` (`user_id`),
-  KEY `fk_evaluation_tasks_video` (`uploaded_video_media_id`),
-  CONSTRAINT `fk_evaluation_tasks_sop` FOREIGN KEY (`sop_id`) REFERENCES `sops` (`id`) ON DELETE RESTRICT,
-  CONSTRAINT `fk_evaluation_tasks_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_evaluation_tasks_video` FOREIGN KEY (`uploaded_video_media_id`) REFERENCES `media_files` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

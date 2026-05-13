@@ -55,3 +55,60 @@
 - **修复 2**: Stage 3 输入追加 Stage 2 的 reasoning 字段，system prompt 增加"override 前应参考 Stage 2 推理，无明显错误不应推翻"的约束
 - 涉及文件: `backend/scoring.py:209`, `backend/prompt.py:600-608,640-648`, `backend/tests/test_evaluation_pipeline.py:750-767`
 - 后端测试: 31 passed（pipeline 测试），39 passed（全部）
+
+---
+
+## Session: 2026-05-13 创建 SOP 方案一
+
+### Phase 1: 现状确认与测试设计
+- **Status:** complete
+- **Started:** 2026-05-13
+- Actions taken:
+  - 加载 `planning-with-files` 技能。
+  - 检查已有 `task_plan.md`、`findings.md`、`progress.md`，确认存在旧任务记录。
+  - 重新执行 `session-catchup.py`，首次路径调用失败后改用显式脚本路径成功。
+  - 读取 `create_sop`、`prepare_reference_bundle`、`build_ai_reference_plan`、`segment_workflow_video`、`build_reference_bundle` 相关代码。
+- Files created/modified:
+  - `task_plan.md`（追加本次任务计划）
+  - `findings.md`（追加本次调研发现）
+  - `progress.md`（追加本次进度）
+
+### Phase 2: 实现方案一
+- **Status:** complete
+- Actions taken:
+  - 在 `backend/tests/test_evaluation_pipeline.py` 增加回归测试，固定“候选时间窗存在时仍应使用全视频采样”的行为。
+  - 在 `backend/evaluation.py` 新增候选时间窗规范化和分析帧合并逻辑。
+  - `prepare_reference_bundle` 改为先抽全视频基础样本，再把候选窗样本作为补充。
+  - `build_ai_reference_plan` 的 prompt 改为候选范围仅供参考，并要求模型重新定位 `detected/startSec/endSec/confidence`。
+  - 在 `backend/models.py` 扩展 `AIReferencePlan` 字段以承接重新定位结果。
+  - 在 `backend/main.py` 创建 SOP 文案中加入全部步骤上下文，并把候选时间窗降级为提示。
+- Files created/modified:
+  - `backend/tests/test_evaluation_pipeline.py`
+  - `backend/evaluation.py`
+  - `backend/models.py`
+  - `backend/main.py`
+
+### Phase 3: 验证
+- **Status:** complete
+- Actions taken:
+  - 先运行新增测试，确认失败：当前实现只采候选窗，`sample_calls == [(5.0, 6.0)]`。
+  - 修改后运行新增测试，结果通过。
+  - 运行相关测试：`backend/tests/test_evaluation_pipeline.py backend/tests/test_module_exports.py`，结果 `34 passed`。
+  - 运行全部后端测试：`backend/tests`，结果 `40 passed`。
+- Files created/modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
+## Error Log
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-05-13 | `session-catchup.py` 首次调用时 Python 报 `can't find '__main__' module in 'D:\\'` | 1 | 使用 `C:/Users/whc/.codex/skills/planning-with-files/scripts/session-catchup.py` 显式路径重跑 |
+
+## Test Results
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| 新增回归测试 RED | `python -m pytest backend/tests/test_evaluation_pipeline.py -q -k prepare_reference_bundle_uses_full_video_samples` | 失败，证明当前只采候选窗 | 失败，`sample_calls == [(5.0, 6.0)]` | 通过预期 |
+| 新增回归测试 GREEN | 同上 | 通过 | `1 passed, 31 deselected` | 通过 |
+| 相关测试 | `python -m pytest backend/tests/test_evaluation_pipeline.py backend/tests/test_module_exports.py -q` | 全部通过 | `34 passed` | 通过 |
+| 全部后端测试 | `python -m pytest backend/tests -q` | 全部通过 | `40 passed` | 通过 |

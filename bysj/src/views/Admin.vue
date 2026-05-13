@@ -64,20 +64,35 @@
       <main class="content-area">
 
         <!-- SOP 管理 -->
-        <GroupedList
-          v-if="activeMenu === 'manage'"
-          :columns="sopColumns"
-          :data="sopList"
-          empty-text="暂无 SOP"
-        >
-          <template #cell-stepCount="{ value }">
-            <StatusBadge type="default">{{ value }}</StatusBadge>
-          </template>
-          <template #cell-actions="{ row }">
-            <button class="text-btn" @click="openDebugSop(row)">查看</button>
-            <button class="text-btn danger" @click="deleteCurrentSop(row)">删除</button>
-          </template>
-        </GroupedList>
+        <div v-if="activeMenu === 'manage'" class="manage-view">
+          <section v-if="draftList.length" class="draft-section">
+            <SectionHeader title="未完成的草稿 SOP" :subtitle="`共 ${draftList.length} 个预处理任务`" />
+            <GroupedList
+              :columns="draftColumns"
+              :data="draftList"
+              empty-text="暂无草稿"
+            >
+              <template #cell-job_status="{ row }">{{ row.job_phase || row.job_status || 'queued' }}</template>
+              <template #cell-actions="{ row }">
+                <button class="text-btn" @click="continuePreparation(row)">继续预处理</button>
+              </template>
+            </GroupedList>
+          </section>
+
+          <GroupedList
+            :columns="sopColumns"
+            :data="sopList"
+            empty-text="暂无 SOP"
+          >
+            <template #cell-stepCount="{ value }">
+              <StatusBadge type="default">{{ value }}</StatusBadge>
+            </template>
+            <template #cell-actions="{ row }">
+              <button class="text-btn" @click="openDebugSop(row)">查看</button>
+              <button class="text-btn danger" @click="deleteCurrentSop(row)">删除</button>
+            </template>
+          </GroupedList>
+        </div>
 
         <!-- 用户管理 -->
         <GroupedList
@@ -358,7 +373,7 @@
             </div>
             <div class="preprocess-editor-box">
               <div class="manual-title">编辑预处理信息</div>
-              <div class="manual-subtitle">可手动修正该步骤的摘要、ROI 提示和关键时刻，保存后会直接覆盖当前预处理结果。</div>
+              <div class="manual-subtitle">修正该步骤的参考摘要、ROI 提示和关键时刻文字。需要调整关键帧时间点请使用上方"手动修正关键帧"。</div>
               <el-form-item label="参考摘要">
                 <el-input v-model="step.referenceSummaryDraft" type="textarea" :rows="2" resize="none" />
               </el-form-item>
@@ -366,7 +381,13 @@
                 <el-input v-model="step.roiHintDraft" type="textarea" :rows="2" resize="none" />
               </el-form-item>
               <el-form-item label="关键时刻">
-                <el-input v-model="step.substepsDraft" type="textarea" :rows="3" resize="none" placeholder="每行一条，格式：标题@秒数" />
+                <el-input
+                  v-model="step.substepsDraft"
+                  type="textarea"
+                  :rows="3"
+                  resize="none"
+                  placeholder="每行一条，格式：标题@秒数，例如：拔下电源@1.5"
+                />
               </el-form-item>
               <el-button type="primary" plain class="manual-btn" :loading="step.referenceMetadataSaving" @click="saveStepReferenceMetadata(step)">保存预处理信息</el-button>
             </div>
@@ -375,7 +396,18 @@
             <div class="detail-text">条件说明：{{ step.conditionText || '无' }}</div>
             <div class="detail-text">前置依赖：{{ (step.prerequisiteStepNos || []).length ? step.prerequisiteStepNos.join(', ') : '无' }}</div>
             <div class="frame-grid">
-              <img v-for="(frame, index) in step.referenceFrames || []" :key="`${step.stepNo}-${index}`" :src="frame" class="frame" />
+              <el-image
+                v-for="(frame, index) in step.referenceFrames || []"
+                :key="`${step.stepNo}-${index}`"
+                :src="frame"
+                :alt="`步骤 ${step.stepNo} 关键帧 ${index + 1}`"
+                :preview-src-list="step.referenceFrames || []"
+                :initial-index="index"
+                class="frame frame-image"
+                fit="cover"
+                preview-teleported
+                hide-on-click-modal
+              />
             </div>
           </div>
         </div>
@@ -458,7 +490,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataLine, Document, Fold, Monitor, Plus, SwitchButton } from '@element-plus/icons-vue'
-import { clearAuthSession, createSop, deleteHistory, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getConfig, getCurrentUser, getHistoryDetail, getSopDetail, getStats, isAuthSessionError, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateConfig, updateSopStepDemoVideo, updateSopStepReferenceMetadata, updateSopStepSegmentation, updateUserStatus } from '../api/client'
+import { clearAuthSession, createSopDraft, deleteHistory, fetchAuthorizedMediaBlobUrl, fileToDataUrl, getConfig, getCurrentUser, getHistoryDetail, getSopDetail, getStats, isAuthSessionError, listDraftSops, listHistory, listSops, listUsers, logout, removeSop, reviewHistory, updateConfig, updateSopStepDemoVideo, updateSopStepReferenceMetadata, updateSopStepSegmentation, updateUserStatus } from '../api/client'
 import AppBlobs from '../components/AppBlobs.vue'
 import GroupedList from '../components/GroupedList.vue'
 import SectionHeader from '../components/SectionHeader.vue'
@@ -470,6 +502,7 @@ const router = useRouter()
 const sidebarOpen = ref(false)
 const activeMenu = ref('manage')
 const sopList = ref([])
+const draftList = ref([])
 const userList = ref([])
 const historyList = ref([])
 const historyLoading = ref(false)
@@ -544,6 +577,13 @@ const sopColumns = [
   { key: 'scene', label: '适用场景' },
   { key: 'stepCount', label: '步骤数', align: 'center' },
   { key: 'createTime', label: '创建时间' },
+  { key: 'actions', label: '操作', align: 'right' }
+]
+const draftColumns = [
+  { key: 'name', label: 'SOP 名称' },
+  { key: 'scene', label: '适用场景' },
+  { key: 'job_status', label: '预处理阶段', align: 'center' },
+  { key: 'createdAt', label: '创建时间' },
   { key: 'actions', label: '操作', align: 'right' }
 ]
 const userColumns = [
@@ -649,6 +689,10 @@ async function loadSopList() {
   sopList.value = (await listSops()).data || []
 }
 
+async function loadDrafts() {
+  draftList.value = (await listDraftSops()).drafts || []
+}
+
 async function loadHistoryList() {
   historyLoading.value = true
   try {
@@ -697,12 +741,17 @@ function toggleAiAbnormalFilter() {
 }
 
 async function reloadCurrentView() {
-  await loadSopList()
+  await Promise.all([loadSopList(), loadDrafts()])
   if (activeMenu.value === 'users') {
     await loadUserList()
   } else if (activeMenu.value === 'stats') {
     await Promise.all([loadHistoryList(), loadStats()])
   }
+}
+
+function continuePreparation(row) {
+  if (!row?.active_job_id) return ElMessage.warning('草稿缺少预处理任务')
+  router.push(`/admin/sop-preparation/${row.active_job_id}`)
 }
 
 function handleMenuSelect(index) {
@@ -805,7 +854,7 @@ async function saveSop() {
         lastModified: item.video.lastModified ?? null
       } : null
     })))
-    const result = await createSop({
+    const data = await createSopDraft({
       name: sopForm.name.trim(),
       scene: sopForm.scene.trim(),
       steps,
@@ -818,9 +867,8 @@ async function saveSop() {
       }
     })
     dialogVisible.value = false
-    await reloadCurrentView()
-    ElMessage.success('SOP 已保存')
-    if (result.warnings?.length) ElMessage.warning(result.warnings[0])
+    ElMessage.info('SOP 已保存为草稿，正在准备时序分割')
+    router.push(`/admin/sop-preparation/${data.jobId}`)
   } catch (error) {
     showErrorMessage(error, '保存失败')
   } finally {
@@ -935,7 +983,9 @@ function buildDebugSopState(data) {
       prerequisiteStepNos: Array.isArray(step.prerequisiteStepNos) ? step.prerequisiteStepNos : [],
       referenceSummaryDraft: step.referenceSummary || '',
       roiHintDraft: step.roiHint || '',
-      substepsDraft: Array.isArray(step.substeps) ? step.substeps.map((item) => `${item.title || '关键时刻'}@${Number(item.timestampSec || 0)}`).join('\n') : '',
+      substepsDraft: Array.isArray(step.substeps)
+        ? step.substeps.map((item) => `${item.title || '关键时刻'}@${Number(item.timestampSec || 0)}`).join('\n')
+        : '',
       manualTimestampInput: Array.isArray(step.referenceFeatures?.sampleTimestamps) ? step.referenceFeatures.sampleTimestamps.join(', ') : '',
       manualSegmentationLoading: false,
       reuploadVideo: null,
@@ -957,6 +1007,7 @@ function parseTimestampInput(value) {
 }
 
 function parseSubstepsDraft(value) {
+  // 解析关键时刻 textarea：每行一条，格式 "标题@秒数"
   return String(value || '')
     .split(/\r?\n+/)
     .map((line) => String(line || '').trim())
@@ -1011,7 +1062,6 @@ async function applyManualSegmentation(step) {
 
 async function saveStepReferenceMetadata(step) {
   if (!selectedSopDebug.value?.id) return
-
   const substeps = parseSubstepsDraft(step.substepsDraft)
   step.referenceMetadataSaving = true
   try {
@@ -1046,9 +1096,10 @@ async function replaceStepDemoVideo(step) {
         lastModified: file.lastModified ?? null
       }
     })
-    selectedSopDebug.value = buildDebugSopState(result.data)
-    await loadSopList()
-    ElMessage.success('示范视频已更新，并重新生成参考结果')
+    const data = result.data || {}
+    debugVisible.value = false
+    ElMessage.info('视频已上传，正在预处理')
+    router.push(`/admin/sop-preparation/${data.jobId}`)
   } catch (error) {
     showErrorMessage(error, '更新示范视频失败')
   } finally {
@@ -1360,6 +1411,17 @@ onUnmounted(() => {
   flex: 1;
   padding: var(--sp-6);
   overflow-y: auto;
+}
+
+.manage-view,
+.draft-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.draft-section {
+  margin-bottom: var(--sp-4);
 }
 
 /* ── Stats ───────────────────────────────────────────────── */
@@ -1778,11 +1840,143 @@ onUnmounted(() => {
   border-radius: var(--radius-full) !important;
 }
 
+.substeps-editor,
+.substeps-empty,
+.substep-row,
+.substep-title,
+.substep-time,
+.substep-unit,
+.substep-add,
+.frame-list-editor,
+.frame-list-header,
+.frame-list-title,
+.frame-estimate-btn,
+.frame-row,
+.frame-row-thumb,
+.frame-row-thumb-empty,
+.frame-row-label,
+.frame-row-input,
+.frame-row-unknown,
+.frame-row-unit,
+.frame-list-footer,
+.frame-list-tip {
+  /* deprecated: 合并到 .key-moment-* 后保留壳类避免内联引用残留 */
+}
+
 .frame-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
   gap: var(--sp-3);
   margin-top: var(--sp-4);
+}
+
+.key-moments-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: var(--sp-3);
+}
+
+.key-moments-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.key-moments-title {
+  font-size: var(--fs-caption1);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.key-moments-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.key-moments-empty {
+  font-size: var(--fs-caption1);
+  color: var(--text-faint);
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 10px;
+  text-align: center;
+}
+
+.key-moment-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.key-moment-thumb {
+  flex: 0 0 112px;
+  width: 112px;
+  height: 64px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-secondary);
+}
+
+.key-moment-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px dashed rgba(0, 0, 0, 0.15);
+}
+
+.key-moment-thumb :deep(.el-image__inner) {
+  border-radius: inherit;
+}
+
+.key-moment-fields {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.key-moment-title-input {
+  width: 100%;
+}
+
+.key-moment-time-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.key-moment-time-label,
+.key-moment-time-unit {
+  color: var(--text-faint);
+  font-size: var(--fs-caption1);
+}
+
+.key-moment-time-input {
+  width: 130px;
+}
+
+.preprocess-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preprocess-tip {
+  font-size: var(--fs-caption1);
+  color: var(--el-color-warning);
 }
 
 .frame {
@@ -1791,6 +1985,16 @@ onUnmounted(() => {
   object-fit: cover;
   border-radius: 10px;
   background: var(--surface-secondary);
+}
+
+.frame-image {
+  display: block;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.frame-image :deep(.el-image__inner) {
+  border-radius: inherit;
 }
 
 /* ── Config Form ─────────────────────────────────────────── */

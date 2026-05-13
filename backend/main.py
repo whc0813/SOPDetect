@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 try:
+    from . import preparation
     from .auth import (
         LoginRequest,
         LoginResponse,
@@ -34,8 +35,12 @@ try:
     )
     from .models import (
         ApiConfig,
+        ConfirmSegmentationRequest,
         EvaluationResultPayload,
         KeyMoment,
+        PreparationJobResponse,
+        RetryStepRequest,
+        SegmentItem,
         SopData,
         SopStep,
         StepResultPayload,
@@ -53,6 +58,7 @@ try:
         authenticate_user,
         build_stats,
         create_evaluation_job,
+        create_preparation_job,
         create_user,
         create_user_session,
         delete_history,
@@ -61,11 +67,14 @@ try:
         get_evaluation_job,
         get_history,
         get_media,
+        get_preparation_job,
         get_sop,
         get_user_by_username,
         has_active_session,
         list_evaluation_jobs,
+        list_draft_sops_for_admin,
         list_history,
+        list_sop_steps,
         list_sops,
         list_users,
         load_db,
@@ -79,14 +88,20 @@ try:
         revoke_user_session,
         update_evaluation_job,
         update_manual_review,
+        update_preparation_job,
+        update_preparation_step_state,
+        mark_preparation_job_cancelled,
         update_sop,
         update_user_status,
+        write_confirmed_segments,
+        delete_preparation_job,
     )
     from .video import (
         ensure_browser_playable_video,
         split_data_url,
     )
 except ImportError:
+    import preparation
     from auth import (
         LoginRequest,
         LoginResponse,
@@ -113,8 +128,12 @@ except ImportError:
     )
     from models import (
         ApiConfig,
+        ConfirmSegmentationRequest,
         EvaluationResultPayload,
         KeyMoment,
+        PreparationJobResponse,
+        RetryStepRequest,
+        SegmentItem,
         SopData,
         SopStep,
         StepResultPayload,
@@ -132,6 +151,7 @@ except ImportError:
         authenticate_user,
         build_stats,
         create_evaluation_job,
+        create_preparation_job,
         create_user,
         create_user_session,
         delete_history,
@@ -140,11 +160,14 @@ except ImportError:
         get_evaluation_job,
         get_history,
         get_media,
+        get_preparation_job,
         get_sop,
         get_user_by_username,
         has_active_session,
         list_evaluation_jobs,
+        list_draft_sops_for_admin,
         list_history,
+        list_sop_steps,
         list_sops,
         list_users,
         load_db,
@@ -158,8 +181,13 @@ except ImportError:
         revoke_user_session,
         update_evaluation_job,
         update_manual_review,
+        update_preparation_job,
+        update_preparation_step_state,
+        mark_preparation_job_cancelled,
         update_sop,
         update_user_status,
+        write_confirmed_segments,
+        delete_preparation_job,
     )
     from video import (
         ensure_browser_playable_video,
@@ -217,6 +245,14 @@ class CreateSopRequest(BaseModel):
     name: str
     scene: Optional[str] = None
     steps: List[StepVideoInput] = Field(default_factory=list)
+    workflowVideoDataUrl: str = ""
+    workflowVideoMeta: Optional[StepVideoMeta] = None
+
+
+class UpdateSopRequest(BaseModel):
+    name: Optional[str] = None
+    scene: Optional[str] = None
+    steps: Optional[List[StepVideoInput]] = None
     workflowVideoDataUrl: str = ""
     workflowVideoMeta: Optional[StepVideoMeta] = None
 
@@ -285,16 +321,107 @@ def validate_sop_step_inputs(steps: List[StepVideoInput]):
             )
 
 
+def _dump_model(model):
+    if model is None:
+        return None
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    if hasattr(model, "dict"):
+        return model.dict()
+    return model
+
+
+def _serialize_preparation_job(job):
+    if not job:
+        return None
+    metadata = job.get("metadata") or {}
+    return {
+        "id": job.get("id"),
+        "sopId": job.get("sopCode") or job.get("sop_id"),
+        "sopDbId": job.get("sop_id"),
+        "status": job.get("status") or "",
+        "phase": job.get("phase"),
+        "progressMessage": job.get("progress_message"),
+        "errorMessage": job.get("error_message"),
+        "metadata": metadata,
+        "workflowMediaId": job.get("workflow_media_id"),
+        "createdAt": str(job.get("created_at") or ""),
+        "updatedAt": str(job.get("updated_at") or ""),
+    }
+
+
+def _build_draft_sop(req: CreateSopRequest, current_user):
+    sop_id = f"sop-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
+    steps = []
+    for index, step in enumerate(req.steps):
+        steps.append(
+            {
+                "stepNo": index + 1,
+                "description": (step.description or "").strip(),
+                "stepType": normalize_step_type(step.stepType),
+                "conditionText": (step.conditionText or "").strip(),
+                "prerequisiteStepNos": normalize_prerequisite_step_nos(
+                    step.prerequisiteStepNos, index + 1
+                ),
+                "minDurationSec": normalize_duration_limit(step.minDurationSec),
+                "maxDurationSec": normalize_duration_limit(step.maxDurationSec),
+                "referenceMode": "text",
+                "referenceFrames": [],
+                "analysisFrames": [],
+                "referenceSummary": "",
+                "referenceFeatures": None,
+                "substeps": [],
+                "roiHint": "",
+                "aiUsed": False,
+                "rawAIResult": None,
+            }
+        )
+    sop = {
+        "id": sop_id,
+        "name": (req.name or "").strip(),
+        "scene": (req.scene or "").strip() or "未填写",
+        "stepCount": len(steps),
+        "demoVideoCount": 0,
+        "createTime": now_display(),
+        "createdAtMs": int(time.time() * 1000),
+        "status": "draft",
+        "steps": steps,
+    }
+    add_sop(sop, created_by=current_user)
+    return sop_id, sop
+
+
+def _create_preparation_job_for_sop(sop_id, sop, req: CreateSopRequest, current_user):
+    metadata = {
+        "workflowVideoDataUrl": req.workflowVideoDataUrl,
+        "workflowVideoMeta": _dump_model(req.workflowVideoMeta) or {},
+        "sopCode": sop_id,
+        "sopName": sop.get("name") or "",
+        "stepsMeta": [
+            {"stepNo": item["stepNo"], "description": item.get("description") or ""}
+            for item in sop.get("steps") or []
+        ],
+        "stepStates": {
+            str(item["stepNo"]): {"status": "pending", "retry_count": 0}
+            for item in sop.get("steps") or []
+        },
+        "createdBy": current_user or {},
+    }
+    return create_preparation_job(sop_id, metadata=metadata)
+
+
 # ── Startup / shutdown ─────────────────────────────────────────
 
 @app.on_event("startup")
 async def on_startup():
     start_worker()
+    preparation.start_preparation_worker()
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
     stop_worker()
+    preparation.stop_preparation_worker()
 
 
 # ── Routes ─────────────────────────────────────────────────────
@@ -410,7 +537,90 @@ async def fetch_sop_detail(sop_id: str, _current_user=Depends(get_current_user))
     sop = get_sop(sop_id)
     if not sop:
         raise HTTPException(status_code=404, detail="SOP 不存在")
+    if _current_user.get("role") != "admin" and sop.get("status") != "published":
+        raise HTTPException(status_code=404, detail="SOP 不存在")
     return {"success": True, "data": serialize_sop_detail(sop)}
+
+
+@app.get("/api/admin/sops/drafts")
+async def fetch_admin_draft_sops(current_user=Depends(require_admin)):
+    return {
+        "success": True,
+        "data": {"drafts": list_draft_sops_for_admin(current_user.get("id"))},
+    }
+
+
+@app.put("/api/sops/{sop_id}")
+async def update_sop_basic(sop_id: str, req: UpdateSopRequest, current_user=Depends(require_admin)):
+    existing = get_sop(sop_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="SOP 不存在")
+
+    has_video = bool((req.workflowVideoDataUrl or "").strip())
+    if has_video:
+        steps = req.steps or [
+            StepVideoInput(description=item.get("description") or "")
+            for item in existing.get("steps") or []
+        ]
+        validate_sop_step_inputs(steps)
+        draft_req = CreateSopRequest(
+            name=req.name or existing.get("name") or "",
+            scene=req.scene if req.scene is not None else existing.get("scene"),
+            steps=steps,
+            workflowVideoDataUrl=req.workflowVideoDataUrl,
+            workflowVideoMeta=req.workflowVideoMeta,
+        )
+
+        def apply_draft(current):
+            updated_steps = []
+            for index, step in enumerate(steps):
+                original = (current.get("steps") or [{}] * len(steps))[index] if index < len(current.get("steps") or []) else {}
+                updated_steps.append(
+                    {
+                        **original,
+                        "stepNo": index + 1,
+                        "description": (step.description or "").strip(),
+                        "stepType": normalize_step_type(step.stepType),
+                        "conditionText": (step.conditionText or "").strip(),
+                        "prerequisiteStepNos": normalize_prerequisite_step_nos(
+                            step.prerequisiteStepNos, index + 1
+                        ),
+                        "minDurationSec": normalize_duration_limit(step.minDurationSec),
+                        "maxDurationSec": normalize_duration_limit(step.maxDurationSec),
+                        "referenceMode": "text",
+                        "referenceFrames": [],
+                        "analysisFrames": [],
+                        "referenceSummary": "",
+                        "referenceFeatures": None,
+                        "substeps": [],
+                        "roiHint": "",
+                        "aiUsed": False,
+                        "rawAIResult": None,
+                    }
+                )
+            return {
+                **current,
+                "name": draft_req.name,
+                "scene": draft_req.scene or "未填写",
+                "stepCount": len(updated_steps),
+                "demoVideoCount": 0,
+                "status": "draft",
+                "steps": updated_steps,
+            }
+
+        updated = update_sop(sop_id, apply_draft)
+        job_id = _create_preparation_job_for_sop(sop_id, updated, draft_req, current_user)
+        return {"success": True, "data": {"sopId": sop_id, "jobId": job_id, "status": "queued"}}
+
+    def apply_metadata(current):
+        return {
+            **current,
+            "name": (req.name if req.name is not None else current.get("name")) or "",
+            "scene": (req.scene if req.scene is not None else current.get("scene")) or "未填写",
+        }
+
+    updated = update_sop(sop_id, apply_metadata)
+    return {"success": True, "data": serialize_sop_detail(updated)}
 
 
 @app.put("/api/sops/{sop_id}/steps/{step_no}/demo-video")
@@ -433,53 +643,23 @@ async def update_step_demo_video(
     )
     if not step_record:
         raise HTTPException(status_code=404, detail="步骤不存在")
-
-    api_config = build_runtime_api_config()
-    data = load_db()
-    demo_video, bundle = await store_demo_video_and_prepare_bundle(
-        data=data,
-        api_config=api_config,
-        sop_id=sop_id,
-        step_no=step_no,
-        description=step_record.get("description") or "",
-        video_data_url=req.videoDataUrl,
-        video_meta=req.videoMeta,
-        uploaded_by=current_user,
-    )
-    save_db(data)
-
-    def apply_update(existing):
-        updated_steps = []
-        for item in existing.get("steps") or []:
-            if int(item.get("stepNo") or 0) != step_no:
-                updated_steps.append(item)
-                continue
-            updated_steps.append(
-                {
-                    **item,
-                    "videoMeta": req.videoMeta.model_dump() if req.videoMeta else item.get("videoMeta"),
-                    "demoVideo": demo_video,
-                    "referenceMode": "video",
-                    "referenceFrames": bundle["referenceFrames"],
-                    "analysisFrames": bundle["analysisFrames"],
-                    "referenceSummary": bundle["referenceSummary"],
-                    "referenceFeatures": bundle["referenceFeatures"],
-                    "substeps": bundle["substeps"],
-                    "roiHint": bundle["roiHint"],
-                    "aiUsed": bool(bundle["aiUsed"]),
-                    "rawAIResult": bundle["rawAIResult"],
-                }
-            )
-        return {
-            **existing,
-            "steps": updated_steps,
-            "demoVideoCount": sum(1 for item in updated_steps if item.get("demoVideo")),
-        }
-
-    updated = update_sop(sop_id, apply_update)
-    if not updated:
-        raise HTTPException(status_code=404, detail="SOP 不存在")
-    return {"success": True, "data": serialize_sop_detail(updated)}
+    metadata = {
+        "workflowVideoDataUrl": req.videoDataUrl,
+        "workflowVideoMeta": _dump_model(req.videoMeta) or {},
+        "sopCode": sop_id,
+        "sopName": sop.get("name") or "",
+        "stepsMeta": [
+            {
+                "stepNo": step_no,
+                "description": step_record.get("description") or "",
+            }
+        ],
+        "stepStates": {str(step_no): {"status": "pending", "retry_count": 0}},
+        "replaceStepNo": step_no,
+        "createdBy": current_user or {},
+    }
+    job_id = create_preparation_job(sop_id, metadata=metadata)
+    return {"success": True, "data": {"sopId": sop_id, "jobId": job_id, "status": "queued"}}
 
 
 @app.put("/api/sops/{sop_id}/steps/{step_no}/manual-segmentation")
@@ -628,112 +808,160 @@ async def create_sop(req: CreateSopRequest, current_user=Depends(require_admin))
     if not (req.workflowVideoDataUrl or "").strip():
         raise HTTPException(status_code=400, detail="请上传整个流程的完整示范视频")
 
-    api_config = build_runtime_api_config()
-    step_items = []
-    warnings = []
-    data = load_db()
-    sop_id = f"sop-{int(time.time() * 1000)}"
-
-    if not api_config.apiKey.strip():
-        warnings.append("后端未配置 API Key，本次已回退为均匀抽帧预处理。")
-
-    # Phase 3: pre-segment the workflow demo video once before per-step processing
-    step_dicts = [
-        {"stepNo": i + 1, "description": (step.description or "").strip()}
-        for i, step in enumerate(req.steps)
-    ]
-    workflow_segments: dict = {}
-    if (req.workflowVideoDataUrl or "").strip() and api_config.apiKey.strip():
-        try:
-            workflow_segments = await segment_workflow_video(
-                api_config, step_dicts, req.workflowVideoDataUrl
-            )
-            if workflow_segments:
-                detected = sum(1 for v in workflow_segments.values() if v.get("detected"))
-                warnings.append(
-                    f"整体时序预分析完成，已识别 {detected}/{len(req.steps)} 个步骤的大致时间范围，"
-                    "将按此范围提取各步关键帧。"
-                )
-        except Exception:
-            workflow_segments = {}
-
-    for index, step in enumerate(req.steps):
-        step_no = index + 1
-        description = step.description.strip()
-        demo_video = None
-
-        if (req.workflowVideoDataUrl or "").strip():
-            seg = workflow_segments.get(step_no, {})
-            start_sec = seg.get("startSec") if seg.get("detected") else 0
-            end_sec = seg.get("endSec") if seg.get("detected") else None
-
-            demo_video, bundle = await store_demo_video_and_prepare_bundle(
-                data=data,
-                api_config=api_config,
-                sop_id=sop_id,
-                step_no=step_no,
-                description=(
-                    f"该步骤是第 {step_no} 步：{description}。"
-                    + (
-                        f"时序分析已识别本步在视频中的时间范围约为 {start_sec:.1f}s - {end_sec:.1f}s，"
-                        "请重点关注该区间内的内容提取关键帧、关键时刻和 ROI。"
-                        if end_sec is not None
-                        else f"全部步骤：{'; '.join([f'{i+1}.{s.description}' for i, s in enumerate(req.steps)])}。"
-                        "请提取该步骤相关的关键帧、关键时刻和 ROI。"
-                    )
-                ),
-                video_data_url=req.workflowVideoDataUrl,
-                video_meta=req.workflowVideoMeta,
-                uploaded_by=current_user,
-                start_sec=float(start_sec or 0),
-                end_sec=end_sec,
-            )
-        else:
-            bundle = build_text_only_reference_bundle(step_no, description)
-            warnings.append(f"步骤 {step_no} 未上传示范视频，将仅基于文字 SOP 评估。")
-
-        step_items.append(
-            {
-                "stepNo": step_no,
-                "description": description,
-                "videoMeta": req.workflowVideoMeta.model_dump() if req.workflowVideoMeta else None,
-                "demoVideo": demo_video,
-                "stepType": normalize_step_type(step.stepType),
-                "conditionText": (step.conditionText or "").strip(),
-                "prerequisiteStepNos": normalize_prerequisite_step_nos(
-                    step.prerequisiteStepNos, step_no
-                ),
-                "minDurationSec": normalize_duration_limit(step.minDurationSec),
-                "maxDurationSec": normalize_duration_limit(step.maxDurationSec),
-                "referenceMode": "video" if bundle["referenceFrames"] else "text",
-                "referenceFrames": bundle["referenceFrames"],
-                "analysisFrames": bundle["analysisFrames"],
-                "referenceSummary": bundle["referenceSummary"],
-                "referenceFeatures": bundle["referenceFeatures"],
-                "substeps": bundle["substeps"],
-                "roiHint": bundle["roiHint"],
-                "aiUsed": bool(bundle["aiUsed"]),
-                "rawAIResult": bundle["rawAIResult"],
-            }
-        )
-
-    save_db(data)
-    sop = {
-        "id": sop_id,
-        "name": name,
-        "scene": (req.scene or "").strip() or "未填写",
-        "stepCount": len(step_items),
-        "demoVideoCount": sum(1 for item in step_items if item.get("demoVideo")),
-        "createTime": now_display(),
-        "createdAtMs": int(time.time() * 1000),
-        "steps": step_items,
-    }
-    add_sop(sop, created_by=current_user)
+    sop_id, sop = _build_draft_sop(req, current_user)
+    job_id = _create_preparation_job_for_sop(sop_id, sop, req, current_user)
     return {
         "success": True,
-        "data": serialize_sop_summary(sop),
-        "warnings": warnings,
+        "data": {"sopId": sop_id, "jobId": job_id, "status": "queued"},
     }
+
+
+@app.get("/api/sop-preparation-jobs/{job_id}", response_model=PreparationJobResponse)
+async def fetch_preparation_job(job_id: int, _current_user=Depends(require_admin)):
+    job = get_preparation_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="预处理任务不存在")
+    return {"success": True, "data": _serialize_preparation_job(job)}
+
+
+@app.post("/api/sop-preparation-jobs/{job_id}/confirm-segmentation", response_model=PreparationJobResponse)
+async def confirm_preparation_segmentation(
+    job_id: int,
+    req: ConfirmSegmentationRequest,
+    _current_user=Depends(require_admin),
+):
+    job = get_preparation_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="预处理任务不存在")
+    if job.get("status") not in ("awaiting_confirmation", "failed"):
+        raise HTTPException(status_code=409, detail="当前状态不能确认分段")
+    # 仅时序分割失败的 Job 可以手动卡边界兜底；processing_steps 阶段失败需先重试或取消
+    if job.get("status") == "failed" and job.get("phase") == "processing_steps":
+        raise HTTPException(status_code=409, detail="处理阶段失败请重试失败步骤或取消任务")
+    metadata = job.get("metadata") or {}
+    replace_step_no = metadata.get("replaceStepNo")
+    if replace_step_no:
+        target_no = int(replace_step_no)
+        expected_step_nos = {target_no}
+        step_count = 1
+    else:
+        sop_steps = list_sop_steps(job["sop_id"])
+        if not sop_steps:
+            raise HTTPException(status_code=400, detail="SOP 步骤数据缺失，无法校验分段")
+        step_count = len(sop_steps)
+        expected_step_nos = {int(row["step_no"]) for row in sop_steps}
+    duration_sec = metadata.get("duration_sec") or metadata.get("durationSec") or 0
+    try:
+        segments = preparation.validate_confirmed_segments(
+            req.segments,
+            step_count,
+            duration_sec,
+            expected_step_nos=expected_step_nos,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    actual_step_nos = {int(item["stepNo"]) for item in segments}
+    if actual_step_nos != expected_step_nos:
+        missing = sorted(expected_step_nos - actual_step_nos)
+        extra = sorted(actual_step_nos - expected_step_nos)
+        details = []
+        if missing:
+            details.append(f"缺少步骤 {missing}")
+        if extra:
+            details.append(f"多余步骤 {extra}")
+        raise HTTPException(status_code=400, detail="；".join(details))
+
+    write_confirmed_segments(job["sop_id"], segments)
+    step_states = {
+        str(item["stepNo"]): {
+            **((metadata.get("stepStates") or {}).get(str(item["stepNo"])) or {}),
+            "status": "pending",
+        }
+        for item in segments
+    }
+    update_preparation_job(
+        job_id,
+        status="processing_steps",
+        phase="processing_steps",
+        progress_message="正在并发处理各步骤关键帧",
+        error_message="",
+        metadata_patch={"segments": segments, "stepStates": step_states},
+    )
+    return {"success": True, "data": _serialize_preparation_job(get_preparation_job(job_id))}
+
+
+@app.post("/api/sop-preparation-jobs/{job_id}/retry-step", response_model=PreparationJobResponse)
+async def retry_preparation_step(
+    job_id: int,
+    req: RetryStepRequest,
+    _current_user=Depends(require_admin),
+):
+    job = get_preparation_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="预处理任务不存在")
+    metadata = job.get("metadata") or {}
+    states = dict(metadata.get("stepStates") or {})
+    key = str(req.stepNo)
+    current = states.get(key)
+    if current is None:
+        raise HTTPException(status_code=404, detail=f"步骤 {req.stepNo} 不在此预处理任务中")
+    if current.get("status") != "failed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"步骤 {req.stepNo} 当前状态为 {current.get('status') or 'unknown'}，仅支持失败步骤重试",
+        )
+    states[key] = {
+        **current,
+        "status": "pending",
+        "retry_count": int(current.get("retry_count") or 0) + 1,
+        "error": "",
+    }
+    update_preparation_job(
+        job_id,
+        status="processing_steps",
+        phase="processing_steps",
+        progress_message=f"正在重试步骤 {req.stepNo}",
+        error_message="",
+        metadata_patch={"stepStates": states},
+    )
+    return {"success": True, "data": _serialize_preparation_job(get_preparation_job(job_id))}
+
+
+@app.post("/api/sop-preparation-jobs/{job_id}/retry-segmentation", response_model=PreparationJobResponse)
+async def retry_preparation_segmentation(job_id: int, _current_user=Depends(require_admin)):
+    job = get_preparation_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="预处理任务不存在")
+    if job.get("status") != "failed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"当前状态 {job.get('status')} 不支持重试分段",
+        )
+    update_preparation_job(
+        job_id,
+        status="queued",
+        phase="queued",
+        progress_message="已重新进入时序分割队列",
+        error_message="",
+    )
+    return {"success": True, "data": _serialize_preparation_job(get_preparation_job(job_id))}
+
+
+@app.post("/api/sop-preparation-jobs/{job_id}/cancel")
+async def cancel_preparation_job(job_id: int, _current_user=Depends(require_admin)):
+    job = get_preparation_job(job_id)
+    if not job:
+        return {"success": True}
+    sop = get_sop(job.get("sopCode") or "")
+    if sop and sop.get("status") != "draft":
+        raise HTTPException(status_code=400, detail="只能取消草稿 SOP 的预处理任务")
+    # 软删：先标记 cancelled，让 worker 在每次写库前自行退出，再做真正清理。
+    mark_preparation_job_cancelled(job_id)
+    sop_code = job.get("sopCode")
+    delete_preparation_job(job_id)
+    if sop_code:
+        delete_sop(sop_code)
+    return {"success": True}
 
 
 @app.delete("/api/sops/{sop_id}")
@@ -748,7 +976,7 @@ async def evaluate_sop(
     sop_id: str, req: StoredSopEvaluateRequest, _current_user=Depends(get_current_user)
 ):
     sop_record = get_sop(sop_id)
-    if not sop_record:
+    if not sop_record or sop_record.get("status") != "published":
         raise HTTPException(status_code=404, detail="SOP 不存在")
     result = await run_sop_evaluation(
         build_runtime_api_config(),
@@ -763,7 +991,7 @@ async def create_sop_evaluation_job(
     sop_id: str, req: CreateEvaluationJobRequest, current_user=Depends(get_current_user)
 ):
     sop = get_sop(sop_id)
-    if not sop:
+    if not sop or sop.get("status") != "published":
         raise HTTPException(status_code=404, detail="SOP 不存在")
     if not (req.userVideoDataUrl or "").strip():
         raise HTTPException(status_code=400, detail="请先上传待评测视频")
@@ -976,25 +1204,6 @@ async def fetch_media(media_id: str, current_user=Depends(get_current_user)):
         media_type=media.get("type") or "application/octet-stream",
         filename=media.get("name") or None,
     )
-
-
-@app.post("/api/prepare-step-video")
-async def prepare_step_video(
-    req: PrepareStepVideoRequest, _current_user=Depends(require_admin)
-):
-    try:
-        bundle = await prepare_reference_bundle(
-            step_no=req.stepNo,
-            description=req.description,
-            video_data_url=req.videoDataUrl,
-            max_frames=req.maxFrames,
-            api_config=req.apiConfig,
-        )
-        return {"success": True, "data": bundle}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/evaluate")

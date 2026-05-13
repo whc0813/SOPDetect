@@ -22,6 +22,12 @@ const routes = [
     meta: { requiresAuth: true, role: 'admin' }
   },
   {
+    path: '/admin/sop-preparation/:jobId',
+    name: 'SopPreparation',
+    component: () => import('../views/SopPreparation.vue'),
+    meta: { requiresAuth: true, role: 'admin' }
+  },
+  {
     path: '/user',
     name: 'User',
     component: User,
