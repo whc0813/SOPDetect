@@ -13,7 +13,7 @@
         v-for="(segment, index) in sortedSegments"
         :key="segment.stepNo"
         :class="['segment', `is-${segment.status || 'pending'}`]"
-        :style="segmentStyle(segment, index)"
+        :style="segmentStyle(segment)"
         @click.stop="$emit('seek', segment.startSec)"
       >
         <button
@@ -112,13 +112,10 @@ function pct(sec) {
   return Math.max(0, Math.min(100, (Number(sec || 0) / props.duration) * 100))
 }
 
-function segmentStyle(segment, index) {
-  // 给不同 step 一个稳定的色相，避免相邻块同色
-  const hueSeed = (Number(segment.stepNo) || index + 1) * 47
+function segmentStyle(segment) {
   return {
     left: `${pct(segment.startSec)}%`,
-    width: `${Math.max(0, pct(segment.endSec) - pct(segment.startSec))}%`,
-    '--seg-hue': hueSeed % 360
+    width: `${Math.max(0, pct(segment.endSec) - pct(segment.startSec))}%`
   }
 }
 
@@ -200,11 +197,11 @@ onBeforeUnmount(endDrag)
   position: relative;
   height: 76px;
   overflow: hidden;
-  border-radius: 12px;
-  background: linear-gradient(180deg, #f5f7fb 0%, #eef1f7 100%);
-  border: 1px solid #e4e7ed;
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface-secondary);
+  border: 1px solid var(--line-soft);
   cursor: pointer;
-  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .segment {
@@ -214,29 +211,37 @@ onBeforeUnmount(endDrag)
   display: flex;
   align-items: stretch;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: var(--radius-md, 8px);
   color: #fff;
-  background: hsl(var(--seg-hue, 210), 70%, 52%);
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15);
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  background: var(--accent);
+  box-shadow: 0 2px 6px rgba(0, 122, 255, 0.18);
+  transition: transform var(--duration-short, 200ms) var(--ease-standard, ease),
+              box-shadow var(--duration-short, 200ms) var(--ease-standard, ease);
   cursor: pointer;
 }
 
 .segment:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.18);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.segment.is-completed { background: linear-gradient(135deg, #34d399, #059669); }
+.segment.is-completed {
+  background: var(--success);
+  box-shadow: 0 2px 6px rgba(52, 199, 89, 0.22);
+}
 .segment.is-processing {
-  background: linear-gradient(135deg, #fbbf24, #d97706);
+  background: var(--system-orange);
+  box-shadow: 0 2px 6px rgba(255, 149, 0, 0.25);
   animation: segPulse 1.4s ease-in-out infinite;
 }
-.segment.is-failed { background: linear-gradient(135deg, #f87171, #dc2626); }
+.segment.is-failed {
+  background: var(--danger);
+  box-shadow: 0 2px 6px rgba(255, 59, 48, 0.22);
+}
 
 @keyframes segPulse {
-  0%, 100% { box-shadow: 0 2px 6px rgba(217, 119, 6, 0.5); }
-  50% { box-shadow: 0 4px 14px rgba(217, 119, 6, 0.8); }
+  0%, 100% { box-shadow: 0 2px 6px rgba(255, 149, 0, 0.4); }
+  50% { box-shadow: 0 4px 14px rgba(255, 149, 0, 0.7); }
 }
 
 .segment-body {
@@ -252,7 +257,7 @@ onBeforeUnmount(endDrag)
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-caption1, 12px);
   font-weight: 600;
   line-height: 1.2;
 }
@@ -286,22 +291,22 @@ onBeforeUnmount(endDrag)
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(15, 23, 42, 0.45);
+  color: var(--text-faint);
   font-size: 11px;
   background-image: repeating-linear-gradient(
     45deg,
-    rgba(15, 23, 42, 0.04),
-    rgba(15, 23, 42, 0.04) 6px,
-    rgba(15, 23, 42, 0.09) 6px,
-    rgba(15, 23, 42, 0.09) 12px
+    var(--fill-quaternary),
+    var(--fill-quaternary) 6px,
+    var(--fill-tertiary) 6px,
+    var(--fill-tertiary) 12px
   );
-  border-radius: 6px;
+  border-radius: var(--radius-sm, 6px);
 }
 
 .gap-label {
   padding: 2px 6px;
-  background: rgba(255, 255, 255, 0.7);
-  border-radius: 4px;
+  background: var(--surface);
+  border-radius: var(--radius-sm, 4px);
   font-variant-numeric: tabular-nums;
 }
 
@@ -312,7 +317,7 @@ onBeforeUnmount(endDrag)
   background: rgba(255, 255, 255, 0.85);
   cursor: ew-resize;
   position: relative;
-  transition: background 0.12s ease;
+  transition: background var(--duration-short, 200ms) var(--ease-standard, ease);
 }
 
 .handle::after {
@@ -322,7 +327,7 @@ onBeforeUnmount(endDrag)
   left: 50%;
   width: 2px;
   height: 18px;
-  background: rgba(15, 23, 42, 0.4);
+  background: rgba(0, 0, 0, 0.4);
   transform: translate(-50%, -50%);
   border-radius: 1px;
 }
@@ -333,12 +338,12 @@ onBeforeUnmount(endDrag)
 
 .readonly .track { cursor: default; }
 .readonly .segment { cursor: default; }
-.readonly .segment:hover { transform: none; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15); }
+.readonly .segment:hover { transform: none; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08); }
 
 .ticks {
   position: relative;
   height: 16px;
-  color: #94a3b8;
+  color: var(--text-faint);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -353,9 +358,9 @@ onBeforeUnmount(endDrag)
   top: -2px;
   bottom: -2px;
   width: 2px;
-  background: #ef4444;
+  background: var(--danger);
   pointer-events: none;
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+  box-shadow: 0 0 8px rgba(255, 59, 48, 0.55);
   z-index: 5;
 }
 
@@ -367,8 +372,8 @@ onBeforeUnmount(endDrag)
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #ef4444;
+  background: var(--danger);
   transform: translateX(-50%);
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
+  box-shadow: 0 0 6px rgba(255, 59, 48, 0.6);
 }
 </style>

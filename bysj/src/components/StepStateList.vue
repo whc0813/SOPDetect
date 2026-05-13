@@ -1,43 +1,32 @@
 <template>
-  <el-table :data="rows" border size="small" class="step-state-list">
-    <el-table-column prop="stepNo" label="#" width="60" />
-    <el-table-column label="时间窗" width="150">
-      <template #default="{ row }">{{ formatRange(row) }}</template>
-    </el-table-column>
-    <el-table-column prop="description" label="描述" />
-    <el-table-column label="状态" width="120">
-      <template #default="{ row }">
-        <el-tag :type="tagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
-      </template>
-    </el-table-column>
-    <el-table-column label="操作" width="220">
-      <template #default="{ row }">
-        <el-button size="small" link @click="$emit('seek', row.startSec || 0)">跳转</el-button>
-        <el-button
-          size="small"
-          type="primary"
-          link
-          :disabled="row.startSec == null || row.endSec == null"
-          @click="$emit('preview', row)"
-        >
-          预览本步
-        </el-button>
-        <el-button
-          v-if="row.status === 'failed'"
-          size="small"
-          type="warning"
-          link
-          @click="$emit('retry', row.stepNo)"
-        >
-          重试
-        </el-button>
-      </template>
-    </el-table-column>
-  </el-table>
+  <GroupedList
+    :columns="columns"
+    :data="rows"
+    empty-text="暂无步骤数据"
+  >
+    <template #cell-status="{ row }">
+      <StatusBadge :type="badgeType(row.status)">{{ statusLabel(row.status) }}</StatusBadge>
+    </template>
+    <template #cell-actions="{ row }">
+      <button class="text-btn" @click="$emit('seek', row.startSec || 0)">跳转</button>
+      <button
+        class="text-btn"
+        :disabled="row.startSec == null || row.endSec == null"
+        @click="$emit('preview', row)"
+      >预览本步</button>
+      <button
+        v-if="row.status === 'failed'"
+        class="text-btn danger"
+        @click="$emit('retry', row.stepNo)"
+      >重试</button>
+    </template>
+  </GroupedList>
 </template>
 
 <script setup>
 import { computed } from 'vue'
+import GroupedList from './GroupedList.vue'
+import StatusBadge from './StatusBadge.vue'
 
 const props = defineProps({
   stepStates: { type: Object, required: true },
@@ -46,32 +35,40 @@ const props = defineProps({
 })
 defineEmits(['seek', 'preview', 'retry'])
 
+const columns = [
+  { key: 'stepNo', label: '#', width: '52px' },
+  { key: 'range', label: '时间窗', width: '140px' },
+  { key: 'description', label: '描述' },
+  { key: 'status', label: '状态', width: '110px' },
+  { key: 'actions', label: '操作', width: '210px' }
+]
+
 const rows = computed(() => props.stepsMeta.map((meta) => {
   const stepNo = Number(meta.stepNo)
   const segment = props.segments.find((item) => Number(item.stepNo) === stepNo) || {}
   const state = props.stepStates[String(stepNo)] || { status: 'pending' }
+  const startSec = segment.startSec ?? null
+  const endSec = segment.endSec ?? null
   return {
     stepNo,
     description: meta.description || '',
-    startSec: segment.startSec ?? null,
-    endSec: segment.endSec ?? null,
+    range: startSec == null || endSec == null
+      ? '未确认'
+      : `${Number(startSec).toFixed(1)}-${Number(endSec).toFixed(1)}s`,
+    startSec,
+    endSec,
     status: state.status || 'pending',
     error: state.error || ''
   }
 }))
 
-function formatRange(row) {
-  if (row.startSec == null || row.endSec == null) return '未确认'
-  return `${Number(row.startSec).toFixed(1)}-${Number(row.endSec).toFixed(1)}s`
-}
-
-function tagType(status) {
+function badgeType(status) {
   return {
-    pending: 'info',
+    pending: 'default',
     processing: 'warning',
     completed: 'success',
     failed: 'danger'
-  }[status] || 'info'
+  }[status] || 'default'
 }
 
 function statusLabel(status) {
@@ -83,9 +80,3 @@ function statusLabel(status) {
   }[status] || status
 }
 </script>
-
-<style scoped>
-.step-state-list {
-  width: 100%;
-}
-</style>

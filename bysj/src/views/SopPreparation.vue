@@ -6,28 +6,20 @@
         <p>{{ job?.progressMessage || job?.phase || '等待任务状态更新' }}</p>
       </div>
       <div class="prep-actions">
-        <el-button plain @click="goBack">
-          <el-icon><ArrowLeft /></el-icon>
-          <span>返回</span>
-        </el-button>
-        <el-tag :type="statusTag" effect="dark" round>{{ statusLabel }}</el-tag>
-        <el-button type="danger" plain @click="onCancel">取消</el-button>
+        <button class="pill-btn" @click="goBack">返回</button>
+        <StatusBadge :type="statusBadgeType">{{ statusLabel }}</StatusBadge>
+        <button class="pill-btn danger-pill" @click="onCancel">取消</button>
       </div>
     </header>
 
-    <el-alert
-      v-if="showFailedGuidance"
-      class="failed-guidance"
-      :title="failedGuidanceTitle"
-      type="warning"
-      show-icon
-      :closable="false"
-    >
-      <template #default>
+    <section v-if="showFailedGuidance" class="failed-guidance">
+      <div class="failed-guidance-icon">⚠</div>
+      <div class="failed-guidance-body">
+        <div class="failed-guidance-title">{{ failedGuidanceTitle }}</div>
         <p class="failed-detail">{{ job?.errorMessage || 'AI 时序分割未能完成。' }}</p>
         <p class="failed-hint">已为你按步骤数量准备均匀分段，直接在时间轴上拖动每段的左右边界即可，调整完成后点"使用当前分段开始处理"。</p>
-      </template>
-    </el-alert>
+      </div>
+    </section>
 
     <section class="video-section">
       <video
@@ -40,18 +32,12 @@
     </section>
 
     <section class="timeline-section">
-      <div class="section-head">
-        <div>
-          <h3>步骤时间分段</h3>
-          <p v-if="canEditBoundaries">拖动每段两侧的把手调整边界，相邻段允许留间隙；点击段块跳到该时刻。</p>
-          <p v-else>当前阶段时间轴只读，处理完成后会更新各步骤的状态色块。</p>
-        </div>
-        <div class="legend">
-          <span class="legend-item"><i class="dot dot-pending" />待处理</span>
-          <span class="legend-item"><i class="dot dot-processing" />处理中</span>
-          <span class="legend-item"><i class="dot dot-completed" />已完成</span>
-          <span class="legend-item"><i class="dot dot-failed" />失败</span>
-        </div>
+      <SectionHeader title="步骤时间分段" :subtitle="canEditBoundaries ? '拖动每段两侧把手调整边界，相邻段允许留间隙；点击段块跳到该时刻。' : '当前阶段时间轴只读，处理完成后会更新各步骤的状态色块。'" />
+      <div class="legend">
+        <span class="legend-item"><i class="dot dot-pending" />待处理</span>
+        <span class="legend-item"><i class="dot dot-processing" />处理中</span>
+        <span class="legend-item"><i class="dot dot-completed" />已完成</span>
+        <span class="legend-item"><i class="dot dot-failed" />失败</span>
       </div>
 
       <SegmentTimeline
@@ -78,40 +64,29 @@
             :value="option.value"
           />
         </el-select>
-        <el-button
-          type="primary"
-          plain
+        <button
+          class="pill-btn"
           :disabled="boundaryOptions.length === 0"
           @click="setBoundaryAtCurrentTime"
-        >
-          设为步骤边界
-        </el-button>
-        <el-button plain @click="resetUniformSegments">按步骤均匀切分</el-button>
-        <el-button
+        >设为步骤边界</button>
+        <button class="pill-btn" @click="resetUniformSegments">按步骤均匀切分</button>
+        <button
           v-if="job?.status === 'failed' && job?.phase === 'segmenting'"
-          type="warning"
-          plain
+          class="pill-btn"
           @click="onRetrySegmentation"
-        >
-          重试 AI 分割
-        </el-button>
+        >重试 AI 分割</button>
       </div>
 
       <div v-if="canConfirm" class="confirm-bar">
         <span class="confirm-hint">检查每个步骤的时间窗后开始处理。</span>
-        <el-button type="primary" :loading="confirming" @click="onConfirm">
+        <button class="pill-btn primary-pill" :disabled="confirming" @click="onConfirm">
           {{ job?.status === 'failed' ? '使用当前分段开始处理' : '确认分段并开始处理' }}
-        </el-button>
+        </button>
       </div>
     </section>
 
     <section class="steps-section">
-      <div class="section-head">
-        <div>
-          <h3>步骤状态</h3>
-          <p>处理中的步骤会实时刷新；失败步骤可单独重试。</p>
-        </div>
-      </div>
+      <SectionHeader title="步骤状态" subtitle="处理中的步骤会实时刷新；失败步骤可单独重试。" />
       <StepStateList
         :step-states="stepStates"
         :segments="segmentsView"
@@ -128,9 +103,10 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft } from '@element-plus/icons-vue'
 import SegmentTimeline from '../components/SegmentTimeline.vue'
 import StepStateList from '../components/StepStateList.vue'
+import StatusBadge from '../components/StatusBadge.vue'
+import SectionHeader from '../components/SectionHeader.vue'
 import {
   cancelPreparation,
   confirmSegmentation,
@@ -204,11 +180,15 @@ const statusLabel = computed(() => ({
   failed: '失败'
 }[job.value?.status] || '未知'))
 
-const statusTag = computed(() => ({
+const statusBadgeType = computed(() => ({
   awaiting_confirmation: 'warning',
   completed: 'success',
-  failed: 'danger'
-}[job.value?.status] || 'info'))
+  failed: 'danger',
+  processing_steps: 'info',
+  segmenting: 'info',
+  preparing: 'info',
+  queued: 'default'
+}[job.value?.status] || 'default'))
 
 async function refresh() {
   const data = await getPreparationJob(jobId)
@@ -441,41 +421,41 @@ onUnmounted(() => {
 <style scoped>
 .prep-page {
   min-height: 100vh;
-  padding: 28px 32px 48px;
-  background: linear-gradient(180deg, #f4f6fb 0%, #eef1f7 100%);
-  color: #1f2937;
+  padding: var(--sp-6, 28px) var(--sp-7, 32px) var(--sp-9, 48px);
+  background: var(--bg-base);
+  color: var(--text-main);
 }
 
 .prep-header,
 .timeline-section,
 .steps-section,
 .failed-guidance {
-  margin-bottom: 18px;
-  border-radius: 14px;
-  background: #fff;
-  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
-  border: 1px solid rgba(15, 23, 42, 0.05);
+  margin-bottom: var(--sp-4, 18px);
+  border-radius: var(--radius-lg, 14px);
+  background: var(--surface-strong);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--line-soft);
 }
 
 .prep-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 20px 24px;
+  gap: var(--sp-4, 16px);
+  padding: var(--sp-5, 20px) var(--sp-6, 24px);
 }
 
 .prep-title h2 {
   margin: 0 0 6px;
-  font-size: 22px;
+  font-size: var(--fs-title3, 22px);
   font-weight: 600;
-  color: #0f172a;
+  color: var(--text-main);
 }
 
 .prep-title p {
   margin: 0;
-  color: #64748b;
-  font-size: 13px;
+  color: var(--text-soft);
+  font-size: var(--fs-footnote, 13px);
 }
 
 .prep-actions {
@@ -484,71 +464,84 @@ onUnmounted(() => {
   gap: 10px;
 }
 
+.danger-pill {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.danger-pill:hover {
+  background: var(--danger-fill);
+}
+
 .failed-guidance {
-  padding: 4px 8px;
+  display: flex;
+  gap: var(--sp-3, 14px);
+  padding: var(--sp-4, 16px) var(--sp-5, 20px);
+  background: var(--warning-fill);
+  border-color: var(--warning-fill);
+}
+
+.failed-guidance-icon {
+  flex: 0 0 auto;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--system-orange);
+}
+
+.failed-guidance-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.failed-guidance-title {
+  font-size: var(--fs-callout, 15px);
+  font-weight: 600;
+  color: var(--text-main);
 }
 
 .failed-detail {
-  margin: 2px 0;
-  color: #b45309;
-  font-size: 13px;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--fs-footnote, 13px);
   word-break: break-all;
 }
 
 .failed-hint {
-  margin: 2px 0 0;
-  color: #475569;
-  font-size: 13px;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: var(--fs-footnote, 13px);
   line-height: 1.6;
 }
 
 .video-section {
-  margin-bottom: 18px;
-  background: #0f172a;
-  border-radius: 14px;
+  margin-bottom: var(--sp-4, 18px);
+  background: #000;
+  border-radius: var(--radius-lg, 14px);
   overflow: hidden;
-  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
 }
 
 .video-section video {
   display: block;
   width: 100%;
   max-height: 44vh;
-  background: #0f172a;
+  background: #000;
 }
 
 .timeline-section,
 .steps-section {
-  padding: 20px 24px;
-}
-
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-
-.section-head h3 {
-  margin: 0 0 4px;
-  font-size: 15px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.section-head p {
-  margin: 0;
-  color: #64748b;
-  font-size: 12px;
+  padding: var(--sp-5, 20px) var(--sp-6, 24px);
 }
 
 .legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  font-size: 12px;
-  color: #475569;
+  gap: var(--sp-3, 12px);
+  margin: 0 0 var(--sp-3, 14px);
+  font-size: var(--fs-caption1, 12px);
+  color: var(--text-soft);
 }
 
 .legend-item {
@@ -563,24 +556,24 @@ onUnmounted(() => {
   border-radius: 50%;
 }
 
-.dot-pending { background: hsl(210, 70%, 52%); }
-.dot-processing { background: linear-gradient(135deg, #fbbf24, #d97706); }
-.dot-completed { background: linear-gradient(135deg, #34d399, #059669); }
-.dot-failed { background: linear-gradient(135deg, #f87171, #dc2626); }
+.dot-pending { background: var(--accent); }
+.dot-processing { background: var(--system-orange); }
+.dot-completed { background: var(--success); }
+.dot-failed { background: var(--danger); }
 
 .split-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px dashed #e2e8f0;
+  margin-top: var(--sp-4, 16px);
+  padding-top: var(--sp-4, 16px);
+  border-top: 1px dashed var(--line-soft);
 }
 
 .split-time {
-  color: #475569;
-  font-size: 13px;
+  color: var(--text-soft);
+  font-size: var(--fs-footnote, 13px);
   font-variant-numeric: tabular-nums;
 }
 
@@ -592,14 +585,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px dashed #e2e8f0;
+  gap: var(--sp-3, 12px);
+  margin-top: var(--sp-4, 16px);
+  padding-top: var(--sp-4, 16px);
+  border-top: 1px dashed var(--line-soft);
 }
 
 .confirm-hint {
-  color: #475569;
-  font-size: 13px;
+  color: var(--text-soft);
+  font-size: var(--fs-footnote, 13px);
 }
 </style>

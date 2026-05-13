@@ -356,60 +356,11 @@
             <div class="detail-text">ROI：{{ step.roiHint || '暂无' }}</div>
             <div class="detail-text">关键时刻：{{ formatSubsteps(step.substeps) }}</div>
             <div class="detail-text">参考模式：{{ step.referenceMode === 'text' ? '仅文字 SOP' : '完整步骤视频自动抽帧' }}</div>
-            <div v-if="step.demoVideo?.url" class="manual-segmentation-box frame-calibration-panel">
-              <div class="manual-title">视频校准与关键帧选择</div>
-              <div class="manual-subtitle">先用起止点限定当前步骤范围，再播放或拖动视频到关键动作位置，点击添加当前帧。保存时只用本次添加的关键帧重建参考帧，旧关键帧不会继续保留。</div>
-              <div v-if="step.demoVideoLoading" class="calibration-placeholder">正在加载示范视频...</div>
-              <div v-else-if="step.demoVideoLoadError" class="calibration-placeholder error">{{ step.demoVideoLoadError }}</div>
-              <div v-else-if="step.demoVideoBlobUrl" class="calibration-workspace">
-                <video
-                  :ref="(el) => setStepVideoRef(step, el)"
-                  class="calibration-video"
-                  :src="step.demoVideoBlobUrl"
-                  controls
-                  preload="metadata"
-                  @loadedmetadata="handleStepVideoLoaded(step, $event)"
-                  @timeupdate="handleStepVideoTimeUpdate(step, $event)"
-                ></video>
-                <div class="calibration-controls">
-                  <div class="calibration-time-card">
-                    <span>当前播放</span>
-                    <strong>{{ formatSeconds(step.currentPreviewSec) }}</strong>
-                    <small>拖动左侧视频进度条定位画面</small>
-                  </div>
-                  <div class="segment-summary">
-                    <div>
-                      <span>开始点</span>
-                      <strong>{{ formatSeconds(step.segmentStartSec) }}</strong>
-                    </div>
-                    <div>
-                      <span>结束点</span>
-                      <strong>{{ formatSeconds(step.segmentEndSec) }}</strong>
-                    </div>
-                  </div>
-                  <div class="calibration-actions">
-                    <el-button plain size="small" @click="setCurrentAsSegmentBoundary(step, 'start')">设为开始点</el-button>
-                    <el-button plain size="small" @click="setCurrentAsSegmentBoundary(step, 'end')">设为结束点</el-button>
-                    <el-button type="primary" plain size="small" @click="addCurrentFrame(step)">添加为关键帧</el-button>
-                    <el-button plain size="small" @click="resetSegmentToFullVideo(step)">重置为全段</el-button>
-                  </div>
-                  <div class="selected-frame-row">
-                    <button
-                      v-for="(timestamp, index) in step.manualSelectedTimestamps"
-                      :key="`${step.stepNo}-manual-frame-${timestamp}`"
-                      type="button"
-                      class="selected-frame-chip"
-                      @click="jumpToTimestamp(step, timestamp)"
-                    >
-                      {{ formatSeconds(timestamp) }}
-                      <span @click.stop="removeManualFrame(step, index)">×</span>
-                    </button>
-                    <span v-if="!step.manualSelectedTimestamps.length" class="selected-frame-empty">尚未选择关键帧</span>
-                  </div>
-                  <el-button type="primary" plain class="manual-btn" :loading="step.manualSegmentationLoading" @click="applyManualSegmentation(step)">保存校准并重建关键帧</el-button>
-                </div>
-              </div>
-              <div v-else class="calibration-placeholder">暂无可预览的视频地址</div>
+            <div v-if="step.demoVideo?.url" class="manual-segmentation-box">
+              <div class="manual-title">手动修正关键帧</div>
+              <div class="manual-subtitle">系统会先基于完整步骤视频自动生成关键帧、关键时刻和 ROI。若结果不理想，可输入秒数手动重建关键帧。</div>
+              <el-input v-model="step.manualTimestampInput" placeholder="输入时间点，例如：0.8, 1.6, 3.2" />
+              <el-button type="primary" plain class="manual-btn" :loading="step.manualSegmentationLoading" @click="applyManualSegmentation(step)">按时间点重建关键帧</el-button>
             </div>
             <div v-else class="detail-text muted-text">该步骤当前缺少完整示范视频，建议补传后再由系统自动生成参考关键帧、关键时刻和 ROI。</div>
             <div class="demo-video-box">
@@ -571,7 +522,6 @@ const reviewDialogVisible = ref(false)
 const reviewTarget = ref(null)
 const reviewVideoUrl = ref('')
 const reviewForm = reactive({ status: 'approved', note: '' })
-const stepVideoElements = new Map()
 const historyFilters = reactive({
   keyword: '',
   aiStatus: '',
@@ -720,59 +670,7 @@ function revokeVideoUrl(targetRef) {
   }
 }
 
-function revokeStepDemoVideoUrls() {
-  for (const step of selectedSopDebug.value?.steps || []) {
-    if (step.demoVideoBlobUrl) {
-      URL.revokeObjectURL(step.demoVideoBlobUrl)
-      step.demoVideoBlobUrl = ''
-    }
-  }
-  stepVideoElements.clear()
-}
-
-async function hydrateDebugStepVideoUrls(steps = []) {
-  await Promise.all((steps || []).map(async (step) => {
-    if (!step?.demoVideo?.url) return
-    step.demoVideoLoading = true
-    step.demoVideoLoadError = ''
-    try {
-      step.demoVideoBlobUrl = await fetchAuthorizedMediaBlobUrl(step.demoVideo.url)
-    } catch (error) {
-      step.demoVideoLoadError = error?.message || '示范视频加载失败'
-    } finally {
-      step.demoVideoLoading = false
-    }
-  }))
-}
-
-async function applyDebugSopState(data, { reloadVideoUrls = false } = {}) {
-  const previousSteps = new Map((selectedSopDebug.value?.steps || []).map((step) => [step.stepNo, step]))
-  const nextState = buildDebugSopState(data)
-
-  if (!reloadVideoUrls) {
-    nextState.steps = nextState.steps.map((step) => {
-      const previousStep = previousSteps.get(step.stepNo)
-      if (!previousStep) return step
-      return {
-        ...step,
-        demoVideoBlobUrl: previousStep.demoVideoBlobUrl,
-        demoVideoLoading: false,
-        demoVideoLoadError: previousStep.demoVideoLoadError,
-        videoDurationSec: previousStep.videoDurationSec || step.videoDurationSec,
-        currentPreviewSec: previousStep.currentPreviewSec
-      }
-    })
-    selectedSopDebug.value = nextState
-    return
-  }
-
-  revokeStepDemoVideoUrls()
-  selectedSopDebug.value = nextState
-  await hydrateDebugStepVideoUrls(nextState.steps)
-}
-
 function handleDebugDialogClosed() {
-  revokeStepDemoVideoUrls()
   selectedSopDebug.value = null
 }
 
@@ -986,7 +884,7 @@ async function openDebugSop(row) {
   debugVisible.value = true
   debugLoading.value = true
   try {
-    await applyDebugSopState((await getSopDetail(row.id)).data, { reloadVideoUrls: true })
+    selectedSopDebug.value = buildDebugSopState((await getSopDetail(row.id)).data)
   } catch (error) {
     showErrorMessage(error, '加载详情失败')
     debugVisible.value = false
@@ -1084,20 +982,7 @@ async function toggleUserStatus(row) {
 function buildDebugSopState(data) {
   return {
     ...data,
-    steps: (data.steps || []).map((step) => ({
-      ...step,
-      prerequisiteStepNos: Array.isArray(step.prerequisiteStepNos) ? step.prerequisiteStepNos : [],
-      referenceSummaryDraft: step.referenceSummary || '',
-      roiHintDraft: step.roiHint || '',
-      substepsDraft: Array.isArray(step.substeps)
-        ? step.substeps.map((item) => `${item.title || '关键时刻'}@${Number(item.timestampSec || 0)}`).join('\n')
-        : '',
-      manualTimestampInput: Array.isArray(step.referenceFeatures?.sampleTimestamps) ? step.referenceFeatures.sampleTimestamps.join(', ') : '',
-      manualSegmentationLoading: false,
-      reuploadVideo: null,
-      demoVideoUploadLoading: false,
-      referenceMetadataSaving: false
-    }))
+    steps: (data.steps || []).map((step) => buildDebugStepState(step))
   }
 }
 
@@ -1106,50 +991,27 @@ function handleDebugStepVideoChange(step, file) {
 }
 
 function buildDebugStepState(step) {
-  const selectedTimestamps = normalizeTimestampList(step.referenceFeatures?.sampleTimestamps)
-  const durationSec = normalizePositiveNumber(step.referenceFeatures?.durationSec, 0)
-  const firstTimestamp = selectedTimestamps[0] ?? 0
-  const lastTimestamp = selectedTimestamps[selectedTimestamps.length - 1]
-  const endSec = lastTimestamp ?? durationSec ?? firstTimestamp
-
   return {
     ...step,
     prerequisiteStepNos: Array.isArray(step.prerequisiteStepNos) ? step.prerequisiteStepNos : [],
     referenceSummaryDraft: step.referenceSummary || '',
     roiHintDraft: step.roiHint || '',
     substepsDraft: Array.isArray(step.substeps) ? step.substeps.map((item) => `${item.title || '关键时刻'}@${Number(item.timestampSec || 0)}`).join('\n') : '',
+    manualTimestampInput: Array.isArray(step.referenceFeatures?.sampleTimestamps) ? step.referenceFeatures.sampleTimestamps.join(', ') : '',
     manualSegmentationLoading: false,
     reuploadVideo: null,
     demoVideoUploadLoading: false,
-    referenceMetadataSaving: false,
-    demoVideoBlobUrl: '',
-    demoVideoLoading: false,
-    demoVideoLoadError: '',
-    videoDurationSec: durationSec,
-    currentPreviewSec: firstTimestamp,
-    segmentStartSec: firstTimestamp,
-    segmentEndSec: endSec,
-    manualSelectedTimestamps: []
+    referenceMetadataSaving: false
   }
 }
 
-function normalizeTimestampList(value) {
-  const values = Array.isArray(value) ? value : []
-  return [...new Set(values
-    .map((item) => roundTime(item))
-    .filter((item) => item != null))]
-    .sort((left, right) => left - right)
-}
-
-function normalizePositiveNumber(value, fallback = 0) {
-  const num = Number(value)
-  return Number.isFinite(num) && num >= 0 ? num : fallback
-}
-
-function roundTime(value) {
-  const num = Number(value)
-  if (!Number.isFinite(num) || num < 0) return null
-  return Number(num.toFixed(3))
+function parseTimestampInput(value) {
+  return String(value || '')
+    .split(/[,，\s]+/)
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item) && item >= 0)
 }
 
 function parseSubstepsDraft(value) {
@@ -1188,114 +1050,15 @@ function formatDurationLimit(step = {}) {
   return parts.length ? parts.join(' / ') : '无'
 }
 
-function formatSeconds(value) {
-  const num = normalizePositiveNumber(value, 0)
-  return `${num.toFixed(1)}s`
-}
-
-function getStepVideoDuration(step) {
-  return Math.max(0.1, normalizePositiveNumber(step?.videoDurationSec || step?.referenceFeatures?.durationSec, 0.1))
-}
-
-function setStepVideoRef(step, el) {
-  if (!step?.stepNo) return
-  if (el) stepVideoElements.set(step.stepNo, el)
-  else stepVideoElements.delete(step.stepNo)
-}
-
-function handleStepVideoLoaded(step, event) {
-  const duration = normalizePositiveNumber(event?.target?.duration, 0)
-  if (duration > 0) {
-    step.videoDurationSec = duration
-    if (!step.segmentEndSec || step.segmentEndSec <= step.segmentStartSec) {
-      step.segmentEndSec = duration
-    }
-  }
-  seekStepVideo(step)
-}
-
-function handleStepVideoTimeUpdate(step, event) {
-  step.currentPreviewSec = roundTime(event?.target?.currentTime) ?? 0
-}
-
-function seekStepVideo(step) {
-  const video = stepVideoElements.get(step?.stepNo)
-  if (!video) return
-  const nextTime = clampTime(step.currentPreviewSec, getStepVideoDuration(step))
-  step.currentPreviewSec = nextTime
-  if (Math.abs((video.currentTime || 0) - nextTime) > 0.05) {
-    video.currentTime = nextTime
-  }
-}
-
-function clampTime(value, duration) {
-  const max = getFiniteDuration(duration)
-  return Math.min(max, Math.max(0, roundTime(value) ?? 0))
-}
-
-function getFiniteDuration(duration) {
-  const num = Number(duration)
-  return Number.isFinite(num) && num > 0 ? num : 0.1
-}
-
-function handleSegmentBoundaryChange(step, boundary) {
-  const duration = getStepVideoDuration(step)
-  step.segmentStartSec = clampTime(step.segmentStartSec, duration)
-  step.segmentEndSec = clampTime(step.segmentEndSec, duration)
-
-  if (step.segmentStartSec > step.segmentEndSec) {
-    if (boundary === 'start') step.segmentEndSec = step.segmentStartSec
-    else step.segmentStartSec = step.segmentEndSec
-  }
-}
-
-function setCurrentAsSegmentBoundary(step, boundary) {
-  const current = clampTime(step.currentPreviewSec, getStepVideoDuration(step))
-  if (boundary === 'start') step.segmentStartSec = current
-  else step.segmentEndSec = current
-  handleSegmentBoundaryChange(step, boundary)
-}
-
-function resetSegmentToFullVideo(step) {
-  step.segmentStartSec = 0
-  step.segmentEndSec = getStepVideoDuration(step)
-}
-
-function addCurrentFrame(step) {
-  const current = clampTime(step.currentPreviewSec, getStepVideoDuration(step))
-  if (current < step.segmentStartSec || current > step.segmentEndSec) {
-    return ElMessage.warning('当前帧不在步骤区间内')
-  }
-  step.manualSelectedTimestamps = normalizeTimestampList([...(step.manualSelectedTimestamps || []), current])
-}
-
-function removeManualFrame(step, index) {
-  step.manualSelectedTimestamps = (step.manualSelectedTimestamps || []).filter((_, itemIndex) => itemIndex !== index)
-}
-
-function jumpToTimestamp(step, timestamp) {
-  step.currentPreviewSec = clampTime(timestamp, getStepVideoDuration(step))
-  seekStepVideo(step)
-}
-
-function buildManualSegmentationTimestamps(step) {
-  handleSegmentBoundaryChange(step, 'end')
-  const start = roundTime(step.segmentStartSec)
-  const end = roundTime(step.segmentEndSec)
-  const selected = normalizeTimestampList(step.manualSelectedTimestamps)
-    .filter((item) => item >= start && item <= end)
-  return selected.length ? selected : []
-}
-
 async function applyManualSegmentation(step) {
-  const timestamps = buildManualSegmentationTimestamps(step)
-  if (!timestamps.length) return ElMessage.warning('请先添加至少一个关键帧')
+  const timestamps = parseTimestampInput(step.manualTimestampInput)
+  if (!timestamps.length) return ElMessage.warning('请输入至少一个有效时间点')
   if (!selectedSopDebug.value?.id) return
 
   step.manualSegmentationLoading = true
   try {
     const result = await updateSopStepSegmentation(selectedSopDebug.value.id, step.stepNo, { timestamps })
-    applyDebugSopState(result.data, { reloadVideoUrls: false })
+    selectedSopDebug.value = buildDebugSopState(result.data)
     await loadSopList()
     ElMessage.success('关键帧已按手动时间点重建')
   } catch (error) {
@@ -1315,7 +1078,7 @@ async function saveStepReferenceMetadata(step) {
       roiHint: String(step.roiHintDraft || '').trim(),
       substeps
     })
-    applyDebugSopState(result.data, { reloadVideoUrls: false })
+    selectedSopDebug.value = buildDebugSopState(result.data)
     await loadSopList()
     ElMessage.success('预处理信息已更新')
   } catch (error) {
@@ -1386,7 +1149,6 @@ onMounted(() => {
 onUnmounted(() => {
   revokeVideoUrl(historyVideoUrl)
   revokeVideoUrl(reviewVideoUrl)
-  revokeStepDemoVideoUrls()
 })
 </script>
 
@@ -2391,7 +2153,6 @@ onUnmounted(() => {
 
   .stats-grid { grid-template-columns: 1fr; }
   .form-row { flex-direction: column; }
-  .calibration-workspace { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {
