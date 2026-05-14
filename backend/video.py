@@ -345,15 +345,3 @@ def build_user_segments(video_path: str, step_count: int, frames_per_segment: in
     return segments
 
 
-def build_video_overview(video_path: str, max_frames: int = 6):
-    meta = read_video_meta(video_path)
-    duration_sec = meta["durationSec"]
-    if duration_sec <= 0:
-        raise HTTPException(status_code=400, detail="Unable to read uploaded user video duration")
-    timestamps = build_sample_timestamps(0, duration_sec, max_frames)
-    frames = extract_frames(video_path, timestamps)
-    return {
-        "durationSec": duration_sec,
-        "timestamps": timestamps[: len(frames)],
-        "frames": frames,
-    }

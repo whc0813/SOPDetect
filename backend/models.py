@@ -136,9 +136,3 @@ class PreparationJobView(BaseModel):
 class PreparationJobResponse(BaseModel):
     success: bool = True
     data: Optional[PreparationJobView] = None
-
-
-class CreateSopResponse(BaseModel):
-    sopId: str
-    jobId: int
-    status: str = "queued"

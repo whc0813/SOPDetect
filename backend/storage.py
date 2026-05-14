@@ -12,6 +12,11 @@ from pathlib import Path
 import pymysql
 from pymysql.cursors import DictCursor
 
+try:
+    from .models import DEFAULT_STEP_TYPE, STEP_TYPE_VALUES
+except ImportError:
+    from models import DEFAULT_STEP_TYPE, STEP_TYPE_VALUES
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -32,9 +37,6 @@ DEFAULT_CONFIG = {
     "temperature": 0.1,
     "timeoutMs": 120000,
 }
-
-STEP_TYPE_VALUES = {"required", "optional", "conditional"}
-DEFAULT_STEP_TYPE = "required"
 
 
 def _load_env_file():
@@ -637,23 +639,6 @@ def revoke_user_session(user_id, session_token):
                 WHERE user_id = %s AND session_token = %s AND status = 'active'
                 """,
                 (user_id, session_token),
-            )
-        connection.commit()
-
-
-def revoke_all_user_sessions(user_id):
-    if not user_id:
-        return
-    with _get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                UPDATE user_login_sessions
-                SET status = 'revoked',
-                    revoked_at = NOW()
-                WHERE user_id = %s AND status = 'active'
-                """,
-                (user_id,),
             )
         connection.commit()
 

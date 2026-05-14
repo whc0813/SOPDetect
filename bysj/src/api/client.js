@@ -11,7 +11,7 @@ async function parseJsonSafe(response) {
   }
 }
 
-export function getAuthSession() {
+function getAuthSession() {
   try {
     const raw = sessionStorage.getItem(AUTH_STORAGE_KEY)
     return raw ? JSON.parse(raw) : null
@@ -118,7 +118,7 @@ export async function fetchAuthorizedMediaBlobUrl(path) {
   return URL.createObjectURL(blob)
 }
 
-export function toAbsoluteApiUrl(path) {
+function toAbsoluteApiUrl(path) {
   if (!path) return ''
   return path.startsWith('http') ? path : `${API_BASE_URL}${path}`
 }
@@ -261,14 +261,6 @@ export async function removeSop(sopId) {
   return apiRequest(`/api/sops/${sopId}`, { method: 'DELETE' })
 }
 
-export async function evaluateSop(sopId, userVideoDataUrl) {
-  return apiRequest(`/api/sops/${sopId}/evaluate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userVideoDataUrl })
-  })
-}
-
 export async function createEvaluationJob(sopId, payload) {
   return apiRequest(`/api/sops/${sopId}/evaluation-jobs`, {
     method: 'POST',
@@ -314,14 +306,6 @@ export async function getHistoryDetail(recordId) {
 
 export async function deleteHistory(recordId) {
   return apiRequest(`/api/history/${recordId}`, { method: 'DELETE' })
-}
-
-export async function createHistory(payload) {
-  return apiRequest('/api/history', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  })
 }
 
 export async function reviewHistory(recordId, payload) {

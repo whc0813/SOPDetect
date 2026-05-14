@@ -30,15 +30,12 @@ try:
         build_batch_step_evaluation_blocks,
         build_batch_step_evaluation_schema,
         build_batch_step_evaluation_system_prompt,
-        build_content_blocks,
-        build_evaluation_system_prompt,
         build_global_validation_content,
         build_global_validation_schema,
         build_global_validation_system_prompt,
         build_per_step_evaluation_blocks,
         build_per_step_evaluation_schema,
         build_per_step_evaluation_system_prompt,
-        build_response_schema,
         build_temporal_segmentation_blocks,
         build_temporal_segmentation_schema,
         build_temporal_segmentation_system_prompt,
@@ -88,15 +85,12 @@ except ImportError:
         build_batch_step_evaluation_blocks,
         build_batch_step_evaluation_schema,
         build_batch_step_evaluation_system_prompt,
-        build_content_blocks,
-        build_evaluation_system_prompt,
         build_global_validation_content,
         build_global_validation_schema,
         build_global_validation_system_prompt,
         build_per_step_evaluation_blocks,
         build_per_step_evaluation_schema,
         build_per_step_evaluation_system_prompt,
-        build_response_schema,
         build_temporal_segmentation_blocks,
         build_temporal_segmentation_schema,
         build_temporal_segmentation_system_prompt,
@@ -157,43 +151,6 @@ def choose_analysis_fps(configured_fps: Optional[float], video_fps: Optional[flo
     except (TypeError, ValueError):
         pass
     return round(max(0.1, min(8.0, max(candidates))), 3)
-
-
-def build_focus_sampling_window(
-    segment_info: Optional[dict], duration_sec: Optional[float]
-) -> tuple[Optional[float], Optional[float], int]:
-    """
-    Expand the model-produced segment into a search window for short actions.
-
-    Stage 1 ranges are only coarse anchors. Step evaluation needs a slightly padded
-    window plus denser sampling so brief gestures near the segment edges are not lost.
-    """
-    if not segment_info:
-        return None, None, 12
-
-    start = segment_info.get("startSec")
-    end = segment_info.get("endSec")
-    if start is None or end is None:
-        return None, None, 12
-
-    try:
-        start = float(start)
-        end = float(end)
-    except (TypeError, ValueError):
-        return None, None, 12
-
-    if end < start:
-        start, end = end, start
-
-    raw_width = max(0.1, end - start)
-    padding = min(0.75, max(0.25, raw_width * 0.25))
-    focus_start = max(0.0, start - padding)
-    focus_end = end + padding
-    if duration_sec and duration_sec > 0:
-        focus_end = min(float(duration_sec), focus_end)
-    focus_width = max(0.1, focus_end - focus_start)
-    sample_count = max(12, min(18, int(round(focus_width / 0.15))))
-    return round(focus_start, 3), round(focus_end, 3), sample_count
 
 
 def ensure_step_segments(sop: SopData, segments: Optional[dict], video_path: str) -> dict:
@@ -1208,57 +1165,6 @@ async def run_temporal_segmentation(
         )
     except Exception:
         return {}, None, None
-
-
-async def run_per_step_evaluation(
-    api_config: ApiConfig,
-    step: SopStep,
-    segment_info: Optional[dict],
-    user_video_data_url: str,
-    user_video_fps: float,
-    user_video_duration: Optional[float] = None,
-    user_focus_frames: Optional[List[str]] = None,
-    user_focus_timestamps: Optional[List[float]] = None,
-) -> dict:
-    """
-    Stage 2: Evaluate a single SOP step against the user video.
-    Returns a step result dict.
-    """
-    payload = {
-        "model": api_config.model,
-        "temperature": api_config.temperature,
-        "messages": [
-            {
-                "role": "system",
-                "content": build_per_step_evaluation_system_prompt(),
-            },
-            {
-                "role": "user",
-                "content": build_per_step_evaluation_blocks(
-                    step,
-                    segment_info,
-                    user_video_data_url,
-                    user_video_fps,
-                    user_video_duration=user_video_duration,
-                    user_focus_frames=user_focus_frames,
-                    user_focus_timestamps=user_focus_timestamps,
-                ),
-            },
-        ],
-        "response_format": build_per_step_evaluation_schema(),
-    }
-    raw_json = await call_chat_completion(api_config, payload)
-    result = parse_json_content(
-        raw_json.get("choices", [{}])[0].get("message", {}).get("content")
-    )
-    result["stepNo"] = step.stepNo
-    result.setdefault("description", step.description)
-    result["_payloadPreview"] = sanitize_payload(payload)
-    result["_mediaPreview"] = extract_payload_media_preview(payload)
-    result["_rawModelResult"] = sanitize_payload(raw_json)
-    return reconcile_order_issue_from_evidence(step, result, user_video_duration)
-
-
 
 
 async def run_per_step_evaluation_batch(

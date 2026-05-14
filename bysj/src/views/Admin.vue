@@ -497,6 +497,7 @@ import SectionHeader from '../components/SectionHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import EvalTimeline from '../components/EvalTimeline.vue'
 import ScoreRadar from '../components/ScoreRadar.vue'
+import { normalizeHistory, formatTokenUsage } from '../utils/user-history.mjs'
 
 const router = useRouter()
 const sidebarOpen = ref(false)
@@ -672,21 +673,6 @@ function revokeVideoUrl(targetRef) {
 
 function handleDebugDialogClosed() {
   selectedSopDebug.value = null
-}
-
-function normalizeHistory(record = {}) {
-  return {
-    ...record,
-    detail: {
-      feedback: record.detail?.feedback || '',
-      issues: Array.isArray(record.detail?.issues) ? record.detail.issues : [],
-      uploadedVideo: record.detail?.uploadedVideo || null,
-      stepResults: Array.isArray(record.detail?.stepResults) ? record.detail.stepResults : [],
-      overviewPreview: record.detail?.overviewPreview || null,
-      segmentPreview: record.detail?.segmentPreview || null
-    },
-    manualReview: record.manualReview || null
-  }
 }
 
 async function loadSopList() {
@@ -1027,14 +1013,6 @@ function parseSubstepsDraft(value) {
       return Number.isFinite(timestamp) && timestamp >= 0 ? { title, timestampSec: timestamp } : null
     })
     .filter(Boolean)
-}
-
-function formatTokenUsage(usage) {
-  if (!usage) return '暂无'
-  const input = Number.isFinite(Number(usage.inputTokens)) ? Number(usage.inputTokens) : '-'
-  const output = Number.isFinite(Number(usage.outputTokens)) ? Number(usage.outputTokens) : '-'
-  const total = Number.isFinite(Number(usage.totalTokens)) ? Number(usage.totalTokens) : '-'
-  return `输入 ${input} / 输出 ${output} / 总计 ${total}`
 }
 
 function formatStepType(stepType) {
