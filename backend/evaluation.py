@@ -130,6 +130,7 @@ except ImportError:
 
 import os
 
+
 JOB_POLL_INTERVAL_SEC = float(os.getenv("EVALUATION_JOB_POLL_INTERVAL_SEC", "2"))
 JOB_WORKER_STOP_EVENT = threading.Event()
 JOB_WORKER_THREAD = None
@@ -351,7 +352,7 @@ def reconcile_order_issue_from_evidence(step: SopStep, result: dict, duration_se
     cleaned = sanitize_step_result(result, duration_sec)
     issue_type = str(cleaned.get("issueType") or "").strip()
     evidence = str(cleaned.get("evidence") or "").strip()
-    if issue_type not in {"缺失", "动作错误"} or not evidence:
+    if issue_type not in {"缺失", "动作不规范", "动作错误"} or not evidence:
         return cleaned
 
     order_hints = ("顺序", "时序", "之前", "之后", "早期", "过早", "延后", "前置步骤", "抢跑")
@@ -375,14 +376,7 @@ def reconcile_order_issue_from_evidence(step: SopStep, result: dict, duration_se
             end = min(float(duration_sec), end)
         ranges.append((round(start, 3), round(end, 3)))
 
-    if "之后" in evidence or "延后" in evidence:
-        inferred_issue = "延后执行"
-    elif "之前" in evidence or "早期" in evidence or "过早" in evidence or "前置步骤" in evidence or "抢跑" in evidence:
-        inferred_issue = "过早执行"
-    else:
-        inferred_issue = "顺序颠倒"
-
-    cleaned["issueType"] = inferred_issue
+    cleaned["issueType"] = "顺序问题"
     cleaned["orderIssue"] = True
     if ranges:
         cleaned["detectedStartSec"] = ranges[0][0]
@@ -405,12 +399,8 @@ def _normalize_override_issue_type(issue_type, order_issue=None) -> str:
     text = str(issue_type or "").strip()
     order_text = str(order_issue or "").strip()
     combined = f"{text} {order_text}"
-    if "抢先" in combined or "过早" in combined or "提前" in combined:
-        return "过早执行"
-    if "滞后" in combined or "延后" in combined or "过晚" in combined:
-        return "延后执行"
-    if text == "顺序问题":
-        return "顺序颠倒"
+    if any(token in combined for token in ("抢先", "过早", "提前", "滞后", "延后", "过晚", "顺序", "颠倒", "前置")):
+        return "顺序问题"
     return text if text in ISSUE_TYPE_VALUES else ""
 
 
@@ -1039,8 +1029,6 @@ def build_sop_model_from_record(record: dict) -> SopData:
                 "stepType": step.get("stepType"),
                 "conditionText": step.get("conditionText"),
                 "prerequisiteStepNos": step.get("prerequisiteStepNos"),
-                "minDurationSec": step.get("minDurationSec"),
-                "maxDurationSec": step.get("maxDurationSec"),
             }
         )
         steps.append(
@@ -1050,8 +1038,6 @@ def build_sop_model_from_record(record: dict) -> SopData:
                 "stepType": normalized_step["stepType"],
                 "conditionText": normalized_step["conditionText"],
                 "prerequisiteStepNos": normalized_step["prerequisiteStepNos"],
-                "minDurationSec": normalized_step["minDurationSec"],
-                "maxDurationSec": normalized_step["maxDurationSec"],
                 "referenceFrames": step.get("referenceFrames") or [],
                 "referenceSummary": step.get("referenceSummary") or "",
                 "referenceFeatures": step.get("referenceFeatures") or None,
@@ -1191,7 +1177,6 @@ async def run_per_step_evaluation_batch(
             "confidence": 0.0,
             "applicable": True,
             "issueType": "证据不足",
-            "completionLevel": "无法判断",
             "orderIssue": False,
             "prerequisiteViolated": False,
             "detectedStartSec": None,

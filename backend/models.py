@@ -4,14 +4,13 @@ from pydantic import BaseModel, Field
 
 # ── Shared constants ───────────────────────────────────────────
 STEP_TYPE_VALUES = {"required", "optional", "conditional"}
-# 语义类别分组排列：执行质量 → 执行顺序 → 执行次数 → 前置依赖 → 耗时约束 → 不确定
+# 语义类别分组排列：正常 → 执行质量 → 执行顺序 → 执行次数 → 不确定
 ISSUE_TYPE_VALUES = [
     "正常",
-    "缺失", "部分完成", "动作错误",
-    "顺序颠倒", "过早执行", "延后执行",
+    "缺失",
+    "动作不规范",
+    "顺序问题",
     "重复操作",
-    "前置条件缺失",
-    "过快完成", "超时完成",
     "证据不足",
 ]
 COMPLETION_LEVEL_VALUES = ["完整", "部分完成", "未完成", "无法判断"]
@@ -47,8 +46,6 @@ class SopStep(BaseModel):
     stepType: str = DEFAULT_STEP_TYPE
     conditionText: str = ""
     prerequisiteStepNos: List[int] = Field(default_factory=list)
-    minDurationSec: Optional[float] = None
-    maxDurationSec: Optional[float] = None
     referenceFrames: List[str] = Field(default_factory=list)
     referenceSummary: str = ""
     referenceFeatures: Optional[StepFeatures] = None
@@ -78,8 +75,6 @@ class StepResultPayload(BaseModel):
     detectedEndSec: Optional[float] = None
     repeatedExecution: bool = False
     detectedOccurrences: List[dict] = Field(default_factory=list)
-    minDurationSec: Optional[float] = None
-    maxDurationSec: Optional[float] = None
     stepType: str = DEFAULT_STEP_TYPE
     evidence: str = ""
 

@@ -5,14 +5,12 @@ from fastapi import HTTPException
 
 try:
     from .models import (
-        COMPLETION_LEVEL_VALUES,
         ISSUE_TYPE_VALUES,
         SopData,
         SopStep,
     )
 except ImportError:
     from models import (
-        COMPLETION_LEVEL_VALUES,
         ISSUE_TYPE_VALUES,
         SopData,
         SopStep,
@@ -81,26 +79,10 @@ def _shared_issue_type_definitions():
         "问题类型（issueType）定义：\n"
         "- 正常：步骤按正确顺序完整执行，无异常。\n"
         "- 缺失：步骤在整段视频中未出现或未执行。\n"
-        "- 部分完成：步骤有执行动作但未达到完整标准，只做了一部分。\n"
-        "- 动作错误：有动作但不符合步骤说明的真实意图，或执行了错误的替代动作。\n"
-        "- 顺序颠倒：步骤动作本身正确，但发生在错误的顺序位置（与其他步骤次序互换）。\n"
-        "- 过早执行：后置步骤在前置步骤完成前就开始执行。\n"
-        "- 延后执行：应在当前阶段完成的步骤明显拖到后续阶段才出现。\n"
+        "- 动作不规范：动作出现了，但执行不完整、不到位，或与步骤要求不一致。\n"
+        "- 顺序问题：步骤执行时机不正确，包括提前、延后、颠倒，或依赖步骤未完成就执行。\n"
         "- 重复操作：步骤被不必要地执行了多次，且步骤说明未允许多次执行。\n"
-        "- 前置条件缺失：步骤依赖的前置步骤未完成，但当前步骤仍被执行。\n"
-        "- 过快完成：步骤实际持续时间短于最短耗时限制（由后端规则自动判定，模型不使用）。\n"
-        "- 超时完成：步骤实际持续时间超过最长耗时限制（由后端规则自动判定，模型不使用）。\n"
         "- 证据不足：画面遮挡、模糊或采样不足，无法支持高置信度判断。\n"
-    )
-
-
-def _shared_completion_level_definitions():
-    return (
-        "完成程度（completionLevel）定义：\n"
-        "- 完整：步骤的所有关键动作均已正确执行。\n"
-        "- 部分完成：步骤的关键动作只执行了一部分。\n"
-        "- 未完成：步骤的关键动作基本未执行。\n"
-        "- 无法判断：证据不足以判断完成程度。\n"
     )
 
 
@@ -110,7 +92,7 @@ def _shared_evidence_writing_guide():
         "- 使用中文，点明判断依据和观察到的具体内容。\n"
         "- 引用绝对时间时使用 x.xs 秒数格式，不使用 mm:ss。\n"
         "- 引用的时间点必须在用户视频总时长范围内。\n"
-        "- 明确写出判断结论对应的关键词（如\"顺序颠倒\"\"过早执行\"\"证据不足\"等）。\n"
+        "- 明确写出判断结论对应的关键词（如\"动作不规范\"\"顺序问题\"\"证据不足\"等）。\n"
     )
 
 
@@ -119,12 +101,11 @@ def _shared_core_principles():
         "核心评估原则：\n"
         "- 从全流程视角评估每个步骤，结合步骤顺序、前置依赖和完整视频上下文综合判断。\n"
         "- 将观察到的动作与步骤的真实意图进行匹配，只有动作形态和意图都匹配才算正确执行。\n"
-        "- 如果目标动作在视频中出现过但发生在错误的顺序位置，应标记为顺序类问题（过早执行/延后执行/顺序颠倒），而非缺失。\n"
-        "- 如果目标动作在视频中出现且持续时间很短，仍应如实记录起止时间并评估完成度，而非直接判为缺失。\n"
+        "- 如果目标动作在视频中出现过但发生在错误的顺序位置，应标记为顺序问题，而非缺失。\n"
+        "- 如果目标动作在视频中出现但不完整、不到位或与要求不一致，应标记为动作不规范，而非正常。\n"
         "- 候选时间窗仅用于提示搜索范围，动作出现在窗外也应如实判断。\n"
         "- 管理员示范视频与用户视频的总时长可能不同，应根据动作形态本身判断而非按绝对秒数对齐。\n"
         "- 严格区分示范视频关键帧（管理员提供的参考）和用户测试视频（待评估的视频）。\n"
-        "- 步骤耗时限制（最短/最长）仅作为上下文信息提供；模型应准确检测起止时间，耗时违规判定由后端规则自动完成。\n"
     )
 
 
@@ -136,7 +117,6 @@ def build_evaluation_system_prompt():
         "\n"
         + _shared_core_principles() + "\n"
         + _shared_issue_type_definitions() + "\n"
-        + _shared_completion_level_definitions() + "\n"
         + _shared_evidence_writing_guide() + "\n"
         "输出要求：\n"
         "- feedback、issues、evidence 全部使用中文。\n"
@@ -163,19 +143,6 @@ def build_evaluation_overview_text(sop: SopData):
         "不要把\"看到了动作\"直接等同于\"该步骤正确完成\"；要重点判断动作意图、执行顺序、完成度和前后依赖关系。\n"
         "只返回 JSON。"
     )
-
-
-def format_duration_constraint(step: SopStep) -> str:
-    min_duration = getattr(step, "minDurationSec", None)
-    max_duration = getattr(step, "maxDurationSec", None)
-    parts = []
-    if min_duration is not None and float(min_duration) > 0:
-        parts.append(f"最短耗时 {float(min_duration):.1f}s")
-    if max_duration is not None and float(max_duration) > 0:
-        parts.append(f"最长耗时 {float(max_duration):.1f}s")
-    return "，".join(parts) if parts else "无时间限制"
-
-
 def build_content_blocks(sop: SopData, user_video_data_url: str, user_video_fps: float):
     blocks = [{"type": "text", "text": build_evaluation_overview_text(sop)}]
     blocks.append(
@@ -201,7 +168,6 @@ def build_content_blocks(sop: SopData, user_video_data_url: str, user_video_fps:
             if step.substeps
             else "无"
         )
-        duration_constraint_text = format_duration_constraint(step)
         blocks.append(
             {
                 "type": "text",
@@ -211,7 +177,6 @@ def build_content_blocks(sop: SopData, user_video_data_url: str, user_video_fps:
                     f"步骤类型：{step.stepType}\n"
                     f"条件说明：{step.conditionText or '无'}\n"
                     f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
-                    f"步骤耗时限制：{duration_constraint_text}\n"
                     f"参考摘要：{step.referenceSummary or '无'}\n"
                     f"关注区域提示：{step.roiHint or '无'}\n"
                     f"参考子步骤时间点：{substeps_text}\n"
@@ -259,7 +224,6 @@ def build_response_schema(step_count: int):
                                 "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "判断置信度，0为完全不确定，1为完全确定"},
                                 "applicable": {"type": "boolean", "description": "该步骤在当前场景是否适用"},
                                 "issueType": {"type": "string", "enum": ISSUE_TYPE_VALUES, "description": "该步骤的问题类型，正常表示无问题"},
-                                "completionLevel": {"type": "string", "enum": COMPLETION_LEVEL_VALUES, "description": "该步骤的完成程度"},
                                 "orderIssue": {"type": "boolean", "description": "该步骤是否存在执行顺序问题（过早/延后/颠倒）"},
                                 "prerequisiteViolated": {"type": "boolean", "description": "该步骤的前置依赖步骤是否未完成或不存在"},
                                 "detectedStartSec": {"type": ["number", "null"], "minimum": 0, "description": "检测到的步骤开始时间（秒），null表示未检测到"},
@@ -268,7 +232,7 @@ def build_response_schema(step_count: int):
                             },
                             "required": [
                                 "stepNo", "description", "passed", "confidence",
-                                "applicable", "issueType", "completionLevel", "orderIssue",
+                                "applicable", "issueType", "orderIssue",
                                 "prerequisiteViolated", "detectedStartSec", "detectedEndSec",
                                 "evidence",
                             ],
@@ -343,19 +307,18 @@ def build_per_step_evaluation_schema():
                 "properties": {
                     "stepNo": {"type": "integer", "minimum": 1, "description": "步骤编号"},
                     "passed": {"type": "boolean", "description": "该步骤是否通过评估"},
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "判断置信度，0为完全不确定，1为完全确定"},
-                    "applicable": {"type": "boolean", "description": "该步骤在当前场景是否适用"},
-                    "issueType": {"type": "string", "enum": ISSUE_TYPE_VALUES, "description": "该步骤的问题类型，正常表示无问题"},
-                    "completionLevel": {"type": "string", "enum": COMPLETION_LEVEL_VALUES, "description": "该步骤的完成程度"},
-                    "orderIssue": {"type": "boolean", "description": "该步骤是否存在执行顺序问题"},
-                    "prerequisiteViolated": {"type": "boolean", "description": "该步骤的前置依赖步骤是否未完成"},
+                                "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "判断置信度，0为完全不确定，1为完全确定"},
+                                "applicable": {"type": "boolean", "description": "该步骤在当前场景是否适用"},
+                                "issueType": {"type": "string", "enum": ISSUE_TYPE_VALUES, "description": "该步骤的问题类型，正常表示无问题"},
+                                "orderIssue": {"type": "boolean", "description": "该步骤是否存在执行顺序问题"},
+                                "prerequisiteViolated": {"type": "boolean", "description": "该步骤的前置依赖步骤是否未完成"},
                     "detectedStartSec": {"type": ["number", "null"], "minimum": 0, "description": "检测到的步骤开始时间（秒），null表示未检测到"},
                     "detectedEndSec": {"type": ["number", "null"], "minimum": 0, "description": "检测到的步骤结束时间（秒），null表示未检测到"},
                     "evidence": {"type": "string", "description": "判断依据，说明观察到什么、为何做出该判断"},
                 },
                 "required": [
                     "stepNo", "passed", "confidence", "applicable",
-                    "issueType", "completionLevel", "orderIssue", "prerequisiteViolated",
+                    "issueType", "orderIssue", "prerequisiteViolated",
                     "detectedStartSec", "detectedEndSec", "evidence",
                 ],
             },
@@ -367,7 +330,6 @@ def build_per_step_evaluation_system_prompt():
         "\n"
         + _shared_core_principles() + "\n"
         + _shared_issue_type_definitions() + "\n"
-        + _shared_completion_level_definitions() + "\n"
         + _shared_evidence_writing_guide() + "\n"
         "单步骤评估要点：\n"
         "- 候选时间窗是搜索范围提示，窗内的过渡动作、相邻步骤残留或收手动作属于正常现象。\n"
@@ -466,7 +428,6 @@ def build_per_step_evaluation_blocks(
         if step.substeps
         else "无"
     )
-    duration_constraint_text = format_duration_constraint(step)
     detected = segment_info.get("detected", False) if segment_info else False
     start_sec = segment_info.get("startSec") if segment_info else None
     end_sec = segment_info.get("endSec") if segment_info else None
@@ -488,7 +449,6 @@ def build_per_step_evaluation_blocks(
                 f"步骤类型：{step.stepType}\n"
                 f"条件说明：{step.conditionText or '无'}\n"
                 f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
-                f"步骤耗时限制：{duration_constraint_text}\n"
                 f"参考摘要：{step.referenceSummary or '无'}\n"
                 f"ROI 提示：{step.roiHint or '无'}\n"
                 f"参考关键时刻：{substeps_text}\n"
@@ -607,7 +567,7 @@ def build_global_validation_system_prompt():
         "- sequenceAssessment 从 ['顺序正确', '轻微顺序偏差', '明显顺序错误', '无法判断顺序'] 中选择。\n"
         "- feedback 和 issues 使用中文。\n"
         "- stepOverrides 只填写需要修正的步骤，使用 stepNo 标识步骤。\n"
-        "- stepOverrides 中：orderIssue 和 prerequisiteViolated 为布尔值；issueType 使用标准枚举值（如\"顺序颠倒\"\"过早执行\"\"延后执行\"）；每项含 evidenceNote 说明修正理由。\n"
+        "- stepOverrides 中：orderIssue 和 prerequisiteViolated 为布尔值；issueType 使用标准枚举值（如\"顺序问题\"\"重复操作\"）；每项含 evidenceNote 说明修正理由。\n"
         "- 对 Stage 2 已判为\"正常\"的步骤进行 override 应谨慎：除非发现明显的顺序错误或 Stage 2 推理中的明显矛盾，否则不应推翻。\n"
         "只返回合法 JSON，不要输出任何额外说明。"
     )
@@ -625,7 +585,6 @@ def build_global_validation_content(sop: SopData, step_results: list, segments: 
 
         time_range = f"{start:.1f}s~{end:.1f}s" if (start is not None and end is not None) else "未定位"
         prerequisite_text = ", ".join([str(item) for item in step.prerequisiteStepNos]) or "无"
-        duration_constraint_text = format_duration_constraint(step)
         occurrences = result.get("detectedOccurrences") or []
         occurrence_text = "无"
         if occurrences:
@@ -649,8 +608,7 @@ def build_global_validation_content(sop: SopData, step_results: list, segments: 
             f"问题类型={result.get('issueType', '未知')} | "
             f"检测区间={time_range} | 顺序问题={'是' if result.get('orderIssue') else '否'} | "
             f"重复执行={'是' if result.get('repeatedExecution') else '否'} | "
-            f"出现片段={occurrence_text} | 前置依赖={prerequisite_text} | "
-            f"步骤耗时限制={duration_constraint_text}"
+            f"出现片段={occurrence_text} | 前置依赖={prerequisite_text}"
             f"{reasoning_text}"
         )
 
@@ -715,12 +673,11 @@ def build_global_validation_schema():
     }
 def build_batch_step_evaluation_system_prompt():
     return (
-        "你是一个严谨的 SOP 批量评估助手，在一次输出中完成所有步骤的评估并返回 stepResults 数组。\n"
+        "你是一个严谨的 SOP 批量评估助手，在一次输出中完成本次列出的步骤评估并返回 stepResults 数组。\n"
         "输入中包含每个步骤的说明、参考摘要、ROI 提示、关键时刻，以及阶段1时序分割给出的候选时间窗。\n"
         "\n"
         + _shared_core_principles() + "\n"
         + _shared_issue_type_definitions() + "\n"
-        + _shared_completion_level_definitions() + "\n"
         + _shared_evidence_writing_guide() + "\n"
         "推理步骤（每个步骤按以下顺序在 reasoning 字段中推理）：\n"
         "1. 该步骤期望的动作是什么？\n"
@@ -728,12 +685,12 @@ def build_batch_step_evaluation_system_prompt():
         "3. 观察到的动作是否符合期望（匹配/部分匹配/不匹配/未出现）？\n"
         "4. 起止时间的证据是什么（在视频中哪段时间看到了目标动作）？\n"
         "5. 该步骤是否受到其他步骤的影响（前置步骤未完成/后续步骤抢先/重复出现）？\n"
-        "6. 综合结论（passed、issueType、completionLevel）。\n"
+        "6. 综合结论（passed、issueType）。\n"
         "完成推理后，在 evidence 中给出简明的最终判断摘要。\n"
         "\n"
         "批量评估特有要求：\n"
         "- 阶段1时间窗是搜索提示而非硬约束，动作出现在窗外也应如实判断。\n"
-        "- 结合完整用户视频评估所有步骤，确保每个 stepNo 都有对应结果。\n"
+        "- 结合完整用户视频评估本次列出的步骤，确保每个 stepNo 都有对应结果。\n"
         "- 检查同一步骤在完整视频中是否出现多次，在 detectedOccurrences 中列出每次出现的起止时间。\n"
         "- 同一步骤出现多次时：若步骤说明明确允许多对象/多次执行（如双显卡安装），不应判为重复操作，并在 evidence 中说明依据；否则设置 repeatedExecution=true，issueType=\"重复操作\"。\n"
         "- feedback、issues、evidence 全部使用中文。\n"
@@ -751,9 +708,13 @@ def build_batch_step_evaluation_blocks(
         f"适用场景：{sop.scene or '未提供'}",
         f"总步骤数：{sop.stepCount}",
     ]
+    if sop.steps and len(sop.steps) != sop.stepCount:
+        step_nos = [step.stepNo for step in sop.steps]
+        intro_lines.append(f"本次评估步骤范围：{min(step_nos)}-{max(step_nos)}")
+        intro_lines.append(f"本次评估步骤数：{len(sop.steps)}")
     if user_video_duration:
         intro_lines.append(f"用户视频总时长：{float(user_video_duration):.1f}s")
-    intro_lines.append("请基于同一段完整用户视频，一次性完成所有步骤的评估。")
+    intro_lines.append("请基于同一段完整用户视频，一次性完成本次列出的步骤评估。")
 
     blocks = [{"type": "text", "text": "\n".join(intro_lines)}]
 
@@ -764,7 +725,6 @@ def build_batch_step_evaluation_blocks(
             if step.substeps
             else "无"
         )
-        duration_constraint_text = format_duration_constraint(step)
         start_sec = segment_info.get("startSec")
         end_sec = segment_info.get("endSec")
         occurrences = segment_info.get("occurrences") or []
@@ -791,12 +751,11 @@ def build_batch_step_evaluation_blocks(
                     f"步骤类型：{step.stepType}\n"
                     f"条件说明：{step.conditionText or '无'}\n"
                     f"前置依赖步骤：{', '.join([str(item) for item in step.prerequisiteStepNos]) or '无'}\n"
-                    f"步骤耗时限制：{duration_constraint_text}\n"
                     f"参考摘要：{step.referenceSummary or '无'}\n"
                     f"ROI 提示：{step.roiHint or '无'}\n"
                     f"参考关键时刻：{substeps_text}\n"
                     f"阶段1时序分割结果（时间窗仅作搜索提示）：{segment_json}\n"
-                    "请结合完整用户视频判断该步骤是否出现、完成度如何、是否存在顺序问题。"
+                    "请结合完整用户视频判断该步骤是否出现、动作是否规范、是否存在顺序问题。"
                 ),
             }
         )
@@ -845,7 +804,7 @@ def build_batch_step_evaluation_schema(step_count: int):
                     "stepResults": {
                         "type": "array",
                         "minItems": step_count,
-                        "description": "所有步骤的评估结果，数量等于SOP步骤总数",
+                        "description": "本次列出的步骤评估结果，数量等于本次评估步骤数",
                         "items": {
                             "type": "object",
                             "additionalProperties": False,
@@ -855,7 +814,6 @@ def build_batch_step_evaluation_schema(step_count: int):
                                 "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "判断置信度，0为完全不确定，1为完全确定"},
                                 "applicable": {"type": "boolean", "description": "该步骤在当前场景是否适用"},
                                 "issueType": {"type": "string", "enum": ISSUE_TYPE_VALUES, "description": "该步骤的问题类型，正常表示无问题"},
-                                "completionLevel": {"type": "string", "enum": COMPLETION_LEVEL_VALUES, "description": "该步骤的完成程度"},
                                 "orderIssue": {"type": "boolean", "description": "该步骤是否存在执行顺序问题（过早/延后/颠倒）"},
                                 "prerequisiteViolated": {"type": "boolean", "description": "该步骤的前置依赖步骤是否未完成"},
                                 "detectedStartSec": {"type": ["number", "null"], "minimum": 0, "description": "检测到的步骤开始时间（秒），null表示未检测到"},
@@ -867,7 +825,7 @@ def build_batch_step_evaluation_schema(step_count: int):
                             },
                             "required": [
                                 "stepNo", "passed", "confidence", "applicable",
-                                "issueType", "completionLevel", "orderIssue", "prerequisiteViolated",
+                                "issueType", "orderIssue", "prerequisiteViolated",
                                 "detectedStartSec", "detectedEndSec", "repeatedExecution",
                                 "detectedOccurrences", "reasoning", "evidence",
                             ],

@@ -1,5 +1,6 @@
 import unittest
 from unittest import mock
+from pathlib import Path
 
 from backend import main, storage
 
@@ -117,10 +118,18 @@ class RemoveRiskTimeTests(unittest.TestCase):
         self.assertIn("issueTypeStats", result)
         issue_stats = {item["issueType"]: item["count"] for item in result["issueTypeStats"]}
         self.assertNotIn("正常", issue_stats)
-        self.assertEqual(issue_stats["动作错误"], 1)
+        self.assertEqual(issue_stats["动作不规范"], 1)
         self.assertNotIn("highRiskStepStats", result)
         self.assertNotIn("timingStatusStats", result)
         self.assertNotIn("riskLevelStats", result)
+
+    def test_admin_create_form_does_not_expose_duration_limits(self):
+        source = Path("bysj/src/views/Admin.vue").read_text(encoding="utf-8")
+
+        self.assertNotIn("最短耗时", source)
+        self.assertNotIn("最长耗时", source)
+        self.assertNotIn("minDurationSec", source)
+        self.assertNotIn("maxDurationSec", source)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 import unittest
+import json
 from unittest import mock
 
-from backend import evaluation, main, prompt, scoring
+from backend import evaluation, main, models, prompt, scoring
 from backend.models import KeyMoment, SopData, SopStep
 
 
@@ -41,10 +42,62 @@ def _build_test_sop():
     )
 
 
+def _build_many_step_sop(step_count=12):
+    return SopData(
+        name="长流程测试",
+        scene="批量评估",
+        stepCount=step_count,
+        steps=[
+            SopStep(
+                stepNo=index,
+                description=f"完成步骤 {index}",
+                referenceFrames=[f"frame://{index}"],
+                referenceSummary=f"步骤 {index} 正确动作",
+                roiHint=f"关注区域 {index}",
+            )
+            for index in range(1, step_count + 1)
+        ],
+    )
+
+
+def _raw_step_eval_json(step_nos):
+    step_results = [
+        {
+            "stepNo": step_no,
+            "passed": True,
+            "confidence": 1.0,
+            "applicable": True,
+            "issueType": "正常",
+            "orderIssue": False,
+            "prerequisiteViolated": False,
+            "detectedStartSec": float(step_no),
+            "detectedEndSec": float(step_no) + 0.5,
+            "repeatedExecution": False,
+            "detectedOccurrences": [],
+            "reasoning": "ok",
+            "evidence": "ok",
+        }
+        for step_no in step_nos
+    ]
+    return {"choices": [{"message": {"content": json.dumps({"stepResults": step_results}, ensure_ascii=False)}}]}
+
+
 class EvaluationPipelineRegressionTests(unittest.TestCase):
-    def test_duration_issue_types_are_known(self):
-        self.assertEqual(scoring.normalize_issue_type("过快完成"), "过快完成")
-        self.assertEqual(scoring.normalize_issue_type("超时完成"), "超时完成")
+    def test_issue_type_values_are_simplified(self):
+        self.assertEqual(
+            models.ISSUE_TYPE_VALUES,
+            ["正常", "缺失", "动作不规范", "顺序问题", "重复操作", "证据不足"],
+        )
+
+    def test_legacy_issue_types_normalize_to_simplified_values(self):
+        self.assertEqual(scoring.normalize_issue_type("部分完成"), "动作不规范")
+        self.assertEqual(scoring.normalize_issue_type("动作错误"), "动作不规范")
+        self.assertEqual(scoring.normalize_issue_type("顺序颠倒"), "顺序问题")
+        self.assertEqual(scoring.normalize_issue_type("过早执行"), "顺序问题")
+        self.assertEqual(scoring.normalize_issue_type("延后执行"), "顺序问题")
+        self.assertEqual(scoring.normalize_issue_type("前置条件缺失"), "顺序问题")
+        self.assertEqual(scoring.normalize_issue_type("过快完成"), "正常")
+        self.assertEqual(scoring.normalize_issue_type("超时完成"), "正常")
 
     def test_response_schemas_do_not_request_numeric_scores(self):
         schema_text = str(prompt.build_response_schema(1))
@@ -54,6 +107,15 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertNotIn("score", schema_text)
         self.assertNotIn("score", batch_schema_text)
         self.assertNotIn("score", global_schema_text)
+
+    def test_response_schemas_do_not_request_completion_level(self):
+        schema_text = str(prompt.build_response_schema(1))
+        per_step_schema_text = str(prompt.build_per_step_evaluation_schema())
+        batch_schema_text = str(prompt.build_batch_step_evaluation_schema(1))
+
+        self.assertNotIn("completionLevel", schema_text)
+        self.assertNotIn("completionLevel", per_step_schema_text)
+        self.assertNotIn("completionLevel", batch_schema_text)
 
     def test_prompt_blocks_do_not_include_step_weight(self):
         sop = _build_test_sop()
@@ -79,7 +141,7 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertNotIn("步骤权重", text)
         self.assertNotIn("权重", text)
 
-    def test_post_process_marks_step_as_too_fast_when_under_min_duration(self):
+    def test_post_process_ignores_min_duration_limit(self):
         sop = SopData(
             name="计时测试",
             stepCount=1,
@@ -87,7 +149,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 SopStep(
                     stepNo=1,
                     description="擦拭消毒至少 3 秒",
-                    minDurationSec=3.0,
                 )
             ],
         )
@@ -117,14 +178,14 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
 
         result = scoring.post_process_evaluation_result(sop, evaluation_payload)
 
-        self.assertEqual(result["stepResults"][0]["issueType"], "过快完成")
-        self.assertFalse(result["stepResults"][0]["passed"])
-        self.assertFalse(result["passed"])
+        self.assertEqual(result["stepResults"][0]["issueType"], "正常")
+        self.assertTrue(result["stepResults"][0]["passed"])
+        self.assertTrue(result["passed"])
         self.assertNotIn("score", result["stepResults"][0])
-        self.assertIn("最短耗时", result["stepResults"][0]["evidence"])
-        self.assertIn("步骤 1 过快完成", result["issues"])
+        self.assertNotIn("最短耗时", result["stepResults"][0]["evidence"])
+        self.assertEqual(result["issues"], [])
 
-    def test_post_process_marks_step_as_timeout_when_over_max_duration(self):
+    def test_post_process_ignores_max_duration_limit(self):
         sop = SopData(
             name="计时测试",
             stepCount=1,
@@ -132,7 +193,6 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
                 SopStep(
                     stepNo=1,
                     description="拧紧螺丝需在 2 秒内完成",
-                    maxDurationSec=2.0,
                 )
             ],
         )
@@ -162,12 +222,12 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
 
         result = scoring.post_process_evaluation_result(sop, evaluation_payload)
 
-        self.assertEqual(result["stepResults"][0]["issueType"], "超时完成")
-        self.assertFalse(result["stepResults"][0]["passed"])
-        self.assertFalse(result["passed"])
+        self.assertEqual(result["stepResults"][0]["issueType"], "正常")
+        self.assertTrue(result["stepResults"][0]["passed"])
+        self.assertTrue(result["passed"])
         self.assertNotIn("score", result["stepResults"][0])
-        self.assertIn("最长耗时", result["stepResults"][0]["evidence"])
-        self.assertIn("步骤 1 超时完成", result["issues"])
+        self.assertNotIn("最长耗时", result["stepResults"][0]["evidence"])
+        self.assertEqual(result["issues"], [])
 
     def test_post_process_keeps_normal_step_without_duration_limits(self):
         sop = SopData(
@@ -206,18 +266,12 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         self.assertNotIn("score", result["stepResults"][0])
 
-    def test_validate_sop_step_rejects_min_duration_greater_than_max_duration(self):
+    def test_validate_sop_step_ignores_duration_range(self):
         step = main.StepVideoInput(
             description="计时步骤",
-            minDurationSec=5.0,
-            maxDurationSec=4.0,
         )
 
-        with self.assertRaises(main.HTTPException) as context:
-            main.validate_sop_step_inputs([step])
-
-        self.assertEqual(context.exception.status_code, 400)
-        self.assertIn("时间范围不合法", context.exception.detail)
+        main.validate_sop_step_inputs([step])
 
     def test_choose_analysis_fps_raises_sampling_density_for_fast_actions(self):
         self.assertEqual(evaluation.choose_analysis_fps(configured_fps=2, video_fps=30), 8.0)
@@ -298,7 +352,7 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         merged = evaluation.apply_global_validation_overrides(step_results, global_result)
 
         self.assertTrue(merged[1]["orderIssue"])
-        self.assertEqual(merged[1]["issueType"], "延后执行")
+        self.assertEqual(merged[1]["issueType"], "顺序问题")
         self.assertIn("顺序异常", merged[1]["evidence"])
 
     def test_apply_global_validation_overrides_accepts_legacy_step_id_and_string_flags(self):
@@ -334,7 +388,7 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
 
         self.assertTrue(merged[0]["orderIssue"])
         self.assertTrue(merged[0]["prerequisiteViolated"])
-        self.assertEqual(merged[0]["issueType"], "过早执行")
+        self.assertEqual(merged[0]["issueType"], "顺序问题")
         self.assertIn("步骤9尚未完全结束", merged[0]["evidence"])
 
     def test_post_process_marks_default_sequence_overlap_as_order_issue_and_fails_result(self):
@@ -391,10 +445,10 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertFalse(step10["passed"])
         self.assertTrue(step10["orderIssue"])
         self.assertFalse(step10["prerequisiteViolated"])
-        self.assertEqual(step10["issueType"], "过早执行")
+        self.assertEqual(step10["issueType"], "顺序问题")
         self.assertFalse(step10["passed"])
         self.assertNotIn("score", step10)
-        self.assertIn("步骤 10 过早执行", result["issues"])
+        self.assertIn("步骤 10 顺序问题", result["issues"])
         self.assertEqual(result["sequenceAssessment"], "轻微顺序偏差")
 
     def test_post_process_keeps_normal_default_sequence_as_passed(self):
@@ -504,7 +558,7 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertFalse(step2["passed"])
         self.assertTrue(step2["orderIssue"])
         self.assertTrue(step2["prerequisiteViolated"])
-        self.assertEqual(step2["issueType"], "前置条件缺失")
+        self.assertEqual(step2["issueType"], "顺序问题")
 
     def test_missing_step_keeps_missing_priority_even_with_overlapping_detected_range(self):
         sop = SopData(
@@ -655,9 +709,9 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
 
         self.assertIn("候选时间窗", system_prompt)
         self.assertIn("局部片段", system_prompt)
-        self.assertIn("而非直接判为缺失", system_prompt)
+        self.assertIn("而非缺失", system_prompt)
         self.assertIn("x.xs 秒数格式", system_prompt)
-        self.assertIn("顺序类问题", system_prompt)
+        self.assertIn("顺序问题", system_prompt)
 
     def test_per_step_evaluation_blocks_include_video_duration_guardrail(self):
         step = _build_test_sop().steps[2]
@@ -854,6 +908,53 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
         self.assertEqual(results[2]["issueType"], "杩囨棭鎵ц")
         self.assertIn("_batchPayloadPreview", results[0])
         self.assertNotIn("_batchPayloadPreview", results[1])
+
+    def test_run_per_step_evaluation_batch_keeps_long_sop_in_one_model_call(self):
+        sop = _build_many_step_sop(12)
+        segments = {
+            step.stepNo: {
+                "stepNo": step.stepNo,
+                "detected": True,
+                "startSec": float(step.stepNo),
+                "endSec": float(step.stepNo) + 0.5,
+            }
+            for step in sop.steps
+        }
+
+        with mock.patch(
+            "backend.evaluation.read_video_meta",
+            return_value={"durationSec": 30.0, "fps": 30.0, "frameCount": 900},
+        ), mock.patch(
+            "backend.evaluation.call_chat_completion",
+            new=mock.AsyncMock(return_value=_raw_step_eval_json(range(1, 13))),
+        ) as call_mock:
+            results = evaluation.asyncio.run(
+                evaluation.run_per_step_evaluation_batch(
+                    evaluation.ApiConfig(apiKey="k"),
+                    sop,
+                    segments,
+                    "demo-path.mp4",
+                    "data:video/mp4;base64,ZmFrZQ==",
+                    6,
+                )
+            )
+
+        self.assertEqual(call_mock.await_count, 1)
+        self.assertEqual([item["stepNo"] for item in results], list(range(1, 13)))
+        self.assertIn("_batchPayloadPreview", results[0])
+        self.assertNotIn("_batchPayloadPreview", results[1])
+
+        payload = call_mock.await_args.args[1]
+        min_items = payload["response_format"]["json_schema"]["schema"]["properties"]["stepResults"]["minItems"]
+        prompt_text = "\n".join(
+            block.get("text", "")
+            for block in payload["messages"][1]["content"]
+            if block.get("type") == "text"
+        )
+        self.assertEqual(min_items, 12)
+        self.assertIn("步骤 1\n", prompt_text)
+        self.assertIn("步骤 12\n", prompt_text)
+        self.assertNotIn("本次评估步骤范围", prompt_text)
 
     def test_run_per_step_evaluation_batch_skips_focus_frame_extraction(self):
         sop = _build_test_sop()
@@ -1060,7 +1161,7 @@ class EvaluationPipelineRegressionTests(unittest.TestCase):
 
         cleaned = evaluation.reconcile_order_issue_from_evidence(step, result, 7.0)
 
-        self.assertEqual(cleaned["issueType"], "过早执行")
+        self.assertEqual(cleaned["issueType"], "顺序问题")
         self.assertTrue(cleaned["orderIssue"])
         self.assertEqual(cleaned["detectedStartSec"], 0.6)
         self.assertEqual(cleaned["detectedEndSec"], 1.8)

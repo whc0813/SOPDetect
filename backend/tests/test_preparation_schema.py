@@ -24,6 +24,19 @@ class PreparationSchemaTests(unittest.TestCase):
         self.assertNotIn("DROP COLUMN time_window_start_sec", source)
         self.assertNotIn("DROP COLUMN time_window_end_sec", source)
 
+    def test_schema_no_longer_declares_duration_limit_columns(self):
+        schema = storage.SCHEMA_SQL_PATH.read_text(encoding="utf-8")
+        migration_source = inspect.getsource(storage._run_schema_migrations)
+
+        self.assertNotIn("`min_duration_sec`", schema)
+        self.assertNotIn("`max_duration_sec`", schema)
+        self.assertNotIn("`min_duration_sec_snapshot`", schema)
+        self.assertNotIn("`max_duration_sec_snapshot`", schema)
+        self.assertNotIn("ADD COLUMN min_duration_sec", migration_source)
+        self.assertNotIn("ADD COLUMN max_duration_sec", migration_source)
+        self.assertNotIn("ADD COLUMN min_duration_sec_snapshot", migration_source)
+        self.assertNotIn("ADD COLUMN max_duration_sec_snapshot", migration_source)
+
     def test_storage_exposes_preparation_job_operations(self):
         for name in [
             "create_preparation_job",

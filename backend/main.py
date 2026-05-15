@@ -46,7 +46,6 @@ try:
         StepResultPayload,
     )
     from .scoring import (
-        normalize_duration_limit,
         normalize_prerequisite_step_nos,
         normalize_step_type,
         post_process_evaluation_result,
@@ -139,7 +138,6 @@ except ImportError:
         StepResultPayload,
     )
     from scoring import (
-        normalize_duration_limit,
         normalize_prerequisite_step_nos,
         normalize_step_type,
         post_process_evaluation_result,
@@ -235,8 +233,6 @@ class StepVideoInput(BaseModel):
     stepType: str = "required"
     conditionText: str = ""
     prerequisiteStepNos: List[int] = Field(default_factory=list)
-    minDurationSec: Optional[float] = None
-    maxDurationSec: Optional[float] = None
     videoDataUrl: str = ""
     videoMeta: Optional[StepVideoMeta] = None
 
@@ -308,17 +304,6 @@ def validate_sop_step_inputs(steps: List[StepVideoInput]):
                 status_code=400,
                 detail=f"步骤 {step_no} 为条件触发步骤，必须填写触发说明",
             )
-        min_duration = normalize_duration_limit(raw_step.minDurationSec)
-        max_duration = normalize_duration_limit(raw_step.maxDurationSec)
-        if (
-            min_duration is not None
-            and max_duration is not None
-            and min_duration > max_duration
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=f"步骤 {step_no} 时间范围不合法，最短耗时不能大于最长耗时",
-            )
 
 
 def _dump_model(model):
@@ -363,8 +348,6 @@ def _build_draft_sop(req: CreateSopRequest, current_user):
                 "prerequisiteStepNos": normalize_prerequisite_step_nos(
                     step.prerequisiteStepNos, index + 1
                 ),
-                "minDurationSec": normalize_duration_limit(step.minDurationSec),
-                "maxDurationSec": normalize_duration_limit(step.maxDurationSec),
                 "referenceMode": "text",
                 "referenceFrames": [],
                 "analysisFrames": [],
@@ -585,8 +568,6 @@ async def update_sop_basic(sop_id: str, req: UpdateSopRequest, current_user=Depe
                         "prerequisiteStepNos": normalize_prerequisite_step_nos(
                             step.prerequisiteStepNos, index + 1
                         ),
-                        "minDurationSec": normalize_duration_limit(step.minDurationSec),
-                        "maxDurationSec": normalize_duration_limit(step.maxDurationSec),
                         "referenceMode": "text",
                         "referenceFrames": [],
                         "analysisFrames": [],
